@@ -70,8 +70,6 @@ The FCP specification defines two operational profiles, each catering to differe
 
 ---
 
----
-
 ## Project Governance and Compliance
 
 - **[COMPLIANCE.md](COMPLIANCE.md)** — Guide on how to claim and verify HACA compliance.
