@@ -9,7 +9,7 @@ This guide covers everything you need to start using FCP-Ref. No prior knowledge
 **Clone and enter:**
 ```bash
 git clone https://github.com/HACA-org/HACA
-cd HACA/implementations/fcp-c-ref
+cd HACA/implementations/fcp-core-ref
 ```
 
 **Configure a backend** (pick one):
@@ -208,7 +208,7 @@ To evolve the identity formally, use `.endure`. It runs a validation protocol be
 ## Next steps
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — how the system works under the hood: memory model, drift detection, ACP protocol, execution modes
-- **[FCP Spec](../fcp-c-spec/)** — FCP formal specifications
+- **[FCP Spec](../fcp-core-spec/)** — FCP formal specifications
 - **[HACA Spec](../../spec/)** — HACA formal specifications
 
 ---

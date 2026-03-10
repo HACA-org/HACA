@@ -3,13 +3,24 @@ title: "Filesystem Cognitive Platform (FCP) — Core Specification"
 short_title: "FCP-Core"
 version: "1.0.0"
 compliance: "HACA-Core v1.0.0"
-status: "Stable implementation-ready"
+status: "Standard Track"
 date: 2026-03-10
 ---
 
-# Filesystem Cognitive Platform (FCP) — Core Specification
+```
+Network Working Group                                         J. Orrico
+Internet-Draft                                            FCP Standard
+Intended status: Informational                          March 10, 2026
+Expires: September 10, 2026
 
-Abstract
+
+         Filesystem Cognitive Platform (FCP) — Core Specification
+                        draft-fcp-core-1.0.0.md
+```
+
+---
+
+## Abstract
 
    This document specifies the Filesystem Cognitive Platform (FCP) v1.0,
    a HACA-Core v1.0.0 compliant implementation. FCP uses standard POSIX

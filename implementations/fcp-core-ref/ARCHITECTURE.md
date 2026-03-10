@@ -2,7 +2,7 @@
 
 This document explains how FCP-Ref works. It assumes you've read the [Quick Start](QUICKSTART.md) and want to understand the internals.
 
-For the formal specifications, see [fcp-c-spec/](../fcp-c-spec/) and [HACA-Arch](../../spec/HACA-Arch-1.0.0.md).
+For the formal specifications, see [fcp-core-spec/](../fcp-core-spec/) and [HACA-Arch](../../spec/HACA-Arch-1.0.0.md).
 
 ---
 
@@ -271,7 +271,7 @@ After this, every subsequent boot loads the operator binding and self-knowledge 
 
 FCP-Ref implements two formal specifications:
 
-**[FCP (Filesystem Cognitive Platform)](../fcp-c-spec/)**
+**[FCP (Filesystem Cognitive Platform)](../fcp-core-spec/)**
 The concrete implementation spec. Defines the directory topology, ACP wire format, boot phases, memory paging, drift measurement, and skill invocation protocol.
 
 **[HACA (Host-Agnostic Cognitive Architecture)](../../spec/HACA-Arch-1.0.0.md)**

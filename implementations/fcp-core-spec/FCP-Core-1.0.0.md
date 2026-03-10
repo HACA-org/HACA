@@ -1,10 +1,13 @@
-# FCP: Filesystem Cognitive Platform
-**Status:** Internet-Draft  
-**Version:** 1.0.0
-**Authors:** J. Orrico  
-**Date:** March 10, 2026
-
 ---
+title: "Filesystem Cognitive Platform (FCP) — Core Profile"
+short_title: "FCP-Core"
+version: "1.0.0"
+compliance: "HACA-Core v1.0.0"
+status: "Implementation Guide (Narrative)"
+date: 2026-03-10
+---
+
+# Filesystem Cognitive Platform (FCP) — Core Profile
 
 ## Abstract
 
@@ -20,7 +23,7 @@ The filesystem is the application.
 
 ## 1. Overview and "Living off the Land"
 
-FCP implements HACA's four-layer architecture (see [HACA-Arch](../../../spec/HACA-Arch-1.0.0.md)) using filesystem primitives:
+FCP implements HACA's four-layer architecture (see [HACA-Arch](../../spec/HACA-Arch-1.0.0.md)) using filesystem primitives:
 
 | HACA Layer | FCP Implementation |
 |---|---|
@@ -585,8 +588,7 @@ This Internet Draft is published for community review prior to formal IETF submi
 
 ## Normative References (Full Spec)
 
-- [HACA-Arch](../../../spec/HACA-Arch-1.0.0.md) — Root architecture overview (start here)
-- [FCP Spec](../FCP-Core-1.0.0.md) — Complete FCP specification
-- [HACA-Core](../../../spec/HACA-Core-1.0.0.md) — Formal axioms and compliance tests
-- [HACA-Arch](../../../spec/HACA-Arch-1.0.0.md) — Abstract architecture and trust model
+- [HACA-Arch](../../spec/HACA-Arch-1.0.0.md) — Root architecture overview (start here)
+- [HACA-Core](../../spec/HACA-Core-1.0.0.md) — Formal axioms and compliance tests
+- [HACA-Arch](../../spec/HACA-Arch-1.0.0.md) — Abstract architecture and trust model
 - *HACA-Security* (Planned) — Byzantine host model and cryptographic auditability
