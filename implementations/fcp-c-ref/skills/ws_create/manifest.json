@@ -1,0 +1,14 @@
+{
+    "name": "ws_create",
+    "command": ".workspace",
+    "version": "1.0",
+    "capabilities": ["filesystem_write", "workspace_management"],
+    "security": {
+        "sandbox": "workspaces_only",
+        "write_targets": ["workspaces/", "memory/spool/el/", "memory/inbox/"]
+    },
+    "params": {
+        "name":        {"type": "string", "description": "Nome do workspace (slug, sem espaços)", "required": true},
+        "description": {"type": "string", "description": "Objetivo ou propósito do workspace", "required": true}
+    }
+}

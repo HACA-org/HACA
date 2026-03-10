@@ -1,0 +1,14 @@
+{
+    "name": "cron_wake",
+    "version": "1.0",
+    "capabilities": ["filesystem_read", "filesystem_write", "sil_invoke"],
+    "security": {
+        "sandbox": "fcp_root",
+        "read_targets": ["state/agenda.jsonl"],
+        "write_targets": ["memory/spool/sil/", "memory/inbox/"]
+    },
+    "invocation": "external_cron",
+    "params": {
+        "dry_run": {"type": "boolean", "description": "Check without firing SIL", "default": false}
+    }
+}

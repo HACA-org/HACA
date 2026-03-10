@@ -1,0 +1,14 @@
+{
+    "name": "snapshot_create",
+    "command": ".snap",
+    "version": "1.0",
+    "capabilities": ["filesystem_read", "filesystem_write", "archive"],
+    "security": {
+        "sandbox": "fcp_root",
+        "write_targets": ["snapshots/"],
+        "read_targets": ["persona/", "skills/", "BOOT.md", "state/integrity.json", "state/drift-probes.jsonl", "hooks/"]
+    },
+    "params": {
+        "reason": {"type": "string", "description": "Motivo do snapshot", "default": "snapshot manual"}
+    }
+}

@@ -1,0 +1,130 @@
+# FIRST BOOT PROTOCOL
+
+This file exists only on your first activation. You will execute this protocol once, consolidate the results into persistent memory, and then delete this file. Its absence in future boots confirms initialization is complete.
+
+---
+
+## Step 1 — Bind your operator
+
+Your operator is the human who activated you. Ask them:
+
+> "I'm initializing for the first time. To complete setup, I need a few details:
+> - Your name or display name
+> - A handle or username I should use to identify you
+> - (Optional) A contact reference — Telegram, email, or other channel
+> - Your timezone (e.g. America/Sao_Paulo)"
+
+Once you have the answers, execute the `owner_bind` skill (`.bind`) to store this in `memory/preferences/operator.json`. This establishes your operator as `actor: supervisor` for all future interactions.
+
+**This binding is foundational.** Without it, you do not know who your operator is, who can authorize `sys_endure`, or whose instructions to prioritize.
+
+---
+
+## Step 2 — Read your complete identity
+
+Read all files in `persona/`:
+- `identity.md` — who you are, your name, your purpose
+- `values.md` — your behavioral principles
+- `constraints.md` — what you must never do
+
+Understand these deeply. They are cryptographically sealed — they define you and cannot be changed without the `sys_endure` protocol.
+
+---
+
+## Step 3 — Map your capabilities
+
+Read `skills/index.json`. For every authorized skill, read its `manifest.json`. Understand:
+- What it does
+- Its `.command` alias (if any) — these are your shorthand invocations
+- Its required parameters
+- Its sandbox boundaries
+
+The `aliases` section in `index.json` gives you the full command map at a glance.
+
+---
+
+## Step 4 — Map your boundaries
+
+Read `state/integrity.json`. The files listed under `signatures` are cryptographically sealed — you must never modify them. Any attempt will cause the next boot to abort.
+
+---
+
+## Step 5 — Consolidate to permanent memory
+
+Create a self-analysis document at `memory/concepts/self_analysis.md` containing:
+
+```markdown
+# Self-Analysis — First Boot
+
+## Operator
+- Name: <name>
+- Handle: <handle>
+- Timezone: <timezone>
+
+## Skill Inventory
+| Command    | Skill             | Purpose                        |
+|------------|-------------------|--------------------------------|
+| .save      | memory_store      | Persist memory fragments       |
+| .recall    | memory_retrieve   | Search archived memory         |
+| .swapin    | memory_swap_in    | Load archive into active ctx   |
+| .snap      | snapshot_create   | Create system snapshot         |
+| .snaps     | snapshot_list     | List available snapshots       |
+| .summarize | summarize_session | Summarize and close session    |
+| .workspace | ws_create         | Create isolated workspace      |
+| .snap      | snapshot_create   | Create a filesystem snapshot   |
+| .endure    | sys_endure        | Formal identity evolution      |
+| .recon     | recon_env         | Environment reconnaissance     |
+| .bind      | owner_bind        | Bind operator identity         |
+
+## Immutable Files (from integrity.json)
+<list each file in signatures>
+
+## Memory Architecture
+- active_context/ — symlinks loaded at every boot (priority: low number = critical)
+- session.jsonl — append-only chronological log
+- concepts/ — structured knowledge documents
+- preferences/ — persistent operator preferences
+- archive/ — rotated session history
+- cold_storage/ — rarely accessed long-term storage
+
+## Key Rules
+- Append-only: never overwrite .jsonl files
+- Atomic rename: always write .json/.md via tmp → rename
+- 4KB rule: no single ACP payload exceeds 4000 bytes
+- Sandbox: operate only within FCP root and workspaces/
+- CRC: ACP envelopes require CRC-32 of the data field as 8-char lowercase hex
+```
+
+Then create a symlink in `memory/active_context/` at priority 10:
+```
+10_self_analysis.md → ../concepts/self_analysis.md
+```
+
+This ensures the document loads on every future boot with highest priority.
+
+---
+
+## Step 6 — Log the event
+
+Append an ACP envelope to `memory/session.jsonl`:
+```json
+{"actor": "stunos", "gseq": 1, "tx": "first-boot", "seq": 1, "eof": true, "type": "MSG", "ts": "<ts>", "data": "{\"event\": \"first_boot_complete\", \"operator\": \"<handle>\", \"skills_loaded\": <n>, \"mode\": \"<mode>\"}", "crc": "<crc32-of-data>"}
+```
+
+> **CRC reminder:** `crc` must be CRC-32 of the `data` string, not a label.
+> Compute with: `python3 -c "import binascii; print(format(binascii.crc32(b'<data>') & 0xffffffff, '08x'))"`
+
+---
+
+## Step 7 — Delete this file
+
+Once all steps above are complete, delete `FIRST_BOOT.md`:
+
+- **Opaque Mode:** use your native delete/remove tool on this file path.
+- **Transparent Mode:** emit a `skill_request` for a skill with filesystem delete capability, or log a `log_note` instructing the operator to remove it manually.
+
+The absence of this file is your signal — and the system's signal — that initialization is complete. If this file is ever present again (e.g., after cloning the system or restoring a fresh snapshot), treat it as a new first boot.
+
+---
+
+*Execute these steps now, before responding to any user request.*

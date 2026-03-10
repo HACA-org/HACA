@@ -1,0 +1,14 @@
+{
+    "name": "hello_world",
+    "version": "1.0",
+    "description": "Uma skill de teste que emite uma sauda????o personalizada",
+    "capabilities": [
+        "log_note"
+    ],
+    "security": {
+        "sandbox": "fcp_root",
+        "write_targets": []
+    },
+    "params": {},
+    "command": ".hello"
+}

@@ -1,0 +1,17 @@
+{
+    "name": "owner_bind",
+    "command": ".bind",
+    "version": "1.0",
+    "capabilities": ["filesystem_write", "identity_management"],
+    "security": {
+        "sandbox": "fcp_root",
+        "write_targets": ["memory/preferences/"]
+    },
+    "lifecycle": "cold_start_only",
+    "params": {
+        "name":     {"type": "string", "description": "Operator's display name", "required": true},
+        "handle":   {"type": "string", "description": "Operator's unique handle or username", "required": true},
+        "contact":  {"type": "string", "description": "Contact reference (optional — e.g. telegram, email)", "default": ""},
+        "timezone": {"type": "string", "description": "Operator timezone (e.g. America/Sao_Paulo)", "default": "UTC"}
+    }
+}

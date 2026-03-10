@@ -1,0 +1,38 @@
+{
+    "name": "sys_telemetry",
+    "version": "1.0",
+    "description": "Monitora o uso de tokens e recursos da sessão.",
+    "capabilities": [
+        "filesystem_write",
+        "log_note"
+    ],
+    "security": {
+        "sandbox": "workspaces_only",
+        "write_targets": [
+            "workspaces/"
+        ]
+    },
+    "params": {
+        "action": {
+            "type": "string",
+            "required": false,
+            "description": "Ação: 'status' (padrão) ou 'log_usage'."
+        },
+        "input_tokens": {
+            "type": "integer",
+            "required": false,
+            "description": "Quantidade de tokens de entrada."
+        },
+        "output_tokens": {
+            "type": "integer",
+            "required": false,
+            "description": "Quantidade de tokens de saída."
+        },
+        "model": {
+            "type": "string",
+            "required": false,
+            "description": "Nome do modelo utilizado."
+        }
+    },
+    "command": ".usage"
+}

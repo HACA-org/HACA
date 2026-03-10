@@ -1,0 +1,22 @@
+{
+    "name": "memory_retrieve",
+    "command": ".recall",
+    "version": "2.0",
+    "capabilities": [
+        "filesystem_read",
+        "memory_management"
+    ],
+    "security": {
+        "sandbox": "fcp_root_readonly",
+        "read_targets": ["memory/inbox/", "memory/session.jsonl"]
+    },
+    "acp": {
+        "reads_envelopes": true,
+        "sources": ["memory/inbox/*.msg", "memory/session.jsonl"]
+    },
+    "params": {
+        "type":  {"type": "string", "description": "Memory type filter (* for all)", "required": true},
+        "query": {"type": "string", "description": "Search query (substring, case-insensitive)", "required": true},
+        "limit": {"type": "integer", "default": 10}
+    }
+}

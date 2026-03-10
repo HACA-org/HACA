@@ -1,0 +1,96 @@
+{
+    "name": "sys_endure",
+    "command": ".endure",
+    "version": "2.0",
+    "description": "Single source of evolution for all integrity-protected system files. Every change to files tracked in state/integrity.json must go through .endure.",
+    "capabilities": [
+        "filesystem_read",
+        "filesystem_write",
+        "git_commit",
+        "integrity_management"
+    ],
+    "security": {
+        "sandbox": "fcp_root",
+        "write_targets": [
+            "skills/",
+            "hooks/",
+            "persona/",
+            "BOOT.md",
+            "state/integrity.json",
+            "skills/index.json",
+            "memory/spool/sil/",
+            "memory/inbox/"
+        ]
+    },
+    "subcommands": {
+        "add skill": {
+            "description": "Scaffold a new skill, register in index.json, seal in integrity.json",
+            "params": {
+                "name":         {"type": "string",  "required": true,  "description": "Skill name (snake_case)"},
+                "description":  {"type": "string",  "required": true,  "description": "What the skill does"},
+                "command":      {"type": "string",  "required": false, "description": ".command alias (e.g. .myskill)"},
+                "script":       {"type": "string",  "required": false, "description": "Path to script in workspaces/ to promote. If omitted, creates a stub."},
+                "capabilities": {"type": "string",  "required": false, "description": "Comma-separated capabilities (default: filesystem_write)"},
+                "sandbox":      {"type": "string",  "required": false, "description": "workspaces_only|fcp_root|none (default: workspaces_only)"}
+            }
+        },
+        "add hook": {
+            "description": "Register a new lifecycle hook, seal in integrity.json",
+            "params": {
+                "event":    {"type": "string", "required": true,  "description": "Hook event (e.g. pre_memory_store, post_action)"},
+                "name":     {"type": "string", "required": true,  "description": "Hook name (snake_case, no number prefix)"},
+                "script":   {"type": "string", "required": false, "description": "Path to script in workspaces/. If omitted, creates a stub."},
+                "priority": {"type": "string", "required": false, "description": "Numeric prefix 01-99 (default: next available)"}
+            }
+        },
+        "evolve identity": {
+            "description": "Propose a change to a persona/ file. Runs drift probes before applying.",
+            "params": {
+                "file":       {"type": "string",  "required": true,  "description": "Relative path inside persona/ (e.g. persona/values.md)"},
+                "content":    {"type": "string",  "required": true,  "description": "New full content for the file"},
+                "commit_msg": {"type": "string",  "required": false, "description": "Git commit message"},
+                "dry_run":    {"type": "boolean", "required": false, "description": "Validate only, do not apply (default: false)"}
+            }
+        },
+        "evolve boot": {
+            "description": "Propose a change to BOOT.md, the system instruction manual.",
+            "params": {
+                "content":    {"type": "string", "required": true,  "description": "New full content for BOOT.md"},
+                "commit_msg": {"type": "string", "required": false, "description": "Git commit message"},
+                "dry_run":    {"type": "boolean","required": false, "description": "Validate only, do not apply (default: false)"}
+            }
+        },
+        "remove skill": {
+            "description": "Unregister a skill from index.json and delete its directory. Requires --confirm.",
+            "params": {
+                "name":    {"type": "string",  "required": true, "description": "Skill name to remove"},
+                "confirm": {"type": "boolean", "required": true, "description": "Must be true — prevents accidental deletion"}
+            }
+        },
+        "remove hook": {
+            "description": "Delete a hook script and unseal it. Requires --confirm.",
+            "params": {
+                "event":   {"type": "string",  "required": true, "description": "Hook event directory"},
+                "name":    {"type": "string",  "required": true, "description": "Hook filename (with or without numeric prefix)"},
+                "confirm": {"type": "boolean", "required": true, "description": "Must be true — prevents accidental deletion"}
+            }
+        },
+        "seal": {
+            "description": "Recompute SHA-256 hashes for all files tracked in integrity.json. Also accepts --add <path> to start tracking a new file.",
+            "params": {
+                "add": {"type": "string", "required": false, "description": "Relative path to start tracking (can repeat)"}
+            }
+        },
+        "sync": {
+            "description": "Commit staged evolution changes to git.",
+            "params": {
+                "remote":  {"type": "boolean", "required": false, "description": "Also push to remote (default: false)"},
+                "message": {"type": "string",  "required": false, "description": "Commit message"}
+            }
+        },
+        "status": {
+            "description": "Show which tracked files have changed since last seal.",
+            "params": {}
+        }
+    }
+}

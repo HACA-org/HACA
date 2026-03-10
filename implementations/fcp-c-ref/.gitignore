@@ -1,0 +1,31 @@
+# --- FCP-Ref runtime state (never versioned) ---
+memory/session*.jsonl
+memory/session.jsonl
+memory/inbox/*.msg
+memory/spool/
+memory/active_context/*
+!memory/active_context/.keep
+memory/preferences/*
+!memory/preferences/.keep
+memory/concepts/*.md
+memory/concepts/*.jsonl
+!memory/concepts/.keep
+state/pulses/*.alive
+state/rotation.lock
+state/env.md
+state/agenda.jsonl
+state/sentinels/*
+!state/sentinels/.keep
+workspaces/
+snapshots/
+
+# --- Python bytecode ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Misc ---
+*.tmp
+*.bak
+*.swp
+.fcp_ref_root

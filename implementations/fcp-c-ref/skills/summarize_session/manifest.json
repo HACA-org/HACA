@@ -1,0 +1,14 @@
+{
+    "name": "summarize_session",
+    "command": ".summarize",
+    "version": "1.0",
+    "capabilities": ["filesystem_write", "memory_management"],
+    "security": {
+        "sandbox": "memory_spool_only",
+        "write_targets": ["memory/spool/el/", "memory/inbox/", "state/pulses/"]
+    },
+    "params": {
+        "summary":   {"type": "string", "description": "Resumo do que foi feito na sessão", "required": true},
+        "next_step": {"type": "string", "description": "Próxima ação ou objetivo", "default": ""}
+    }
+}

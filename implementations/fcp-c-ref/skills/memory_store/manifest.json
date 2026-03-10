@@ -1,0 +1,25 @@
+{
+    "name": "memory_store",
+    "command": ".save",
+    "version": "2.0",
+    "capabilities": [
+        "filesystem_write",
+        "memory_management"
+    ],
+    "security": {
+        "sandbox": "memory_spool_only",
+        "write_targets": ["memory/spool/el/", "memory/inbox/"]
+    },
+    "acp": {
+        "actor": "el",
+        "envelope_type": "MSG",
+        "uses_spool": true
+    },
+    "params": {
+        "type":    {"type": "string", "enum": ["episodic", "semantic", "index"], "required": true},
+        "tags":    {"type": "string", "description": "Comma-separated tags", "required": true},
+        "content": {"type": "string", "description": "Content to store (max 4000 bytes)", "required": true},
+        "status":  {"type": "string", "enum": ["success", "failure", "none"], "default": "none"},
+        "entity":  {"type": "string", "description": "Entity or topic (for semantic/index)", "default": "none"}
+    }
+}

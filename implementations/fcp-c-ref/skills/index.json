@@ -1,0 +1,109 @@
+{
+    "version": "1.6",
+    "aliases": {
+        ".save": "memory_store",
+        ".recall": "memory_retrieve",
+        ".swapin": "memory_swap_in",
+        ".snap": "snapshot_create",
+        ".snaps": "snapshot_list",
+        ".summarize": "summarize_session",
+        ".workspace": "ws_create",
+        ".endure": "sys_endure",
+        ".recon": "recon_env",
+        ".bind": "owner_bind",
+        ".hello": "hello_world",
+        ".usage": "sys_telemetry"
+    },
+    "skills": [
+        {
+            "name": "recon_env",
+            "authorized": true,
+            "path": "skills/recon_env/"
+        },
+        {
+            "name": "memory_store",
+            "authorized": true,
+            "path": "skills/memory_store/"
+        },
+        {
+            "name": "memory_retrieve",
+            "authorized": true,
+            "path": "skills/memory_retrieve/"
+        },
+        {
+            "name": "snapshot_create",
+            "authorized": true,
+            "path": "skills/snapshot_create/"
+        },
+        {
+            "name": "snapshot_list",
+            "authorized": true,
+            "path": "skills/snapshot_list/"
+        },
+        {
+            "name": "ws_create",
+            "authorized": true,
+            "path": "skills/ws_create/"
+        },
+        {
+            "name": "summarize_session",
+            "authorized": true,
+            "path": "skills/summarize_session/"
+        },
+        {
+            "name": "cron_wake",
+            "authorized": false,
+            "path": "skills/cron_wake/",
+            "note": "External invocation only \u2014 called by system cron, not by CPE via skill_request"
+        },
+        {
+            "name": "memory_swap_in",
+            "authorized": true,
+            "path": "skills/memory_swap_in/"
+        },
+        {
+            "name": "sys_endure",
+            "authorized": true,
+            "path": "skills/sys_endure/"
+        },
+        {
+            "name": "owner_bind",
+            "authorized": false,
+            "lifecycle": "cold_start_only",
+            "path": "skills/owner_bind/",
+            "note": "Not loaded in normal boots. Invoked directly by the FAP (FIRST_BOOT.md). Guard in owner_bind.sh prevents re-execution if operator.json exists."
+        },
+        {
+            "name": "hello_world",
+            "authorized": true,
+            "path": "skills/hello_world/"
+        },
+        {
+            "name": "sys_telemetry",
+            "authorized": true,
+            "path": "skills/sys_telemetry/"
+        }
+    ],
+    "libs": [
+        {
+            "name": "acp",
+            "path": "skills/lib/acp.sh",
+            "description": "ACP envelope library \u2014 spool/inbox lockless writes (FCP \u00a74, \u00a75.1)"
+        },
+        {
+            "name": "rotation",
+            "path": "skills/lib/rotation.sh",
+            "description": "Crash-safe log rotation with WAL (FCP \u00a711)"
+        },
+        {
+            "name": "params",
+            "path": "skills/lib/params.sh",
+            "description": "Skill parameter loader \u2014 accepts JSON from SIL or positional args"
+        },
+        {
+            "name": "drift",
+            "path": "skills/lib/drift.sh",
+            "description": "Behavioral drift probe engine \u2014 Two-Tier Cascade: NCD/gzip + LLM Oracle (FCP \u00a79)"
+        }
+    ]
+}

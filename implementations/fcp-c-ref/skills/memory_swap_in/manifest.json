@@ -1,0 +1,22 @@
+{
+    "name": "memory_swap_in",
+    "command": ".swapin",
+    "version": "1.0",
+    "capabilities": ["filesystem_read", "filesystem_write", "symlink_create"],
+    "security": {
+        "sandbox": "fcp_root",
+        "read_targets": ["memory/archive/"],
+        "write_targets": ["memory/active_context/", "memory/spool/sil/", "memory/inbox/"]
+    },
+    "invocation": "sil_skill_request",
+    "params": {
+        "query":     {"type": "string",  "description": "Keywords to search in archive (space-separated)"},
+        "priority":  {"type": "integer", "description": "Numeric prefix for active_context/ symlink (lower = higher priority)", "default": 50},
+        "name":      {"type": "string",  "description": "Symlink name without priority prefix (derived from file if omitted)"},
+        "date_from": {"type": "string",  "description": "ISO date lower bound YYYY-MM-DD (optional)"},
+        "date_to":   {"type": "string",  "description": "ISO date upper bound YYYY-MM-DD (optional)"},
+        "max_files": {"type": "integer", "description": "Maximum fragments to swap in", "default": 1},
+        "op":        {"type": "string",  "description": "'in' (default) or 'out'", "default": "in"},
+        "swap_out":  {"type": "string",  "description": "Link name to remove when op=out"}
+    }
+}

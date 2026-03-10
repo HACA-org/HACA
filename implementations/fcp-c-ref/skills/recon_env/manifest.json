@@ -1,0 +1,13 @@
+{
+    "name": "recon_env",
+    "command": ".recon",
+    "version": "1.0",
+    "capabilities": [
+        "host_introspection"
+    ],
+    "security": {
+        "sandbox": "none",
+        "write_targets": []
+    },
+    "params": {}
+}

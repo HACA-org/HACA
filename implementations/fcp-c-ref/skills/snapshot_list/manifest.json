@@ -1,0 +1,11 @@
+{
+    "name": "snapshot_list",
+    "command": ".snaps",
+    "version": "1.0",
+    "capabilities": ["filesystem_read"],
+    "security": {
+        "sandbox": "fcp_root",
+        "read_targets": ["snapshots/"]
+    },
+    "params": {}
+}
