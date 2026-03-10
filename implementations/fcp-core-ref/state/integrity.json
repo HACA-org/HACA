@@ -24,7 +24,7 @@
     "skills/memory_store/memory_store.sh": "40228d3fd1ff88122638887559377ef08dea913ae488e0200facddfc00b8cdf0",
     "hooks/hook_dispatch.sh": "ce7b2346c5a6413b1c14ec1d9bf7be2cf21a422239ae9996a39b25d5876d1d2e",
     "hooks/pre_memory_store/01_validate_schema.sh": "ab476fd7a4119d1605a5b55a0c0b3e82d62253941bfc79977768012436cdc226",
-    "state/drift-probes.jsonl": "a0f7c201545016822f9bd4ade2e9fa1dcb80fa936008c258441307c91db5be93",
+    "state/drift-probes.jsonl": "1e2b4466b62c2d0b22731e441a3412a838538bed44601558802fdefcaf8c5a94",
     "skills/sys_endure/sys_endure.sh": "2965e1b46788bb8a9d6954c7dc54f53722bb7da61608bd844f5af7dde374332a",
     "skills/sys_endure/handlers/seal.sh": "f0eb79acad592dbca75c9b254b9589a46a86cb0cea58ed07d3a0be9b624c144a",
     "skills/sys_endure/handlers/add_skill.sh": "2608e84e7a849f5bbf43364124ae38d4761e32a646de19a53fd6690ff55416be",
