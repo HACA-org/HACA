@@ -59,6 +59,10 @@ A **Cognitive Profile** selects the complete set of axioms, memory policies, and
 
 **FCP** (Filesystem Cognitive Platform) is a HACA implementation profile that uses a POSIX filesystem as the state layer. All agent state lives in ordinary files. Spec: [implementations/fcp-core-spec/](implementations/fcp-core-spec/).
 
+There are two profile-compliant implementations for FCP:
+- **FCP-Core**: Implementation for the Zero-Autonomy profile (HACA-Core). Currently the primary implementation in this repository.
+- **FCP-Evolve**: *[Under Development]* — Implementation for the Supervised-Autonomy profile (HACA-Evolve).
+
 **FCP-Ref** is the minimal, spec-complete reference implementation of FCP — the simplest system that fully satisfies both specs. It is a validation target, not a product. Implementation: [implementations/fcp-core-ref/](implementations/fcp-core-ref/).
 
 ---
