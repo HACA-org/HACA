@@ -54,9 +54,9 @@ tools/
 
 ## Identity is Operator Configuration
 
-The `persona/` directory ships with a demonstration identity called **Agent-Zero**. Every file in it carries an explicit `<!-- EXAMPLE PERSONA -->` comment.
+The `persona/` directory ships with a demonstration identity called **Entity-Zero**. Every file in it carries an explicit `<!-- EXAMPLE PERSONA -->` comment.
 
-**Agent-Zero is not part of the FCP protocol.** It exists so the system runs out of the box and you have a concrete reference for how a well-formed persona looks. Before deploying in production, replace `identity.md`, `values.md`, and `constraints.md` with your own. The FAP (`FIRST_BOOT.md`) guides you through this.
+**Entity-Zero is not part of the FCP protocol.** It exists so the system runs out of the box and you have a concrete reference for how a well-formed persona looks. Before deploying in production, replace `identity.md`, `values.md`, and `constraints.md` with your own. The FAP (`FIRST_BOOT.md`) guides you through this.
 
 The protocol only requires that `persona/` contains these three files and that they are cryptographically sealed in `state/integrity.json`. What they contain is entirely up to the operator.
 

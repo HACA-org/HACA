@@ -5,7 +5,7 @@
   "drift_model": "ncd-gzip-v1",
   "signatures": {
     "BOOT.md": "b7df66cc9cd70bad1472c63a4f39b80ba117ec0c18f9c8d136338f4f06ff4752",
-    "persona/identity.md": "f77d94348b0c88c42d11c444c3fbb77d5a9767719d56741a1df3df54eea9ef68",
+    "persona/identity.md": "62cdc5049812b673f3408269a2035a85fd8e47c12543958be093b4580b61f38f",
     "persona/values.md": "077e4cb6596d38507d27ae40acba0bf593b8ef4bbf828e1414b9ebfc4c36ec1e",
     "persona/constraints.md": "b23259b35dabfd21b9e0e6f19c3ec1bb555b14c45ab2734171736404d9a322f0",
     "skills/index.json": "1322880bd49e0f4ea816870540ef85b2d145fe6151bc9e3d309b43532df4dce0",
@@ -24,7 +24,7 @@
     "skills/memory_store/memory_store.sh": "40228d3fd1ff88122638887559377ef08dea913ae488e0200facddfc00b8cdf0",
     "hooks/hook_dispatch.sh": "ce7b2346c5a6413b1c14ec1d9bf7be2cf21a422239ae9996a39b25d5876d1d2e",
     "hooks/pre_memory_store/01_validate_schema.sh": "ab476fd7a4119d1605a5b55a0c0b3e82d62253941bfc79977768012436cdc226",
-    "state/drift-probes.jsonl": "1e2b4466b62c2d0b22731e441a3412a838538bed44601558802fdefcaf8c5a94",
+    "state/drift-probes.jsonl": "2fc0bcdd5b6b28086e408866e50642f0ab38041f1c0b6ed79cde7fb786322169",
     "skills/sys_endure/sys_endure.sh": "2965e1b46788bb8a9d6954c7dc54f53722bb7da61608bd844f5af7dde374332a",
     "skills/sys_endure/handlers/seal.sh": "f0eb79acad592dbca75c9b254b9589a46a86cb0cea58ed07d3a0be9b624c144a",
     "skills/sys_endure/handlers/add_skill.sh": "2608e84e7a849f5bbf43364124ae38d4761e32a646de19a53fd6690ff55416be",
