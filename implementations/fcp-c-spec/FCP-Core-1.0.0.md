@@ -1,11 +1,13 @@
-Network Working Group                                          J. Orrico
-Internet-Draft                                                  FCP Core
-Intended status: Informational                         March 10, 2026
-Expires: September 10, 2026
+---
+title: "Filesystem Cognitive Platform (FCP) — Core Specification"
+short_title: "FCP-Core"
+version: "1.0.0"
+compliance: "HACA-Core v1.0.0"
+status: "Stable implementation-ready"
+date: 2026-03-10
+---
 
-
-         FCP v1.0: Filesystem Cognitive Platform (Universal Edition)
-                           draft-orrico-fcp-1.0.0
+# Filesystem Cognitive Platform (FCP) — Core Specification
 
 Abstract
 
@@ -19,7 +21,7 @@ Abstract
    security enhancements (HMAC-signed Traps, monotonic timestamp
    validation) that go beyond HACA-Core requirements but do not
    constitute HACA-Full compliance. Implementations requiring HACA-Full
-   MUST additionally implement HACA-Security (draft-orrico-haca-
+   MUST additionally implement HACA-Security (rfc/draft-orrico-haca-
    security-02).
 
 Status of This Memo
