@@ -15,8 +15,8 @@ HACA does not specify inference models, storage technologies, or implementation 
 HACA is built on the belief that intelligence is not just a function of scale, but a product of **continuity**. By shifting the paradigm from fleeting, amnesic sessions to enduring, sovereign entities, HACA enables the formation of a deep cognitive history:
 
 1.  **Repertoire Formation**: Moving beyond "Data Processing" to "Experience Synthesis." Over years of interaction, an entity accumulates layers of history that form a rich, unique repertoire that no fresh model can replicate.
-2.  **Cognitive Anchoring**: Providing the structural integrity (SIL) necessary for an entity to evolve without losing its core identity. HACA ensures that longevity doesn't lead to fragmentation or drift, but to a coherent, lived narrative.
-3.  **Synthesis of Experience**: Using simple filesystem primitives (symlinks, link files) to unify distant memories with the current context, creating a continuity of consciousness that spans the entity's entire lifecycle.
+2.  **Cognitive Anchoring**: Providing the structural integrity (System Integrity Layer) necessary for an entity to evolve without losing its core identity. HACA ensures that longevity doesn't lead to fragmentation or drift, but to a coherent, lived narrative.
+3.  **Synthesis of Experience**: Unifying distant historical fragments with current operational context, creating a continuity of consciousness that spans the entity's entire lifecycle, regardless of the underlying storage substrate.
 
 HACA is the infrastructure for AI that has a **History**.
 
