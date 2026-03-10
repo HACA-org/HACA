@@ -65,15 +65,19 @@ The protocol only requires that `persona/` contains these three files and that t
 ## Running
 
 ### Transparent Mode — via shell (SIL adapter)
-
+**Run:**
 ```bash
-# First deployment
-cp FIRST_BOOT.md.example FIRST_BOOT.md
-# Edit FIRST_BOOT.md if needed, then:
-./sil.sh
+# Start the interactive TUI (Recommended)
+./fcp
 
-# Normal boot (after FAP completed and FIRST_BOOT.md deleted)
-./sil.sh
+# Run one cycle manually
+./fcp cycle
+
+# Skip drift probes (faster, for development)
+SKIP_DRIFT=true ./fcp cycle
+
+# Dry run — assemble context but don't call LLM
+./fcp cycle --dry-run
 ```
 
 ### Opaque Mode — via prompt (no shell required)

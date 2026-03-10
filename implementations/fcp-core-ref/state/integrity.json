@@ -35,7 +35,7 @@
     "skills/sys_endure/handlers/remove_hook.sh": "85980853ae8aa4091fc831de29bccdd8ff90bd31c91f3050aa04fdd9c4ccdadd",
     "skills/sys_endure/handlers/sync.sh": "dce0404aa60fb38f32ccf80af2e0bcc285c4c55332d834517f7fb2bbb9e994c9",
     "skills/sys_endure/handlers/status.sh": "9a06d14e191380fc0b37ee1299cee1bb4e6ee602e16b930dfe62bc26f10dcfb3",
-    "sil.sh": "b5682a5c9a198c164958f14e6015d4da75f9e451b5dab869f40ad55174e5495c",
+    "sil.sh": "f9c43676e2824ef4efd38df77964f61e5acf6c3b02a5875bb9ae2c447879de0b",
     "skills/hello_world/manifest.json": "6dda5ba082019ef49f9870fa38e5fd435e3a9e1f112575c5140aeb1ddef54235",
     "skills/hello_world/hello_world.sh": "90e4065d9762e090152bffd4d708fc0df505914047b71dd7df90944a81303ec6",
     "skills/sys_telemetry/manifest.json": "98b779cdb2c876ccc09c5aff84634dc7ab843242c68318bc9f3baa8a729f8c9c",

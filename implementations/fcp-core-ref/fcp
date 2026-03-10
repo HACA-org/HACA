@@ -1,0 +1,43 @@
+#!/bin/bash
+# fcp — Main entry point for FCP-Ref
+
+# Bootstrap: locate FCP_REF_ROOT
+if [ -z "${FCP_REF_ROOT:-}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    export FCP_REF_ROOT="$SCRIPT_DIR"
+fi
+
+cd "$FCP_REF_ROOT"
+
+case "${1:-}" in
+    tui)
+        shift
+        ./fcp-tui.sh "$@"
+        ;;
+    cycle)
+        shift
+        ./sil.sh "$@"
+        ;;
+    help|--help|-h)
+        echo "Filesystem Cognitive Platform (FCP) - Reference Implementation"
+        echo ""
+        echo "Usage:"
+        echo "  ./fcp tui               - Start the interactive operator terminal (default)"
+        echo "  ./fcp cycle [--dry-run] - Run a single cognitive cycle (Phase 0-6)"
+        echo "  ./fcp help              - Show this help message"
+        echo ""
+        echo "Environment Variables:"
+        echo "  ANTHROPIC_API_KEY       - Required if using Claude backend"
+        echo "  OPENAI_API_KEY          - Required if using OpenAI backend"
+        ;;
+    *)
+        # Default to TUI if no args
+        if [ -z "$1" ]; then
+            ./fcp-tui.sh
+        else
+            echo "Unknown command: $1"
+            echo "Try './fcp help' for usage."
+            exit 1
+        fi
+        ;;
+esac
