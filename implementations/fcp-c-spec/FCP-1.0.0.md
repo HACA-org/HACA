@@ -42,8 +42,8 @@ Table of Contents
        3.1. Mandatory Capabilities
        3.2. Supported Filesystem Classes
    4.  The File Format Triad
-   5.  Universal Directory Topology
-   6.  Execution Layer and Cognitive Mesh (EL & CMI)
+   5.  Universal Directory Topology (Entity Store)
+   6.  Execution Layer and Cognitive Mesh (EXEC & CMI)
        6.1. Skill Encapsulation
        6.1.1. Skill Invocation Protocol (Intent Envelopes)
        6.2. Access Control
@@ -104,7 +104,9 @@ Table of Contents
    off the Land" (LotL) approach: an entire cognitive system can be
    encapsulated within a single portable directory using native OS
    file operations. There is no external database, no daemon process,
-   and no registry: the filesystem IS the application.
+   and no registry: the filesystem IS the application. FCP implements 
+   the HACA Entity Store (§3.1 HACA-Arch) as a single portable 
+   directory.
 
    Per HACA-Core Axiom III (Memory Store as Single Source of Truth),
    all persisted knowledge that informs cognition originates
@@ -121,8 +123,9 @@ Table of Contents
    "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this
    document are to be interpreted as described in RFC 2119.
 
-   Terms defined in HACA-Core (System, Host, CPE, MIL, EL, SIL, CMI,
-   Execution Cycle, Core Identity) apply unchanged.
+   Terms defined in HACA-Arch (Entity Store, Persona, Omega,
+   Cognitive Cycle, Session Cycle, Sleep Cycle, CPE, MIL, EXEC, SIL, CMI)
+   apply unchanged.
 
    FCP-specific terms:
 
@@ -153,12 +156,12 @@ Table of Contents
    identical in both modes. A system MUST be able to switch modes
    without modifying MIL state.
 
-   2a.1. Transparent Mode (EL-Mediated)
+   2a.1. Transparent Mode (EXEC-Mediated)
 
    In Transparent Mode the CPE and the Adapter are physically separate
    processes. The CPE is accessed as a remote API (e.g., LLM inference
    endpoint). The Adapter (SIL process, `sil.sh`) orchestrates the
-   execution cycle:
+   cognitive cycle:
 
       a) SIL assembles context from the MIL (CCP, Section 9.1).
       b) SIL submits context to CPE API and captures CPE output.
@@ -312,7 +315,7 @@ Table of Contents
    |-- persona/                  # Identity and prompt fragments
    |   |-- identity.md           # Axiom IV behavioral constraints
    |   `-- (identity artifacts only — no operational data)
-   |-- skills/                   # Execution Layer (EL)
+   |-- skills/                   # Execution Layer (EXEC)
    |   |-- index.json            # RBAC Registry
    |   `-- <skill_name>/         # Skill Cartridge
    |-- memory/                   # Memory Interface Layer (MIL)
@@ -337,7 +340,7 @@ Table of Contents
    Per HACA-Arch topology (Sections 3.4 and 3.5), skill results MUST be written to
    the MIL as ACP envelopes with `type: "SKILL_RESULT"` using the
    lockless spooling pattern (Section 7.6.1). The CPE MUST NOT receive
-   results directly from the EL.
+   results directly from the EXEC.
 
    6.1.1. Skill Invocation Protocol (Intent Envelopes)
 
@@ -549,9 +552,15 @@ Table of Contents
    Boot is divided into seven phases (0-6). Each MUST complete before
    the next begins. Any failure MUST abort boot.
 
+   If the SIL detects that the Memory Store (`/memory/archive/`) is 
+   empty, it MUST trigger the First Activation Protocol (FAP) per 
+   HACA-Arch Section 6.1 (Imprint). FAP initialization follows the 
+   normal boot phases but includes establishing the Operator Bound 
+   and deriving the Genesis Omega.
+
    In addition to lifecycle orchestration, the SIL exercises the active
    control edges defined in HACA-Arch Section 3.1 (SIL -> MIL control
-   and SIL -> EL control) to transition these components into restrictive
+   and SIL -> EXEC control) to transition these components into restrictive
    fault states (read-only, halted) when anomalies are detected. These
    control signals take effect during fault handling in Sections 7.4,
    11.3, and 15.1.
@@ -569,7 +578,7 @@ Table of Contents
       If Namespace isolation is unavailable, the SIL MUST fallback to 
       software-level boundary probing: attempt writes outside 
       `/workspaces/` and reads outside FCP root. If any probe fails, 
-      enter degraded read-only mode (no EL).
+      enter degraded read-only mode (no EXEC).
 
       env.md Generation Constraints: Because `/state/env.md` is
       volatile (regenerated each boot) and loaded into CPE context,
@@ -754,7 +763,7 @@ Table of Contents
    The SIL MAY additionally trigger swap-out on a periodic schedule
    (e.g., every N boot cycles). The CPE MUST NOT initiate swap-out
    directly; it MAY request it via a `SKILL_REQUEST` to a dedicated
-   `sys_gc` skill, which the SIL mediates through the EL.
+   `sys_gc` skill, which the SIL mediates through the EXEC.
 
    Swap-out selects fragments by age: the oldest fragments (by
    timestamp of last access or creation) are candidates. The SIL
@@ -857,7 +866,7 @@ Table of Contents
  
     If $D_{probe} > \tau$ (default: 0.15), the system MUST:
     a) Log a Consistency Fault to `session.jsonl`.
-    b) Halt MIL commits and EL invocations (read-only mode).
+    b) Halt MIL commits and EXEC invocations (read-only mode).
     c) Inject a `DRIFT_FAULT` Trap (Section 7.5). (`DRIFT_FAULT` is the FCP envelope type for the canonical Consistency Fault defined in HACA-Core Section 6.)
 
    See HACA-Core Section 6 (Fault Taxonomy) for fault states and
@@ -1234,12 +1243,12 @@ Table of Contents
 
    15.1. Sandbox Verification (HACA-Core Axiom VII)
 
-    The host MUST contain EL actions within `/workspaces/`. The SIL
+    The host MUST contain EXEC actions within `/workspaces/`. The SIL
     verifies boundaries during Phase 0 (Section 9). On failure: log
-    Sandbox Fault, disable EL, enter degraded read-only mode.
+    Sandbox Fault, disable EXEC, enter degraded read-only mode.
  
     FCP enforces this via Transparent Auto-Sandboxing (Active 
-    Confinement) using native OS Namespaces. The SIL SHOULD invoke EL 
+    Confinement) using native OS Namespaces. The SIL SHOULD invoke EXEC 
     actions via `unshare` (or `bwrap` if available) to create an 
     impenetrable jail:
  
@@ -1374,3 +1383,24 @@ Table of Contents
    Operator Bound Verification  | Section 9a.2(a) (owner_bind skill)
    Passive Distress Beacon      | Section 7.7 (state/beacon)
    Context Window Threshold     | Section 9.1.1 (Context Budget)
+
+19. HACA-Arch Compliance Mapping
+
+   This section provides the formal mapping between FCP v1.0 
+   mechanisms and HACA-Arch v1.0.0 structural requirements.
+
+   Requirement (HACA-Arch §5)    | FCP Implementation Reference
+   -----------------------------|---------------------------------------
+   Entity Store (Portable)      | Section 1 (Filesystem = Application)
+   Component Responsibility     | Sections 2, 6, 7 (CPE, MIL, EXEC, SIL)
+   Trust Model (Semi-Trusted)   | Section 15.1 (Sandbox), Section 15.3
+   Mnemonic Write Authority     | Section 1, Section 10 (MIL only)
+   Integrity Write Authority    | Section 7, Section 12 (SIL only)
+   Cognitive Cycle (Atomic)     | Section 2a.1 (Steps a-e)
+   Session Cycle (Lifecycle)    | Section 8, Section 9 (Boot Sequence)
+   Sleep Cycle (Maintenance)    | Sections 10-12 (Consolidation, Endure)
+   Endure Protocol (Evolution)  | Section 12.2 (sys_endure)
+   Heartbeat Protocol (Liveness)| Section 9 (Phase 6, pulses/)
+   First Activation (FAP)       | Section 13.9 (Phases 0-6)
+   Genesis Omega (Root Anchor)  | Section 11, Section 13.1
+   Operator Channel (Escalation)| Section 2a.1 (Trap envelopes)
