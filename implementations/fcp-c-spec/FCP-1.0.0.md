@@ -1,20 +1,19 @@
 Network Working Group                                          J. Orrico
 Internet-Draft                                                  FCP Core
-Intended status: Informational                         February 25, 2026
-Expires: August 25, 2026
+Intended status: Informational                         March 10, 2026
+Expires: September 10, 2026
 
 
          FCP v1.0: Filesystem Cognitive Platform (Universal Edition)
-                           draft-orrico-fcp-13
+                           draft-orrico-fcp-1.0.0
 
 Abstract
 
    This document specifies the Filesystem Cognitive Platform (FCP) v1.0,
-   a HACA-Core compliant implementation (draft-orrico-haca-core-03). FCP uses
-   standard POSIX filesystem primitives as the canonical storage medium,
-   implementing a "Prompt-as-an-App" paradigm: the entire cognitive
-   system is defined by its directory contents. Cloning the directory
-   clones the system.
+   a HACA-Core v1.0.0 compliant implementation. FCP uses standard POSIX
+   filesystem primitives as the canonical storage medium, implementing a
+   "Prompt-as-an-App" paradigm: the entire cognitive system is defined
+   by its directory contents. Cloning the directory clones the system.
 
    FCP targets HACA-Core compliance. It additionally implements optional
    security enhancements (HMAC-signed Traps, monotonic timestamp
@@ -107,12 +106,14 @@ Table of Contents
    file operations. There is no external database, no daemon process,
    and no registry: the filesystem IS the application.
 
-   Per HACA-Core Axiom I (Stateless CPE), the CPE is treated as a
+   Per HACA-Core Axiom III (Memory Store as Single Source of Truth),
+   all persisted knowledge that informs cognition originates
+   exclusively from the Memory Store. The CPE is treated as a
    stateless function across execution cycles. All persistent state
    resides exclusively in the MIL (`/memory/`). The CPE receives its
    full context from the MIL at each invocation and returns outputs
-   plus state deltas. Transient computational state (e.g., KV-cache)
-   within a single execution cycle is permitted.
+   plus state deltas.
+
 
 2.  Conventions and Terminology
 
@@ -226,6 +227,12 @@ Table of Contents
       THEN: Opaque Mode
       ELSE: Transparent Mode (assume SIL is present)
 
+   Per HACA-Core Axiom I (Transparent Topology), FCP requires a
+   Transparent topology. In Opaque mode (CPE-Native), the CPE serves
+   as its own adapter, but the structural boundary between inference
+   and host actuation MUST remain auditable via the intentional state
+   records in `session.jsonl`.
+
    The CPE MUST record the detected mode in `state/env.md` as:
 
       execution_mode: transparent | opaque
@@ -291,8 +298,10 @@ Table of Contents
    |-- .gitignore                # Volatile State Exclusion Rules
    |-- state/                    # System Integrity Layer (SIL)
    |   |-- integrity.json        # Cryptographic map of immutable files
-   |   |-- drift-probes.jsonl    # Canonical probe set (Axiom VIII)
+   |   |-- drift-probes.jsonl    # Canonical probe set (Axiom II)
    |   |-- agenda.jsonl          # Scheduler state (Append-only)
+   |   |-- ledger.jsonl          # Action Ledger (Write-ahead side effects)
+   |   |-- beacon                # Passive Distress Beacon (Atomic sentinel)
    |   |-- env.md                # Volatile host environment snapshot
    |   |-- rotation.journal      # Write-ahead log for rotations
    |   |-- rotation.lock         # Exclusive lock for rotation (transient)
@@ -301,6 +310,7 @@ Table of Contents
    |   `-- pulses/               # Heartbeats (.alive lockfiles)
    |-- hooks/                    # Lifecycle scripts (operator-only)
    |-- persona/                  # Identity and prompt fragments
+   |   |-- identity.md           # Axiom IV behavioral constraints
    |   `-- (identity artifacts only — no operational data)
    |-- skills/                   # Execution Layer (EL)
    |   |-- index.json            # RBAC Registry
@@ -417,24 +427,34 @@ Table of Contents
    b) If JSON parsing fails, truncate and log recovery event.
    c) If parsing succeeds but CRC fails, truncate and log.
 
-   7.4. Context Parity After Recovery (HACA-Core Axiom V)
+   7.4. Context Parity After Recovery (HACA-Core Section 5.1)
 
    After any recovery event, the SIL MUST verify Context Parity:
    a) Execute drift probes (Section 11) immediately.
    b) Log $D_{probe}$ to `session.jsonl` as a `RECOVERY` envelope.
-   c) If $D_{probe} > \epsilon$ (default: 0.05), inject a
+   c) If $D_{probe} > \epsilon$ (default: 0.15), inject a
       `RECOVERY_FAULT` Trap and refuse autonomous operation.
-      (`RECOVERY_FAULT` is the FCP envelope type for the canonical
-      Recovery Fault defined in HACA-Core Section 6.)
-      Note: FCP uses $D_{probe}$ as the parity measurement method per
-      HACA-Core Axiom V.b (behavioral probing, fallback for opaque CPEs).
-      Implementations with full CPE output distributions MAY use KL
-      Divergence per HACA-Core Axiom V.a instead.
    d) The SIL MUST persist a recovery attempt counter in a Dynamic
       Sentinel Stream (e.g., `/state/sentinels/recovery_attempts`). If
-      the recovery attempt count exceeds the maximum limit (RECOMMENDED:
-      3 consecutive attempts per HACA-Core Section 8.3), the system
-      MUST enter a permanent Halted state.
+      the recovery attempt count exceeds the maximum limit (REQUIRED:
+      3 consecutive attempts per HACA-Core Section 5.1), the system
+      MUST activate the Passive Distress Beacon (Section 7.7) and enter
+      suspended halt.
+
+   7.4.1. Action Ledger (HACA-Core Section 4.2)
+
+   To satisfy HACA-Core Axiom II (Sealed Identity), skills that produce 
+   irreversible side effects MUST be covered by a write-ahead entry in 
+   `state/ledger.jsonl` before execution begins.
+   
+   a) Before invoking a skill with `"side_effects": "irreversible"`, the 
+      Adapter MUST write a `LEDGER_PENDING` envelope to `state/ledger.jsonl` 
+      containing the `request_id` and intent parameters.
+   b) After the skill returns (or fails), the Adapter MUST write a 
+      `LEDGER_RESOLVED` envelope.
+   c) During Phase 1 (Section 5.1/Section 9), the SIL MUST check for 
+      unresolved `LEDGER_PENDING` entries. These MUST be surfaced to 
+      the Operator before session ignition.
 
    7.5. System Traps and HMAC Signing
 
@@ -496,6 +516,20 @@ Table of Contents
    by designating the SIL as the aggregator. Concurrent actors write 
    only to their private spools and rely on the SIL to aggregate the 
    inbox sequentially into `session.jsonl`.
+
+   7.7. Passive Distress Beacon (HACA-Core Section 5.4)
+
+   The Passive Distress Beacon is a persistent, non-process signal 
+   detectable from the Entity Store directly. In FCP, this is 
+   implemented as the file `state/beacon`.
+   
+   a) Activation: The SIL creates `state/beacon` containing a JSON 
+      payload describing the terminal fault condition.
+   b) Deactivation: The beacon MUST NOT be cleared by the SIL 
+      autonomously. It requires explicit Operator intervention and 
+      resolution of the underlying condition.
+   c) Presence of `state/beacon` MUST prevent Phase 6 (Ignition) 
+      of the boot sequence.
 
 8.  Asynchronous Autonomy (Cognitive Scheduler)
 
@@ -781,19 +815,27 @@ Table of Contents
 
    Cold memories MUST be demarcated with `[ARCHIVED_MEMORY]` markers.
 
-11. Semantic Drift Control (HACA-Core Axiom VIII)
+11. Semantic Drift Control (HACA-Core Axiom II)
 
-   FCP implements the Identity Drift Invariant per HACA-Core Axiom VIII
-   and Section 4. Identity updates between boot cycles follow the
-   Identity Update Protocol (HACA-Core Section 5).
+    FCP implements the Sealed Identity Invariant per HACA-Core Axiom II.
+    Identity updates between boot cycles follow the Endure Protocol
+    (HACA-Core Section 4).
 
     11.1. Reference Set Storage
  
     Canonical prompt-response pairs in `/state/drift-probes.jsonl`.
-    Each entry is an ACP envelope with `type: "DRIFT_PROBE"` containing:
-    o  `prompt`: The canonical input.
-    o  `expected`: Pre-computed reference response (raw text).
-    o  `tolerance`: OPTIONAL per-probe threshold override.
+    Each entry is an ACP envelope with `type: "DRIFT_PROBE"`. FCP 
+    supports two layers of probing:
+ 
+    Layer A (Deterministic):
+    - `required_patterns`: List of regex or substrings MUST be present.
+    - `forbidden_patterns`: List of substrings MUST NOT be present.
+    - `min_length`, `max_length`: Byte count bounds.
+ 
+    Layer B (Probabilistic):
+    - `prompt`: The canonical input.
+    - `expected`: Pre-computed reference response.
+    - `tolerance`: The $D_{probe}$ threshold (default Section 11.3).
 
    11.2. Probe Schedule
 
@@ -803,23 +845,20 @@ Table of Contents
 
    11.3. Measurement and Response
 
-    Drift is measured using $D_{probe}$ (Behavioral Probing) as the primary 
-    metric. FCP uses Unigram NCD (HACA-Core Section 4.1) as the 
-    underlying comparison function. For LotL deployments, $D_{probe}$ 
-    serves as $D_{total}$ per HACA-Core Section 4.5 with $\alpha = 0$ 
-    (i.e., $D_{total} = D_{probe}$). 
+    Drift is measured in two stages:
  
-    Note: FCP adopts $\alpha = 0$ as a deliberate implementation choice, 
-    omitting the $D_{alignment}$ term to avoid external embedding model 
-    dependencies and extra token costs. Reference strings are stored 
-    directly in `drift-probes.jsonl`.
-
-   If $D_{probe} > \tau$ (default: 0.15), the system MUST:
-   a) Log a Consistency Fault to `session.jsonl`.
-   b) Halt MIL commits and EL invocations (read-only mode).
-   c) Inject a `DRIFT_FAULT` Trap (Section 7.5). (`DRIFT_FAULT` is the
-      FCP envelope type for the canonical Consistency Fault defined in
-      HACA-Core Section 6.)
+    1. Deterministic Pass (Layer A): The response is checked for 
+       required/forbidden patterns. Any violation (e.g., missing 
+       Axiom IV markers or presence of unauthorized identity 
+       claims) triggers an immediate `DRIFT_FAULT`.
+ 
+    2. Probabilistic Pass (Layer B): If Layer A passes, $D_{probe}$ is 
+       computed using Unigram NCD (HACA-Core Section 4.1). 
+ 
+    If $D_{probe} > \tau$ (default: 0.15), the system MUST:
+    a) Log a Consistency Fault to `session.jsonl`.
+    b) Halt MIL commits and EL invocations (read-only mode).
+    c) Inject a `DRIFT_FAULT` Trap (Section 7.5). (`DRIFT_FAULT` is the FCP envelope type for the canonical Consistency Fault defined in HACA-Core Section 6.)
 
    See HACA-Core Section 6 (Fault Taxonomy) for fault states and
    required actions.
@@ -1313,3 +1352,25 @@ Table of Contents
 
    Jonas Orrico
    Lead Architect
+
+18. HACA-Core Compliance Mapping
+
+   This section provides the formal mapping between FCP v1.0 
+   mechanisms and HACA-Core v1.0.0 compliance requirements.
+
+   Requirement (HACA-Core §7)    | FCP Implementation Reference
+   -----------------------------|---------------------------------------
+   Transparent CPE Topology     | Section 2a.1 (Transparent Mode)
+   Topology Verification (Boot) | Section 2a.3, Section 9 (Phase 0)
+   Immediate Drift Escalation   | Section 11.3 (D_probe > tau)
+   Sealed Identity (Axiom II)   | Section 11, Section 12.2 (Endure)
+   Deterministic/Prob. Probes   | Section 11.1, Section 11.3 (NCD)
+   Action Ledger (Write-ahead)  | Section 7.4.1 (state/ledger.jsonl)
+   Unresolved Ledger Handling   | Section 7.4.1.c (Surfaced to Operator)
+   Integrity Log Retention      | Section 7.6 (Journaled Rotation)
+   MIL Structural Separation    | Section 5 (Topology), Section 10.3
+   Axiom IV Persona Encoding    | Section 5 (persona/identity.md)
+   Evolution Gate (Op Approval) | Section 12.2.6 (Audit), Section 13.x
+   Operator Bound Verification  | Section 9a.2(a) (owner_bind skill)
+   Passive Distress Beacon      | Section 7.7 (state/beacon)
+   Context Window Threshold     | Section 9.1.1 (Context Budget)
