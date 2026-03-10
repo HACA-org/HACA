@@ -1,3 +1,64 @@
-DEV-NOTES.md
+# --- System and OS ---
 .DS_Store
-.claude
+Thumbs.db
+*.tmp
+*.bak
+*.swp
+*~
+
+# --- IDEs and Editors ---
+.vscode/
+.idea/
+.claude/
+.gemini/
+.antigravity/
+.cursor/
+*.sublime-project
+*.sublime-workspace
+
+# --- Environment and Dependencies ---
+.env
+.venv
+venv/
+env/
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+
+# --- HACA / FCP Development / Ref runtime ---
+# Note: we want to keep the spec files, but potentially ignore runtime artifacts 
+# produced during testing in fcp-core-ref or local experiments.
+implementations/fcp-core-ref/memory/session*.jsonl
+implementations/fcp-core-ref/memory/session.jsonl
+implementations/fcp-core-ref/memory/inbox/*.msg
+implementations/fcp-core-ref/memory/spool/
+implementations/fcp-core-ref/memory/active_context/*
+!implementations/fcp-core-ref/memory/active_context/.keep
+implementations/fcp-core-ref/memory/preferences/*
+!implementations/fcp-core-ref/memory/preferences/.keep
+implementations/fcp-core-ref/memory/concepts/*.md
+implementations/fcp-core-ref/memory/concepts/*.jsonl
+!implementations/fcp-core-ref/memory/concepts/.keep
+implementations/fcp-core-ref/state/pulses/*.alive
+implementations/fcp-core-ref/state/rotation.lock
+implementations/fcp-core-ref/state/env.md
+implementations/fcp-core-ref/state/agenda.jsonl
+implementations/fcp-core-ref/state/sentinels/*
+!implementations/fcp-core-ref/state/sentinels/.keep
+implementations/fcp-core-ref/workspaces/
+implementations/fcp-core-ref/snapshots/
+.fcp_ref_root
+
+# --- Logs ---
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Project specific ---
+DEV-NOTES.md
+tmp/
+coverage/
+dist/
+build/
