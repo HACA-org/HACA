@@ -35,6 +35,8 @@ from .acp import (
     ACTOR_EXEC,
     TYPE_SKILL_RESULT,
     TYPE_SKILL_ERROR,
+    TYPE_STRUCTURAL_ANOMALY,
+    build_envelope,
     chunk_payload,
 )
 from .fs import (
@@ -42,6 +44,7 @@ from .fs import (
     spool_msg,
     utcnow_iso,
 )
+from .sil import append_integrity_log
 
 
 # ---------------------------------------------------------------------------
@@ -197,18 +200,16 @@ class ExecDispatcher:
         # --- Gate 1 ---
         entry = self.skill_index.get(skill_name)
         if entry is None:
-            return self._write_skill_error(
-                skill_name,
-                f"Skill {skill_name!r} not in index — possible structural anomaly.",
-            )
+            msg = f"Skill {skill_name!r} not in index — possible structural anomaly."
+            self._log_structural_anomaly(skill_name, msg)
+            return self._write_skill_error(skill_name, msg)
 
         # --- Gate 2 ---
         errors = _validate_manifest(entry, params)
         if errors:
-            return self._write_skill_error(
-                skill_name,
-                f"Manifest validation failed: {'; '.join(errors)}",
-            )
+            msg = f"Manifest validation failed: {'; '.join(errors)}"
+            self._log_structural_anomaly(skill_name, msg)
+            return self._write_skill_error(skill_name, msg)
 
         # --- Execute ---
         return self._execute(skill_name, entry, params)
@@ -289,6 +290,20 @@ class ExecDispatcher:
             )
         except Exception as exc:
             return self._write_skill_error(skill_name, str(exc))
+
+    def _log_structural_anomaly(self, skill_name: str, reason: str) -> None:
+        """Log a structural anomaly to integrity.log (§9.1).
+
+        Gate 1 (skill absent) and Gate 2 (manifest fail) failures are logged
+        here so the SIL has a persistent record for post-session analysis.
+        """
+        env = build_envelope(
+            actor=ACTOR_EXEC,
+            type_=TYPE_STRUCTURAL_ANOMALY,
+            data=json.dumps({"skill": skill_name, "reason": reason, "ts": utcnow_iso()}),
+            gseq=self.gseq_counter.next(),
+        )
+        append_integrity_log(self.entity_root, env)
 
     def _write_skill_result(
         self,

@@ -183,21 +183,39 @@ def drain_inbox(entity_root: str | Path) -> list[dict[str, Any]]:
     return envelopes
 
 
-def drain_presession(entity_root: str | Path) -> list[dict[str, Any]]:
+def drain_presession(
+    entity_root: str | Path,
+    max_entries: int | None = None,
+) -> tuple[list[dict[str, Any]], int]:
     """Drain the presession buffer (``io/inbox/presession/``) in FIFO order.
 
-    Returns envelopes in arrival order.  Files are deleted after reading.
-    Used at Boot Phase 5 to inject pre-session stimuli before the first cycle.
+    Args:
+        entity_root: Entity root path.
+        max_entries: Capacity bound from structural baseline (§8.3).  If the
+            buffer contains more entries than *max_entries*, the newest are
+            discarded (FIFO ordering: oldest entries are consumed first).
+
+    Returns:
+        ``(envelopes, n_discarded)`` — envelopes in arrival order; n_discarded
+        is the number of entries dropped due to capacity enforcement.
     """
     entity_root = Path(entity_root)
     presession_dir = entity_root / "io" / "inbox" / "presession"
     if not presession_dir.exists():
-        return []
+        return [], 0
 
     msg_files = sorted(
         [p for p in presession_dir.iterdir() if p.is_file() and p.suffix == ".msg"],
         key=lambda p: (p.stat().st_ctime, p.name),
     )
+
+    n_discarded = 0
+    if max_entries is not None and len(msg_files) > max_entries:
+        excess = msg_files[max_entries:]
+        for f in excess:
+            f.unlink(missing_ok=True)
+        msg_files = msg_files[:max_entries]
+        n_discarded = len(excess)
 
     envelopes: list[dict[str, Any]] = []
     for msg_file in msg_files:
@@ -209,7 +227,7 @@ def drain_presession(entity_root: str | Path) -> list[dict[str, Any]]:
         finally:
             msg_file.unlink(missing_ok=True)
 
-    return envelopes
+    return envelopes, n_discarded
 
 
 # ---------------------------------------------------------------------------

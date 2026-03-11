@@ -38,6 +38,7 @@ from .sil import (
     write_sleep_complete,
 )
 from .ui import UI, PlainUI
+from .operator import write_notification, SEVERITY_DEGRADED
 
 # ── regex para bloco fcp-actions ──────────────────────────────────────────
 _FCP_ACTIONS_RE = re.compile(
@@ -165,6 +166,12 @@ def _session_loop(ctx: BootContext, ui: UI) -> None:
                 gseq=sil_gseq.next(),
             )
             append_integrity_log(root, close_env)
+            write_notification(root, SEVERITY_DEGRADED, {
+                "event":        "SESSION_CLOSE_BUDGET",
+                "session_id":   session_id,
+                "used_tokens":  used_tokens,
+                "budget_tokens": budget_tokens,
+            })
             ui.session_close("budget")
             break
 

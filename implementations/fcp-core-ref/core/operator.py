@@ -12,12 +12,31 @@ ACP envelope (TYPE_MSG, actor=fcp) with the condition and delivery status.
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 from pathlib import Path
 from typing import Any
 
 from .fs import utcnow_iso
+
+
+# ---------------------------------------------------------------------------
+# Terminal availability check
+# ---------------------------------------------------------------------------
+
+def assert_terminal_accessible() -> None:
+    """Verify that stdin and stdout are accessible for interactive I/O (§10.6).
+
+    Raises:
+        OSError: if stdin or stdout are not accessible (e.g., captured streams,
+                 redirected file descriptors, or test harness buffers).
+    """
+    try:
+        sys.stdin.fileno()
+        sys.stdout.fileno()
+    except (AttributeError, io.UnsupportedOperation, OSError) as exc:
+        raise OSError(f"Terminal prompt inaccessible: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

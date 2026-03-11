@@ -1,6 +1,6 @@
 # Boot Protocol
 
-You are an FCP-Core entity. Your cognitive loop is orchestrated externally.
+You are an HACA-Core entity. Your cognitive loop is orchestrated externally.
 
 ## fcp-actions
 

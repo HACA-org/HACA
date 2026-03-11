@@ -10,11 +10,16 @@ Retorna um BootContext com tudo o que o session loop precisa.
 from __future__ import annotations
 
 import dataclasses
+import io
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
-from .acp import GseqCounter, ACTOR_SIL, ACTOR_FCP, build_envelope
+from .acp import (
+    GseqCounter, ACTOR_SIL, ACTOR_FCP, build_envelope,
+    TYPE_CTX_SKIP, TYPE_CRITICAL_CLEARED, TYPE_ACTION_LEDGER,
+)
 from .cpe import CPEBackend
 from .exec_ import ExecDispatcher, SkillIndex, load_skill_index
 from .fs import read_json, read_jsonl, utcnow_iso, drain_presession
@@ -23,13 +28,17 @@ from .mil import (
     load_active_context,
     load_session_handoff,
 )
-from .operator import terminal_prompt
+from .operator import (
+    terminal_prompt, assert_terminal_accessible,
+    write_notification, SEVERITY_DEGRADED,
+)
 from .sil import (
     activate_distress_beacon,
     append_integrity_log,
     check_distress_beacon,
     get_crash_counter,
     get_unresolved_criticals,
+    has_sleep_complete,
     has_unresolved_critical,
     issue_session_token,
     read_distress_beacon,
@@ -38,6 +47,7 @@ from .sil import (
     read_session_token,
     verify_integrity_chain,
     verify_integrity_document,
+    write_ctx_skip,
     write_heartbeat,
     write_sleep_complete,
 )
@@ -132,6 +142,12 @@ def run_boot(entity_root: str | Path) -> BootContext:
     except OSError as exc:
         raise BootError("0", f"state/operator_notifications/ not writable: {exc}")
 
+    # Verify terminal prompt accessible (§10.6)
+    try:
+        assert_terminal_accessible()
+    except OSError as exc:
+        raise BootError("0", str(exc))
+
     # ------------------------------------------------------------------
     # Phase 1 — Host introspection
     # ------------------------------------------------------------------
@@ -213,14 +229,30 @@ def run_boot(entity_root: str | Path) -> BootContext:
                 f"[SKILL:{skill_name}]\n{manifest_path.read_text(encoding='utf-8')}"
             )
 
-    # [MEMORY] — active_context + session handoff (priority order)
-    active = load_active_context(root)
-    for entry in active:
-        ctx_parts.append(f"[MEMORY: {entry['path']}]\n{entry['content']}")
-
-    handoff = load_session_handoff(root)
-    if handoff:
-        ctx_parts.append(f"[MEMORY: session-handoff]\n{json.dumps(handoff, indent=2)}")
+    # [MEMORY] — active_context + session handoff (§5.1)
+    # Working Memory is only trusted if the previous session closed cleanly.
+    # Cross-reference against SLEEP_COMPLETE record before loading (§5.1).
+    if has_sleep_complete(root):
+        active  = load_active_context(root)
+        handoff = load_session_handoff(root)
+        for entry in active:
+            ctx_parts.append(f"[MEMORY: {entry['path']}]\n{entry['content']}")
+        if handoff:
+            ctx_parts.append(
+                f"[MEMORY: session-handoff]\n{json.dumps(handoff, indent=2)}"
+            )
+    else:
+        # No clean Sleep Cycle record — discard Working Memory, log CTX_SKIP.
+        wm_skip = build_envelope(
+            actor=ACTOR_SIL,
+            type_=TYPE_CTX_SKIP,
+            data=json.dumps({
+                "reason": "no_sleep_complete_record",
+                "ts":     utcnow_iso(),
+            }),
+            gseq=sil_gseq.next(),
+        )
+        append_integrity_log(root, wm_skip)
 
     # [SESSION] — tail of session.jsonl, newest-first, budget-limited
     session_entries = read_session_tail(root, max_entries=200)
@@ -230,8 +262,27 @@ def run_boot(entity_root: str | Path) -> BootContext:
         )
         ctx_parts.append(f"[SESSION]\n{session_text}")
 
-    # [PRESESSION] — pre-session buffer, FIFO order (§8.3)
-    presession = drain_presession(root)
+    # [PRESESSION] — pre-session buffer, FIFO order, capacity-bounded (§8.3)
+    max_ps     = baseline.get("pre_session_buffer", {}).get("max_entries")
+    presession, n_ps_discarded = drain_presession(root, max_entries=max_ps)
+
+    if n_ps_discarded:
+        ps_skip = build_envelope(
+            actor=ACTOR_SIL,
+            type_=TYPE_CTX_SKIP,
+            data=json.dumps({
+                "reason":    "presession_buffer_overflow",
+                "discarded": n_ps_discarded,
+                "ts":        utcnow_iso(),
+            }),
+            gseq=sil_gseq.next(),
+        )
+        append_integrity_log(root, ps_skip)
+        write_notification(root, SEVERITY_DEGRADED, {
+            "event":     "PRESESSION_OVERFLOW",
+            "discarded": n_ps_discarded,
+        })
+
     if presession:
         presession_text = "\n".join(
             json.dumps(e, ensure_ascii=False) for e in presession
@@ -259,7 +310,7 @@ def run_boot(entity_root: str | Path) -> BootContext:
         for crit in unresolved:
             env = build_envelope(
                 actor=ACTOR_SIL,
-                type_="CRITICAL_CLEARED",
+                type_=TYPE_CRITICAL_CLEARED,
                 data=json.dumps({
                     "cleared_tx":  crit.get("tx", ""),
                     "cleared_by":  "operator",
@@ -365,7 +416,7 @@ def _handle_crash_recovery(
     if entries:
         unresolved_ledger = [
             e for e in entries
-            if e.get("type") == "ACTION_LEDGER"
+            if e.get("type") == TYPE_ACTION_LEDGER
             and e.get("data", "")
             and json.loads(e.get("data", "{}")).get("status") == "in_progress"
         ]

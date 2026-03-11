@@ -31,7 +31,7 @@ from .acp import GseqCounter, build_envelope, ACTOR_SIL, ACTOR_MIL
 from .cpe import detect_backend
 from .exec_ import build_skill_index
 from .fs import atomic_write_json, append_jsonl, ensure_dirs, read_json, utcnow_iso
-from .operator import terminal_prompt, write_notification, SEVERITY_INFO
+from .operator import assert_terminal_accessible, terminal_prompt, write_notification, SEVERITY_INFO
 from .sil import (
     build_integrity_document,
     issue_session_token,
@@ -180,6 +180,12 @@ def _run_pipeline(root: Path, track) -> str:
         test_file.unlink()
     except OSError as exc:
         raise FAPError(f"state/operator_notifications/ not writable: {exc}") from exc
+
+    # Verify terminal prompt accessible (§10.6 — enrollment requires interactive input)
+    try:
+        assert_terminal_accessible()
+    except OSError as exc:
+        raise FAPError(str(exc)) from exc
 
     # Log FAP start
     env_log = build_envelope(

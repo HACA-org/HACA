@@ -28,6 +28,8 @@ from typing import Any
 from .acp import (
     ACPEnvelope,
     GseqCounter,
+    TYPE_CTX_SKIP,
+    TYPE_CRASH_RECOVERY,
     TYPE_HEARTBEAT,
     TYPE_SLEEP_COMPLETE,
     ACTOR_SIL,
@@ -340,6 +342,33 @@ def write_sleep_complete(
     return env
 
 
+def _read_integrity_log(entity_root: str | Path) -> list[Any]:
+    """Read and return all entries from ``state/integrity.log``."""
+    return read_jsonl(Path(entity_root) / "state" / "integrity.log")
+
+
+def write_ctx_skip(
+    entity_root:  str | Path,
+    gseq_counter: GseqCounter,
+    data:         dict[str, Any],
+) -> ACPEnvelope:
+    """Write a CTX_SKIP envelope to ``state/integrity.log`` (§5.1).
+
+    Records that one or more context entries were discarded during Boot
+    Phase 5 context assembly.  *data* should include at minimum a ``reason``
+    key; ``ts`` is injected automatically.
+    """
+    payload = json.dumps({"ts": utcnow_iso(), **data})
+    env = build_envelope(
+        actor=ACTOR_SIL,
+        type_=TYPE_CTX_SKIP,
+        data=payload,
+        gseq=gseq_counter.next(),
+    )
+    append_integrity_log(entity_root, env)
+    return env
+
+
 # ---------------------------------------------------------------------------
 # Distress Beacon (§10.7)
 # ---------------------------------------------------------------------------
@@ -389,13 +418,13 @@ def get_crash_counter(entity_root: str | Path) -> int:
     between the previous SLEEP_COMPLETE and now.  This is a simplified
     approximation — full Fase 2 implementation will do proper event parsing.
     """
-    entries = read_jsonl(Path(entity_root) / "state" / "integrity.log")
+    entries = _read_integrity_log(entity_root)
     count = 0
     for entry in reversed(entries):
         t = entry.get("type")
         if t == TYPE_SLEEP_COMPLETE:
             break
-        if t == "CRASH_RECOVERY":
+        if t == TYPE_CRASH_RECOVERY:
             count += 1
     return count
 
@@ -409,7 +438,7 @@ def record_crash_recovery(
     data = json.dumps({"detail": detail, "ts": utcnow_iso()})
     env = build_envelope(
         actor=ACTOR_SIL,
-        type_="CRASH_RECOVERY",
+        type_=TYPE_CRASH_RECOVERY,
         data=data,
         gseq=gseq_counter.next(),
     )
@@ -423,39 +452,9 @@ def record_crash_recovery(
 CRITICAL_TYPES = {"DRIFT_FAULT", "ESCALATION_FAILED"}
 
 
-def has_unresolved_critical(entity_root: str | Path) -> bool:
-    """Return True iff any unresolved Critical condition exists in integrity.log.
-
-    A Critical condition is 'resolved' when a CRITICAL_CLEARED envelope
-    with a matching reference appears after it in the log.
-    """
-    entries = read_jsonl(Path(entity_root) / "state" / "integrity.log")
-
-    open_criticals: set[str] = set()   # tx UUIDs of unresolved criticals
-    cleared: set[str] = set()
-
-    for entry in entries:
-        t = entry.get("type", "")
-        if t in CRITICAL_TYPES:
-            tx = entry.get("tx", "")
-            if tx:
-                open_criticals.add(tx)
-        elif t == "CRITICAL_CLEARED":
-            # data field contains reference to the original tx
-            try:
-                d = json.loads(entry.get("data", "{}"))
-                ref = d.get("cleared_tx", "")
-                if ref:
-                    cleared.add(ref)
-            except Exception:
-                pass
-
-    return bool(open_criticals - cleared)
-
-
 def get_unresolved_criticals(entity_root: str | Path) -> list[dict[str, Any]]:
     """Return all unresolved Critical condition envelopes."""
-    entries = read_jsonl(Path(entity_root) / "state" / "integrity.log")
+    entries = _read_integrity_log(entity_root)
 
     open_map: dict[str, dict[str, Any]] = {}
     cleared: set[str] = set()
@@ -476,3 +475,27 @@ def get_unresolved_criticals(entity_root: str | Path) -> list[dict[str, Any]]:
                 pass
 
     return [v for k, v in open_map.items() if k not in cleared]
+
+
+def has_unresolved_critical(entity_root: str | Path) -> bool:
+    """Return True iff any unresolved Critical condition exists in integrity.log."""
+    return bool(get_unresolved_criticals(entity_root))
+
+
+def has_sleep_complete(entity_root: str | Path) -> bool:
+    """Return True iff the last significant event in integrity.log is SLEEP_COMPLETE.
+
+    Used at Boot Phase 5 to validate Working Memory before loading (§5.1).
+    HEARTBEAT entries are transparent in this scan — they don't interrupt
+    the SLEEP_COMPLETE boundary.  Any other entry before SLEEP_COMPLETE
+    indicates the previous session did not close cleanly.
+    """
+    entries = _read_integrity_log(entity_root)
+    for entry in reversed(entries):
+        t = entry.get("type", "")
+        if t == TYPE_SLEEP_COMPLETE:
+            return True
+        if t == TYPE_HEARTBEAT:
+            continue
+        return False
+    return False
