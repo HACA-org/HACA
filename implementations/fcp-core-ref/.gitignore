@@ -1,0 +1,13 @@
+# Python bytecode
+core/__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+
+# Entity runtime state — all generated at FAP/boot time, entity-specific.
+# A fresh clone starts in cold-start: FAP creates these on first run.
+state/
+memory/
+io/

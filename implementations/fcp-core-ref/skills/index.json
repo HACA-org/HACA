@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "skills": [
+    {
+      "name": "hello_world",
+      "description": "Smoke test — prints a greeting.",
+      "aliases": [
+        "/hello"
+      ],
+      "permissions": [],
+      "params": {},
+      "timeout_seconds": 10,
+      "irreversible": false,
+      "_executable": "skills/hello_world/run.sh"
+    },
+    {
+      "name": "owner_bind",
+      "description": "FAP operator binding (cold-start only).",
+      "aliases": [],
+      "permissions": [
+        "memory.write"
+      ],
+      "params": {},
+      "timeout_seconds": 30,
+      "irreversible": false,
+      "_executable": "skills/owner_bind/run.sh"
+    }
+  ]
+}
