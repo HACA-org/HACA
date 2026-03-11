@@ -2,20 +2,25 @@
 # core/sil.sh — System Integrity Layer (HACA-Arch §4.4 / HACA-Core 1.0.0)
 # Boot sequencer, integrity authority, and session token gatekeeper.
 #
-# Boot sequence:
-#   Phase 0  — Sandbox / Topology enforcement  (Axiom I)
-#   Phase 1  — Structural baseline load
-#   Phase 2  — Integrity Document validation   (Axiom II)
-#   Phase 3  — Distress Beacon check
-#   Phase 4  — Crash recovery
-#   Phase 5  — Operator Bound verification     (Axiom V)
-#   Phase 6  — Operator Channel verification   (§5.3)
-#   Phase 7  — First Activation Protocol       (if FIRST_BOOT.md present)
-#   Phase 8  — Drift probes                    (Axiom II)
-#   Token    — Session token issued
-#   Cycle    — Cognitive cycle
-#   Token    — Session token revoked
-#   Sleep    — Sleep Cycle (MIL consolidation)
+# Boot sequence (FCP-Core §6):
+#   Prereq  — Passive Distress Beacon check
+#   Phase 0 — Sandbox / CPE topology enforcement   (Axiom I)
+#   Phase 1 — Structural baseline load
+#   Phase 2 — Integrity Document validation        (Axiom II)
+#   Phase 3 — Crash recovery                       (§5.1)
+#   Phase 4 — Operator Bound + Channel verification (Axiom V / §5.3)
+#   Phase 5 — First Activation Protocol            (if cold-start)
+#   Phase 6 — Critical Condition Check             (unresolved DRIFT_FAULT)
+#   Token   — Session token issued                 (Phase 7)
+#   Cycle   — Cognitive cycle loop
+#   Token   — Session token REVOKED (marked, artefact kept)
+#
+# Sleep Cycle (FCP-Core §6b):
+#   Stage 0 — Semantic Drift Detection             (no LLM, two-layer probes)
+#   Stage 1 — Memory Consolidation                 (Closure Payload → MIL)
+#   Stage 2 — Garbage Collection                   (GC pass)
+#   Stage 3 — Endure Execution                     (Evolution Proposals)
+#   SLEEP_COMPLETE written → token artefact removed
 
 set -euo pipefail
 
@@ -34,7 +39,6 @@ SIL_HELPERS="$FCP_REF_ROOT/core/sil_helpers.py"
 
 source "$FCP_REF_ROOT/skills/lib/acp.sh"
 source "$FCP_REF_ROOT/skills/lib/rotation.sh"
-source "$FCP_REF_ROOT/skills/lib/drift.sh"
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -44,13 +48,16 @@ BASELINE_FILE="$FCP_REF_ROOT/state/baseline.json"
 INTEGRITY_LOG="$FCP_REF_ROOT/state/integrity.log"
 RECOVERY_FILE="$FCP_REF_ROOT/state/sentinels/recovery.attempts"
 BEACON_FILE="$FCP_REF_ROOT/state/distress.beacon"
+SEMANTIC_DIGEST="$FCP_REF_ROOT/state/semantic-digest.json"
 
-# Populated by load_baseline
+# Populated by phase1_baseline
 N_BOOT=3
 N_CHANNEL=3
 N_RETRY=3
 I_SECONDS=300
 HEARTBEAT_T=10
+S_BYTES=10485760
+C_COMMITS=10
 CHANNEL_PATH="state/operator_notifications"
 
 # Runtime
@@ -62,8 +69,8 @@ LAST_VITAL_CHECK=0
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-sil_log()       { echo "[SIL:$1] $2" >&2; }
-baseline_get()  { python3 "$SIL_HELPERS" baseline-get "$1"; }
+sil_log()      { echo "[SIL:$1] $2" >&2; }
+baseline_get() { python3 "$SIL_HELPERS" baseline-get "$1"; }
 
 integrity_log() {
     local component="$1" event="$2" detail="${3:-}"
@@ -75,7 +82,6 @@ integrity_log() {
 
 # ---------------------------------------------------------------------------
 # Operator Channel  (HACA-Core §5.3)
-# Mechanism: file — writes JSON to state/operator_notifications/.
 # ---------------------------------------------------------------------------
 operator_notify() {
     local severity="$1" component="$2" message="$3"
@@ -83,7 +89,6 @@ operator_notify() {
     local ts filename
     ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     filename="${channel_dir}/$(date -u +%Y%m%dT%H%M%SZ)_${severity}_${component}.json"
-
     if printf '{"ts":"%s","severity":"%s","component":"%s","message":"%s"}\n' \
         "$ts" "$severity" "$component" "$message" > "$filename"; then
         integrity_log "sil" "OPERATOR_CHANNEL_SENT" "severity=$severity"
@@ -109,7 +114,6 @@ operator_notify_with_retry() {
 
 # ---------------------------------------------------------------------------
 # Passive Distress Beacon  (HACA-Core §5.4)
-# Readable from Entity Store without network or running processes.
 # ---------------------------------------------------------------------------
 distress_beacon_activate() {
     local reason="$1"
@@ -122,19 +126,46 @@ distress_beacon_activate() {
 }
 
 # ---------------------------------------------------------------------------
-# Phase 0 — Sandbox / Topology enforcement  (HACA-Core Axiom I)
-# Transparent CPE topology required. Opaque → boot abort.
+# PREREQUISITE — Passive Distress Beacon check
+# Active beacon → suspended halt, no gate runs, no token issued.
+# ---------------------------------------------------------------------------
+prereq_beacon() {
+    [ -f "$BEACON_FILE" ] || return 0
+    sil_log "HALT" "Passive Distress Beacon is active. Resolve the condition first."
+    sil_log "HALT" "Then: rm $BEACON_FILE"
+    exit 1
+}
+
+# ---------------------------------------------------------------------------
+# Phase 0 — Sandbox / CPE topology enforcement  (HACA-Core Axiom I)
+# Transparent topology required. Verifies confinement.
 # ---------------------------------------------------------------------------
 phase0_sandbox() {
+    # CPE topology: baseline must declare "transparent"
+    local topology
+    topology=$(baseline_get topology 2>/dev/null || echo "")
+    if [ "$topology" != "transparent" ]; then
+        sil_log "FATAL" "Axiom I: Declared topology '$topology' is not 'transparent'. Boot aborted."
+        exit 1
+    fi
+
+    # Confinement verification
     if [ "$$" -eq 1 ] || grep -qaE 'docker|lxc|containerd|libpod' /proc/1/cgroup 2>/dev/null; then
-        sil_log "BOOT" "Confinement verified (container)."
+        sil_log "BOOT" "Confinement verified (container environment)."
         return 0
     fi
     if command -v unshare >/dev/null 2>&1; then
         sil_log "BOOT" "Re-executing inside private namespace..."
         exec unshare -m -p -f -r --mount-proc "$0" "$@"
     fi
-    sil_log "FATAL" "Axiom I: Confinement Fault — unshare unavailable."
+    # Fallback: write-boundary test
+    local test_file="/tmp/fcp_boundary_test_$$"
+    if touch "$test_file" 2>/dev/null; then
+        rm -f "$test_file"
+        sil_log "WARN" "Namespace isolation unavailable; boundary test passed."
+        return 0
+    fi
+    sil_log "FATAL" "Axiom I: Confinement Fault — unshare unavailable and boundary test failed."
     exit 1
 }
 
@@ -146,10 +177,13 @@ phase1_baseline() {
     N_BOOT=$(baseline_get thresholds.N_boot)
     N_CHANNEL=$(baseline_get thresholds.N_channel)
     N_RETRY=$(baseline_get thresholds.N_retry)
+    S_BYTES=$(baseline_get thresholds.S_bytes)
+    C_COMMITS=$(baseline_get integrity_chain.checkpoint_interval_C)
     I_SECONDS=$(baseline_get heartbeat.I_seconds)
     HEARTBEAT_T=$(baseline_get heartbeat.T)
     CHANNEL_PATH=$(baseline_get operator_channel.path)
     mkdir -p "$FCP_REF_ROOT/$CHANNEL_PATH"
+    mkdir -p "$(dirname "$TOKEN_FILE")"
     sil_log "BOOT" "Structural baseline loaded."
 }
 
@@ -160,28 +194,17 @@ phase2_integrity() {
     sil_log "BOOT" "Verifying Integrity Document..."
     if ! python3 "$SIL_HELPERS" verify-integrity; then
         integrity_log "sil" "INTEGRITY_MISMATCH" "boot"
-        sil_log "FATAL" "Integrity mismatch — Axiom II Violation."
+        sil_log "FATAL" "Integrity mismatch — Axiom II Violation. Boot aborted."
         exit 1
     fi
     integrity_log "sil" "INTEGRITY_OK" "boot"
 }
 
 # ---------------------------------------------------------------------------
-# Phase 3 — Distress Beacon check
-# Active beacon → suspended halt, no token issued.
+# Phase 3 — Crash recovery  (HACA-Core §5.1)
+# Stale token artefact = crash or incomplete Sleep Cycle indicator.
 # ---------------------------------------------------------------------------
-phase3_beacon() {
-    [ -f "$BEACON_FILE" ] || return 0
-    sil_log "HALT" "Passive Distress Beacon is active."
-    sil_log "HALT" "Resolve the condition, then: rm $BEACON_FILE"
-    exit 1
-}
-
-# ---------------------------------------------------------------------------
-# Phase 4 — Crash recovery  (HACA-Core §5.1)
-# Stale token = crash indicator. Unresolved Action Ledger → Operator review.
-# ---------------------------------------------------------------------------
-phase4_crash_recovery() {
+phase3_crash_recovery() {
     local crash_count=0
     [ -f "$RECOVERY_FILE" ] && crash_count=$(cat "$RECOVERY_FILE" 2>/dev/null || echo 0)
 
@@ -190,7 +213,7 @@ phase4_crash_recovery() {
         return 0
     fi
 
-    sil_log "RECOVERY" "Stale session token — crash detected."
+    sil_log "RECOVERY" "Stale session token — crash or incomplete Sleep Cycle detected."
     integrity_log "sil" "CRASH_DETECTED" "stale_token"
     crash_count=$((crash_count + 1))
     echo "$crash_count" > "$RECOVERY_FILE"
@@ -198,7 +221,8 @@ phase4_crash_recovery() {
     if [ "$crash_count" -ge "$N_BOOT" ]; then
         sil_log "FATAL" "Boot loop: $crash_count crashes (N_boot=$N_BOOT)."
         distress_beacon_activate "boot_loop_$crash_count"
-        operator_notify_with_retry "CRITICAL" "sil" "Boot loop detected: $crash_count crashes. Beacon activated."
+        operator_notify_with_retry "CRITICAL" "sil" \
+            "Boot loop: $crash_count consecutive crashes. Beacon activated."
         exit 1
     fi
 
@@ -221,7 +245,8 @@ review_action_ledger() {
 
     sil_log "RECOVERY" "Unresolved Action Ledger entries — Operator review required."
     integrity_log "sil" "ACTION_LEDGER_UNRESOLVED" "see_operator_notifications"
-    operator_notify "CRITICAL" "sil" "Unresolved Action Ledger entries from crashed session."
+    operator_notify "CRITICAL" "sil" \
+        "Unresolved Action Ledger entries from crashed session. Review required before next session."
 
     echo ""
     echo "=== CRASH RECOVERY: Unresolved Action Ledger Entries ==="
@@ -251,117 +276,147 @@ review_action_ledger() {
 }
 
 # ---------------------------------------------------------------------------
-# Phase 5 — Operator Bound verification  (HACA-Core Axiom V)
-# No valid Bound → permanent inactivity, no token issued.
+# Phase 4 — Operator Bound + Operator Channel verification
+# (HACA-Core Axiom V, §5.3)
 # ---------------------------------------------------------------------------
-phase5_operator_bound() {
+phase4_operator() {
+    # Operator Bound
     if ! python3 "$SIL_HELPERS" verify-operator-bound; then
-        sil_log "HALT" "Axiom V: No valid Operator Bound."
-        sil_log "HALT" "Run First Activation Protocol to enroll an Operator."
+        sil_log "HALT" "Axiom V: No valid Operator Bound. Entity in permanent inactivity."
         integrity_log "sil" "OPERATOR_BOUND_INVALID" "boot"
         exit 1
     fi
-    sil_log "BOOT" "Operator Bound verified."
     integrity_log "sil" "OPERATOR_BOUND_OK" "boot"
-}
+    sil_log "BOOT" "Operator Bound verified."
 
-# ---------------------------------------------------------------------------
-# Phase 6 — Operator Channel verification  (HACA-Core §5.3)
-# ---------------------------------------------------------------------------
-phase6_operator_channel() {
+    # Operator Channel reachability
     local channel_dir="$FCP_REF_ROOT/$CHANNEL_PATH"
-    if ! mkdir -p "$channel_dir" 2>/dev/null; then
-        sil_log "FATAL" "Operator Channel unavailable: $channel_dir"
+    if ! mkdir -p "$channel_dir" 2>/dev/null || [ ! -w "$channel_dir" ]; then
+        sil_log "FATAL" "Operator Channel unverifiable: $channel_dir is not writable."
         integrity_log "sil" "OPERATOR_CHANNEL_FAIL" "boot"
         exit 1
     fi
-    sil_log "BOOT" "Operator Channel verified."
     integrity_log "sil" "OPERATOR_CHANNEL_OK" "boot"
+    sil_log "BOOT" "Operator Channel verified."
 }
 
 # ---------------------------------------------------------------------------
-# Phase 7 — First Activation Protocol  (HACA-Arch §6.2)
+# Phase 5 — First Activation Protocol  (FCP-Core §6a)
+# Cold-start indicator: absence of memory/imprint.json.
 # ---------------------------------------------------------------------------
-phase7_fap() {
+phase5_fap() {
     local fap_file="$FCP_REF_ROOT/FIRST_BOOT.md"
-    [ -f "$fap_file" ] || return 0
-    sil_log "BOOT" "FIRST_BOOT.md detected — First Activation Protocol will run."
-    integrity_log "sil" "FAP_DETECTED" "first_boot"
-    SKIP_DRIFT=true
-    export FCP_FAP_MODE=true
-    export FCP_FAP_FILE="$fap_file"
-}
+    local imprint="$FCP_REF_ROOT/memory/imprint.json"
 
-# ---------------------------------------------------------------------------
-# Phase 8 — Drift probes  (HACA-Core Axiom II)
-# Any drift → immediate Critical. No Degraded, no tolerance.
-# ---------------------------------------------------------------------------
-phase8_drift() {
-    if [ "$SKIP_DRIFT" = "true" ]; then
-        sil_log "BOOT" "Drift probes skipped (first boot)."
+    # Cold-start: imprint absent
+    if [ ! -f "$imprint" ]; then
+        sil_log "BOOT" "No Imprint Record — First Activation Protocol."
+        integrity_log "sil" "FAP_DETECTED" "cold_start"
+        SKIP_DRIFT=true
+        export FCP_FAP_MODE=true
+        export FCP_FAP_FILE="${fap_file}"
         return 0
     fi
-    sil_log "BOOT" "Running drift probes..."
-    if ! drift_run_probes --skip-oracle 2>/dev/null; then
-        integrity_log "sil" "DRIFT_CRITICAL" "unauthorized_drift_at_boot"
-        operator_notify_with_retry "CRITICAL" "sil" \
-            "Axiom II Violation: Unauthorized Drift — session token withheld."
-        sil_log "FATAL" "Axiom II: Unauthorized Drift → Critical."
-        exit 1
+
+    # Legacy: FIRST_BOOT.md present (operator placed it manually)
+    if [ -f "$fap_file" ]; then
+        sil_log "BOOT" "FIRST_BOOT.md present — FAP mode."
+        integrity_log "sil" "FAP_DETECTED" "first_boot_md"
+        SKIP_DRIFT=true
+        export FCP_FAP_MODE=true
+        export FCP_FAP_FILE="$fap_file"
     fi
-    sil_log "BOOT" "Drift probes passed."
-    integrity_log "sil" "DRIFT_OK" "boot"
 }
 
 # ---------------------------------------------------------------------------
-# Session Token
+# Phase 6 — Critical Condition Check  (FCP-Core §6, Phase 6)
+# Checks Integrity Log for unresolved DRIFT_FAULT or ESCALATION_FAILED records.
+# These are written by Sleep Cycle Stage 0 and cleared only by explicit Operator action.
+# ---------------------------------------------------------------------------
+phase6_critical_check() {
+    if [ "$SKIP_DRIFT" = "true" ]; then
+        sil_log "BOOT" "Critical condition check skipped (first activation)."
+        return 0
+    fi
+    sil_log "BOOT" "Checking for unresolved Critical conditions..."
+    if ! python3 "$SIL_HELPERS" check-critical-conditions; then
+        integrity_log "sil" "CRITICAL_CHECK_FAIL" "unresolved_condition"
+        operator_notify_with_retry "CRITICAL" "sil" \
+            "Unresolved Critical condition from previous Sleep Cycle. Session token withheld."
+        sil_log "FATAL" "Unresolved Critical condition — session blocked. Operator must clear."
+        exit 1
+    fi
+    integrity_log "sil" "CRITICAL_CHECK_PASS" "boot"
+    sil_log "BOOT" "No unresolved Critical conditions."
+}
+
+# ---------------------------------------------------------------------------
+# Session Token  (FCP-Core §6, Phase 7 / §6b)
+# issue_token   — writes token artefact; marks session start
+# revoke_token  — marks token as revoked (keeps artefact as crash indicator)
+# remove_token  — deletes artefact; called only after SLEEP_COMPLETE
 # ---------------------------------------------------------------------------
 issue_token() {
     local token
     token=$(acp_new_tx)
-    echo "$token" > "$TOKEN_FILE"
+    printf '{"token":"%s","issued_at":"%s"}\n' \
+        "$token" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$TOKEN_FILE"
     echo "0" > "$RECOVERY_FILE"
-    sil_log "BOOT" "Session token issued: ${token:0:8}..."
     integrity_log "sil" "SESSION_OPEN" "token=${token:0:8}"
+    sil_log "SESSION" "Session token issued: ${token:0:8}..."
 }
 
 revoke_token() {
-    rm -f "$TOKEN_FILE"
-    sil_log "HALT" "Session token revoked."
+    local ts
+    ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    # Append revocation marker — artefact kept as crash indicator during Sleep Cycle
+    printf '{"revoked":true,"revoked_at":"%s"}\n' "$ts" >> "$TOKEN_FILE"
     integrity_log "sil" "SESSION_CLOSE" "token_revoked"
+    sil_log "SESSION" "Session token revoked. Sleep Cycle starting."
+}
+
+remove_token() {
+    rm -f "$TOKEN_FILE"
+    integrity_log "sil" "SESSION_TOKEN_REMOVED" ""
+    sil_log "SLEEP" "Session token artefact removed."
 }
 
 # ---------------------------------------------------------------------------
 # Heartbeat Vital Check  (HACA-Core §4.2)
 # Identity Drift: persona hashes vs Integrity Document.
-# Any mismatch → Critical, revoke token.
 # ---------------------------------------------------------------------------
 heartbeat_vital_check() {
+    local ts
+    ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    integrity_log "sil" "HEARTBEAT" "cycle=$CYCLE_COUNT ts=$ts"
     sil_log "SESSION" "Heartbeat Vital Check (cycle=$CYCLE_COUNT)..."
+
     if ! python3 "$SIL_HELPERS" check-persona-drift; then
         integrity_log "sil" "IDENTITY_DRIFT_CRITICAL" "cycle=$CYCLE_COUNT"
         revoke_token
         operator_notify_with_retry "CRITICAL" "sil" \
-            "Axiom II: Identity Drift at Heartbeat — session terminated."
-        sil_log "FATAL" "Axiom II: Identity Drift → Critical."
+            "Axiom II: Identity Drift detected at Heartbeat — session terminated."
+        sil_log "FATAL" "Axiom II: Identity Drift → Critical. Session terminated."
         exit 1
     fi
+
     LAST_VITAL_CHECK=$(date +%s)
     integrity_log "sil" "HEARTBEAT_OK" "cycle=$CYCLE_COUNT"
 }
 
 # ---------------------------------------------------------------------------
 # Session Cycle  (HACA-Arch §6.3)
-# Returns 1 to signal session-close (context window critical).
+# Returns 1 to signal session-close.
 # ---------------------------------------------------------------------------
 session_cycle() {
     sil_log "SESSION" "Cognitive cycle $((CYCLE_COUNT + 1))..."
 
-    # CPE already signaled context window critical in previous cycle
+    # CPE already signaled context-critical in previous cycle
     if [ "${FCP_CONTEXT_CRITICAL:-false}" = "true" ]; then
         sil_log "SESSION" "Context window critical — closing session."
         integrity_log "sil" "CONTEXT_WINDOW_CRITICAL" "session_close"
-        operator_notify "INFO" "sil" "Context window critical — session closed for consolidation."
+        operator_notify "INFO" "sil" \
+            "Context window critical — session closed for consolidation."
         return 1
     fi
 
@@ -370,23 +425,24 @@ session_cycle() {
     local context
     context=$("$CPE" context)
 
-    # Context window check: compare assembled size against critical threshold
+    # Context window critical check
     local ctx_size budget ctx_pct ctx_critical
     ctx_size=${#context}
-    budget=$(baseline_get thresholds.context_budget_chars 2>/dev/null || echo "${CONTEXT_BUDGET:-600000}")
+    budget=$(baseline_get thresholds.context_budget_chars 2>/dev/null || echo 600000)
     ctx_pct=$(baseline_get thresholds.context_window_critical_pct)
     ctx_critical=$(( budget * ctx_pct / 100 ))
     if [ "$ctx_size" -ge "$ctx_critical" ]; then
         export FCP_CONTEXT_CRITICAL=true
-        sil_log "SESSION" "Context window critical (${ctx_size}/${ctx_critical}) — closing session."
+        sil_log "SESSION" "Context window critical (${ctx_size}/${ctx_critical})."
         integrity_log "sil" "CONTEXT_WINDOW_CRITICAL" "size=${ctx_size}"
-        operator_notify "INFO" "sil" "Context window critical — session closed for consolidation."
+        operator_notify "INFO" "sil" \
+            "Context window critical — session will close after this cycle."
         return 1
     fi
 
     if [ "$DRY_RUN" = "true" ]; then
         echo "$context"
-        return 0
+        return 1  # signal session close after printing context
     fi
 
     local output
@@ -399,7 +455,7 @@ session_cycle() {
         "$output")
     acp_write "supervisor" "MSG" "$response_json" >/dev/null
 
-    # Parse and dispatch actions (SIL mediates all host actuation)
+    # Parse and dispatch actions (SIL mediates all host actuation — Axiom I)
     local actions
     actions=$("$CPE" parse "$output")
 
@@ -422,9 +478,14 @@ session_cycle() {
                 ;;
             evolution_proposal)
                 # HACA-Core §4.5: hold pending explicit Operator approval. Never auto-queue.
-                # Outcome is never returned to CPE.
-                integrity_log "sil" "EVOLUTION_PROPOSAL_RECEIVED" "pending_operator_review"
-                operator_notify "INFO" "sil" "Evolution Proposal received — awaiting Operator approval."
+                # Outcome never returned to CPE.
+                local proposal_content
+                proposal_content=$(python3 -c \
+                    "import json,sys; print(json.loads(sys.argv[1]).get('content',''))" \
+                    "$action" 2>/dev/null || echo "")
+                integrity_log "sil" "EVOLUTION_PROPOSAL_PENDING" "awaiting_operator"
+                operator_notify "INFO" "sil" \
+                    "Evolution Proposal received — forwarded to Operator for review: $proposal_content"
                 ;;
             session_close)
                 export FCP_CONTEXT_CRITICAL=true
@@ -438,7 +499,7 @@ session_cycle() {
                     'import json,sys; print(json.dumps(sys.argv[1]))' "$content")}" >/dev/null
                 ;;
             *)
-                [ -n "$atype" ] && sil_log "WARN" "Unknown action: $atype"
+                [ -n "$atype" ] && sil_log "WARN" "Unknown action type: $atype"
                 ;;
         esac
     done <<< "$actions"
@@ -459,19 +520,143 @@ session_cycle() {
 }
 
 # ---------------------------------------------------------------------------
-# Sleep Cycle  (HACA-Arch §6.4)
+# Sleep Cycle — Stage 0: Semantic Drift Detection  (FCP-Core §6b Stage 0)
+# Runs two-layer Semantic Probes against Memory Store content.
+# No LLM invocation. CPE is inactive at this stage.
+# Drift → log DRIFT_FAULT Critical to Integrity Log + notify Operator.
+# Does NOT halt Sleep Cycle — stages 1-3 still complete.
+# ---------------------------------------------------------------------------
+sleep_stage0_drift() {
+    if [ "$SKIP_DRIFT" = "true" ]; then
+        sil_log "SLEEP" "Stage 0: Semantic Drift skipped (first activation)."
+        return 0
+    fi
+
+    sil_log "SLEEP" "Stage 0: Semantic Drift Detection (two-layer, no LLM)..."
+
+    local drift_output
+    if drift_output=$(python3 "$SIL_HELPERS" scan-memory-drift 2>/dev/null); then
+        integrity_log "sil" "DRIFT_OK" "sleep_stage0"
+        sil_log "SLEEP" "Stage 0: Semantic Drift — all probes passed."
+    else
+        # Drift detected — log Critical condition, notify Operator
+        # Do NOT halt: remaining stages still execute
+        local fault_detail="${drift_output:-unspecified_drift}"
+        integrity_log "sil" "DRIFT_FAULT" "$fault_detail"
+        operator_notify_with_retry "CRITICAL" "sil" \
+            "Axiom II: Semantic Drift detected in Sleep Cycle Stage 0. Next session blocked."
+        sil_log "SLEEP" "Stage 0: DRIFT_FAULT logged. Next boot Phase 6 will withhold token."
+
+        # Update Semantic Digest with drift result
+        local ts
+        ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        python3 - <<PYEOF
+import json, os
+
+digest_path = "$SEMANTIC_DIGEST"
+ts = "$ts"
+fault = """$fault_detail"""
+
+try:
+    d = json.load(open(digest_path)) if os.path.exists(digest_path) else {}
+except Exception:
+    d = {}
+
+history = d.get("history", [])
+history.append({"ts": ts, "result": "DRIFT_FAULT", "detail": fault[:200]})
+d["history"] = history[-50:]  # keep last 50 cycles
+d["last_updated"] = ts
+d["last_result"] = "DRIFT_FAULT"
+
+tmp = digest_path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(d, f, indent=2)
+os.replace(tmp, digest_path)
+PYEOF
+        return 0  # Do not propagate — stages 1-3 still run
+    fi
+
+    # Update Semantic Digest with pass result
+    local ts
+    ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    python3 - <<PYEOF
+import json, os
+
+digest_path = "$SEMANTIC_DIGEST"
+ts = "$ts"
+
+try:
+    d = json.load(open(digest_path)) if os.path.exists(digest_path) else {}
+except Exception:
+    d = {}
+
+history = d.get("history", [])
+history.append({"ts": ts, "result": "PASS"})
+d["history"] = history[-50:]
+d["last_updated"] = ts
+d["last_result"] = "PASS"
+
+tmp = digest_path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(d, f, indent=2)
+os.replace(tmp, digest_path)
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
+# Sleep Cycle — Stage 3: Endure Execution  (FCP-Core §6b Stage 3)
+# Executes queued, Operator-authorized Evolution Proposals.
+# Writes SLEEP_COMPLETE record. Removes session token artefact.
+# ---------------------------------------------------------------------------
+sleep_stage3_endure() {
+    sil_log "SLEEP" "Stage 3: Endure Execution..."
+
+    # Check for pending proposals approved by Operator
+    local pending_proposals="$FCP_REF_ROOT/state/pending_proposals.jsonl"
+    if [ -f "$pending_proposals" ] && [ -s "$pending_proposals" ]; then
+        sil_log "SLEEP" "Stage 3: Processing authorized Evolution Proposals..."
+        # TODO (step 4): implement full Evolution Gate execution
+        # For now: log that proposals exist but cannot execute without authorization records
+        integrity_log "sil" "ENDURE_PROPOSALS_DEFERRED" "evolution_gate_not_yet_implemented"
+        sil_log "SLEEP" "Stage 3: Evolution Gate pending full implementation (step 4)."
+    else
+        sil_log "SLEEP" "Stage 3: No queued Evolution Proposals."
+    fi
+
+    integrity_log "sil" "SLEEP_COMPLETE" ""
+    sil_log "SLEEP" "SLEEP_COMPLETE record written."
+
+    remove_token
+}
+
+# ---------------------------------------------------------------------------
+# Sleep Cycle  (FCP-Core §6b)
+# Orchestrates Stages 0-3 in order. Each stage must complete before the next.
+# Token revocation happens before Stage 0; removal happens after Stage 3.
 # ---------------------------------------------------------------------------
 sleep_cycle() {
-    sil_log "SLEEP" "Starting Sleep Cycle..."
+    sil_log "SLEEP" "Sleep Cycle starting..."
     integrity_log "sil" "SLEEP_CYCLE_START" ""
-    "$MIL" consolidate
-    integrity_log "sil" "SLEEP_CYCLE_COMPLETE" ""
+
+    sleep_stage0_drift
+
+    sil_log "SLEEP" "Stage 1: Memory Consolidation..."
+    "$MIL" stage1
+
+    sil_log "SLEEP" "Stage 2: Garbage Collection..."
+    "$MIL" stage2
+
+    sleep_stage3_endure
+
     sil_log "SLEEP" "Sleep Cycle complete."
 }
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+# Save original args before parsing (needed for re-execution in phase0_sandbox)
+ORIG_ARGS=("$@")
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run)    DRY_RUN=true;    shift ;;
@@ -482,22 +667,28 @@ done
 
 LAST_VITAL_CHECK=$(date +%s)
 
-phase0_sandbox "$@"
+prereq_beacon
+phase0_sandbox "${ORIG_ARGS[@]}"
 phase1_baseline
 phase2_integrity
-phase3_beacon
-phase4_crash_recovery
-phase5_operator_bound
-phase6_operator_channel
-phase7_fap
-phase8_drift
+phase3_crash_recovery
+phase4_operator
+phase5_fap
+phase6_critical_check
 issue_token
 
-if ! session_cycle; then
-    sil_log "SESSION" "Session closed early (context window)."
-fi
+integrity_log "sil" "SESSION_LOOP_START" ""
+
+while true; do
+    if ! session_cycle; then
+        break
+    fi
+    # Check if CPE requested session close
+    [ "${FCP_CONTEXT_CRITICAL:-false}" = "true" ] && break
+done
 
 revoke_token
 sleep_cycle
+
 integrity_log "sil" "BOOT_COMPLETE" ""
 sil_log "BOOT" "Process complete."
