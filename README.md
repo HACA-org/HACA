@@ -22,7 +22,6 @@ HACA is the infrastructure for AI that has a **History**.
 
 ---
 
-
 ## Specification Documents
 
 | Document | Version | Description |
