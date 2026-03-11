@@ -13,6 +13,10 @@ memory/preferences/*
 memory/concepts/*.md
 memory/concepts/*.jsonl
 !memory/concepts/.keep
+memory/session-handoff.json
+memory/working-memory.json
+memory/hooks_error.log
+memory/imprint.json
 state/pulses/*.alive
 state/rotation.lock
 state/env.md
@@ -23,6 +27,10 @@ state/sentinels/*
 state/operator_notifications/
 state/distress.beacon
 state/pending_retries.jsonl
+state/pending_proposals.jsonl
+state/drift-config.json
+state/drift-pool.jsonl
+state/semantic-digest.json
 FIRST_BOOT.md
 workspaces/
 snapshots/

@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""fcp — FCP Operator Terminal entry point."""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def locate_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def run_sil(root: Path, extra_args: list) -> int:
+    env = os.environ.copy()
+    env["FCP_REF_ROOT"] = str(root)
+    result = subprocess.run(
+        [sys.executable, str(root / "core" / "sil.py")] + extra_args,
+        env=env,
+    )
+    return result.returncode
+
+
+def tui(root: Path):
+    """Interactive operator terminal."""
+    sys.path.insert(0, str(root))
+    from core.acp import write_presession
+
+    print("=" * 79)
+    print("  Filesystem Cognitive Platform (FCP) — Operator Terminal")
+    print("=" * 79)
+    print("Type your message and press ENTER. Type 'exit' or 'quit' to close.")
+    print("-" * 79)
+
+    while True:
+        try:
+            user_input = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nClosing session.")
+            break
+
+        if user_input.lower() in ("exit", "quit"):
+            print("Closing session.")
+            break
+
+        if not user_input:
+            continue
+
+        payload = json.dumps({"role": "user", "content": user_input})
+        try:
+            write_presession("supervisor", "MSG", payload, root)
+        except OverflowError:
+            print("[SYSTEM] Pre-session buffer full. Try again later.", file=sys.stderr)
+            continue
+        except Exception as e:
+            print(f"[SYSTEM] Failed to write message: {e}", file=sys.stderr)
+            continue
+
+        print()
+        run_sil(root, ["--skip-drift"])
+        print()
+
+
+def endure_list(root: Path):
+    proposals_path = root / "state" / "pending_proposals.jsonl"
+    if not proposals_path.exists():
+        print("No pending Evolution Proposals.")
+        return
+
+    proposals = []
+    with open(proposals_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                proposals.append(json.loads(line))
+            except Exception:
+                pass
+
+    if not proposals:
+        print("No pending Evolution Proposals.")
+        return
+
+    log_path = root / "state" / "integrity.log"
+    auth_ids = set()
+    if log_path.exists():
+        with open(log_path) as f:
+            for line in f:
+                try:
+                    e = json.loads(line.strip())
+                    if e.get("type") == "EVOLUTION_AUTH" or e.get("event") == "EVOLUTION_AUTH":
+                        d_raw = e.get("data", "{}")
+                        d = json.loads(d_raw) if isinstance(d_raw, str) else d_raw
+                        auth_ids.add(d.get("proposal_id", ""))
+                except Exception:
+                    pass
+
+    print(f"{'ID':<20} {'STATUS':<12} {'FILE':<40} REASON")
+    print("-" * 90)
+    for p in proposals:
+        pid = p.get("proposal_id", "")[:18]
+        status = "AUTHORIZED" if p.get("proposal_id", "") in auth_ids else "PENDING"
+        tgt = p.get("target_file", "")[:38]
+        reason = p.get("reason", "")[:30]
+        print(f"{pid:<20} {status:<12} {tgt:<40} {reason}")
+
+
+def endure_approve(root: Path, proposal_id: str):
+    sys.path.insert(0, str(root))
+    from core.sil import _endure_approve
+    _endure_approve(root, proposal_id)
+
+
+def show_help():
+    print("Filesystem Cognitive Platform (FCP) - Reference Implementation")
+    print()
+    print("Usage:")
+    print("  ./fcp                              - Start the interactive operator terminal")
+    print("  ./fcp endure list                  - List pending Evolution Proposals")
+    print("  ./fcp endure approve <proposal_id> - Authorize an Evolution Proposal")
+    print("  ./fcp help                         - Show this help message")
+    print()
+    print("Environment Variables:")
+    print("  ANTHROPIC_API_KEY       - Required if using Claude backend")
+    print("  OPENAI_API_KEY          - Required if using OpenAI backend")
+
+
+def main():
+    root = locate_root()
+    os.environ.setdefault("FCP_REF_ROOT", str(root))
+    sys.path.insert(0, str(root))
+
+    args = sys.argv[1:]
+
+    if not args:
+        tui(root)
+        return
+
+    cmd = args[0]
+
+    if cmd == "endure":
+        sub = args[1] if len(args) > 1 else ""
+        if sub == "list":
+            endure_list(root)
+        elif sub == "approve":
+            if len(args) < 3:
+                print("Usage: ./fcp endure approve <proposal_id>", file=sys.stderr)
+                sys.exit(1)
+            endure_approve(root, args[2])
+        else:
+            print("Usage: ./fcp endure {list|approve <proposal_id>}", file=sys.stderr)
+            sys.exit(1)
+
+    elif cmd in ("help", "--help", "-h"):
+        show_help()
+
+    else:
+        print(f"Unknown command: {cmd}")
+        print("Try './fcp help' for usage.")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
