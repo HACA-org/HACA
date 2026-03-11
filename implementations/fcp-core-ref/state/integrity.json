@@ -35,10 +35,19 @@
     "skills/sys_endure/handlers/remove_hook.sh": "85980853ae8aa4091fc831de29bccdd8ff90bd31c91f3050aa04fdd9c4ccdadd",
     "skills/sys_endure/handlers/sync.sh": "dce0404aa60fb38f32ccf80af2e0bcc285c4c55332d834517f7fb2bbb9e994c9",
     "skills/sys_endure/handlers/status.sh": "9a06d14e191380fc0b37ee1299cee1bb4e6ee602e16b930dfe62bc26f10dcfb3",
-    "sil.sh": "f9c43676e2824ef4efd38df77964f61e5acf6c3b02a5875bb9ae2c447879de0b",
+    "core/cpe.sh": "bb3c0fed3020e2061d4f2c1e838f6d13c5bc91092b6a479ed153813ea2ae79f6",
+    "core/exec.sh": "27b8a761a3ce3c2d2a5c910ff6b08cb856901b2fb4b7f3f98b75777baf3ade0c",
+    "core/mil.sh": "ce26839fa1b08f4a09ef8ec320141b763581c2ed609fa96784430a04a301cf55",
+    "skills/lib/acp.sh": "781b8cc84bbdcecda843b4bb3e70ba5fe2258dddf59e3abb71969e3aaa0c812a",
+    "skills/lib/drift.sh": "248c783176635a95bc0d2064aee308b1519112de493ad0f361bc1550d6bb8f46",
+    "skills/lib/params.sh": "317ee349bed4c11ca83d211c1fc0f2be9f74b4de40895f96dd2370097348f268",
+    "skills/lib/rotation.sh": "845d5c865d61f1b8add9cc36f4e9f00ed54d12f2cdd88d7e1930db916481d5b6",
     "skills/hello_world/manifest.json": "6dda5ba082019ef49f9870fa38e5fd435e3a9e1f112575c5140aeb1ddef54235",
     "skills/hello_world/hello_world.sh": "90e4065d9762e090152bffd4d708fc0df505914047b71dd7df90944a81303ec6",
     "skills/sys_telemetry/manifest.json": "98b779cdb2c876ccc09c5aff84634dc7ab843242c68318bc9f3baa8a729f8c9c",
-    "skills/sys_telemetry/sys_telemetry.sh": "f850552b548e166dc24e47fca8ccc31ba17b50fe7d19474f6e64a24fa4361e28"
+    "skills/sys_telemetry/sys_telemetry.sh": "f850552b548e166dc24e47fca8ccc31ba17b50fe7d19474f6e64a24fa4361e28",
+    "core/sil.sh": "94154a30e8fcbd5619f292856fe909d1c29d5bc4d1ddbc1c339e13b97dd4920d",
+    "state/baseline.json": "bf5be42ef5eaf7c1f28fba65c7c66ace8e16bee5a3ba0fcad55a4f11c4f8e1c5",
+    "core/sil_helpers.py": "ade7c1f6401ba8efe6a9ca889fd995a56cf0d48b111fdedba7237367f0a3a6b9"
   }
 }

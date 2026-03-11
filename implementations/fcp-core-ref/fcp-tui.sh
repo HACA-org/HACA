@@ -79,7 +79,7 @@ while true; do
     acp_write "supervisor" "MSG" "$PAYLOAD" >/dev/null
 
     echo -e "\n\033[1;35m[SYSTEM] Invoking SIL...\033[0m"
-    ./sil.sh --skip-drift  # Skip drift for faster TUI interaction in example
+    ./core/sil.sh --skip-drift  # Skip drift for faster TUI interaction in example
     
     clear
     echo "==============================================================================="

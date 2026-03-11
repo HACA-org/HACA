@@ -16,7 +16,7 @@ case "${1:-}" in
         ;;
     cycle)
         shift
-        ./sil.sh "$@"
+        ./core/sil.sh "$@"
         ;;
     help|--help|-h)
         echo "Filesystem Cognitive Platform (FCP) - Reference Implementation"
