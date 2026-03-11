@@ -6,7 +6,7 @@
   "signatures": {
     "BOOT.md": "d51b8e41aa157c83f65c4fa3eae400d21f83e85511332a05dda7650d36b564e6",
     "persona/identity.md": "62cdc5049812b673f3408269a2035a85fd8e47c12543958be093b4580b61f38f",
-    "persona/values.md": "077e4cb6596d38507d27ae40acba0bf593b8ef4bbf828e1414b9ebfc4c36ec1e",
+    "persona/values.md": "0a885888cc48d976f7f8698129d835e7c9f4abd14cb75503e9a93a7bce9f36e8",
     "persona/constraints.md": "b23259b35dabfd21b9e0e6f19c3ec1bb555b14c45ab2734171736404d9a322f0",
     "skills/index.json": "1322880bd49e0f4ea816870540ef85b2d145fe6151bc9e3d309b43532df4dce0",
     "skills/cron_wake/manifest.json": "dea9795992c33ed79cccce01bc86b438f9b01c7d8cc7fa049eeb0fafb28b1bc8",
@@ -46,8 +46,9 @@
     "skills/hello_world/hello_world.sh": "90e4065d9762e090152bffd4d708fc0df505914047b71dd7df90944a81303ec6",
     "skills/sys_telemetry/manifest.json": "98b779cdb2c876ccc09c5aff84634dc7ab843242c68318bc9f3baa8a729f8c9c",
     "skills/sys_telemetry/sys_telemetry.sh": "f850552b548e166dc24e47fca8ccc31ba17b50fe7d19474f6e64a24fa4361e28",
-    "core/sil.sh": "f53434dd2d6e6a4ea363ae64b421655ce15638bb1c617f4141b843051c11599a",
+    "core/sil.sh": "e518801b9d140fb0bdcdffb9494de5bfbf8edee514462caccde772b2ba34148e",
     "state/baseline.json": "33a62d77acced7dbd52eb2a35e97ec9ba0edd4907fa57b2b4c970bb1bbee5f64",
-    "core/sil_helpers.py": "bc677569e14f82fa016c6b76889220c1f5bc40ab55893cc8520e9d79adf382a2"
+    "core/sil_helpers.py": "b0138d2f94b0d28fff430912129ca7c0c8b0b5a483b3be9c4032117a981df8fb",
+    "fcp": "55345a5d3f10d0082ac6dd6076688a42a5931407a78bc007babd477f57759502"
   }
 }

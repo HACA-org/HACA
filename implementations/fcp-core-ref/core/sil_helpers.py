@@ -28,6 +28,11 @@ Commands:
 
   baseline-get <key>        Print a dot-path value from state/baseline.json.
                             e.g. baseline-get thresholds.N_boot
+
+  endure-execute            Execute queued Operator-authorized Evolution Proposals
+                            (Sleep Cycle Stage 3). Verifies EVOLUTION_AUTH, applies
+                            atomic writes, updates integrity.json, emits ENDURE_COMMIT.
+                            Exits 0 on success.
 """
 
 import gzip
@@ -385,6 +390,244 @@ def cmd_scan_memory_drift():
 
 
 # ---------------------------------------------------------------------------
+# endure-execute
+#
+# Executes queued, Operator-authorized Evolution Proposals (Sleep Cycle Stage 3).
+# For each proposal in state/pending_proposals.jsonl:
+#   1. Verify matching EVOLUTION_AUTH record exists in state/integrity.log
+#      (proposal_id AND content_digest must match).
+#   2. Verify target_file is tracked in state/integrity.json (structural file).
+#   3. Write new content atomically (write-to-temp + os.replace).
+#   4. Recompute SHA-256 hash; update state/integrity.json atomically.
+#   5. Append ENDURE_COMMIT envelope to memory/session.jsonl.
+#   6. Append checkpoint to state/integrity_chain.jsonl if C commits accumulated.
+# Proposals without a valid EVOLUTION_AUTH are discarded and logged.
+# Clears state/pending_proposals.jsonl after processing.
+# Exits 0 on success (even if some proposals were rejected).
+# ---------------------------------------------------------------------------
+def cmd_endure_execute():
+    import tempfile
+    from datetime import datetime, timezone
+
+    r = root()
+    proposals_path   = os.path.join(r, "state", "pending_proposals.jsonl")
+    log_path         = os.path.join(r, "state", "integrity.log")
+    integrity_path   = os.path.join(r, "state", "integrity.json")
+    chain_path       = os.path.join(r, "state", "integrity_chain.jsonl")
+    session_path     = os.path.join(r, "memory", "session.jsonl")
+    baseline_path    = os.path.join(r, "state", "baseline.json")
+
+    # Load C (checkpoint interval) from baseline
+    C = 5
+    try:
+        bl = json.load(open(baseline_path))
+        C = bl.get("integrity", {}).get("C_commits", C)
+    except Exception:
+        pass
+
+    # Load pending proposals
+    proposals = []
+    try:
+        with open(proposals_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    proposals.append(json.loads(line))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    if not proposals:
+        print("Stage 3: No pending Evolution Proposals.", file=sys.stderr)
+        return
+
+    # Load EVOLUTION_AUTH records from integrity.log
+    auth_records = {}  # proposal_id → {content_digest, operator, ts}
+    try:
+        with open(log_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("type") != "EVOLUTION_AUTH":
+                        continue
+                    data_raw = entry.get("data", "{}")
+                    data = json.loads(data_raw) if isinstance(data_raw, str) else data_raw
+                    pid = data.get("proposal_id", "")
+                    if pid:
+                        auth_records[pid] = data
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Load current integrity manifest
+    try:
+        manifest = json.load(open(integrity_path))
+    except Exception as e:
+        print(f"Stage 3: Cannot read integrity.json: {e}", file=sys.stderr)
+        return
+
+    tracked = set(manifest.get("signatures", {}).keys())
+
+    # Count existing Endure commits for checkpoint logic
+    endure_commit_count = 0
+    try:
+        with open(log_path) as f:
+            for line in f:
+                try:
+                    if json.loads(line.strip()).get("type") == "ENDURE_COMMIT":
+                        endure_commit_count += 1
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    ts_now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    processed = []
+
+    for proposal in proposals:
+        pid     = proposal.get("proposal_id", "")
+        tgt     = proposal.get("target_file", "")
+        content = proposal.get("content", "")
+        digest  = proposal.get("content_digest", "")
+
+        # --- Gate 1: EVOLUTION_AUTH must exist with matching digest ---
+        auth = auth_records.get(pid)
+        if not auth or auth.get("content_digest") != digest:
+            print(f"Stage 3: REJECTED {pid}: no matching EVOLUTION_AUTH.", file=sys.stderr)
+            _append_log(log_path, "sil", "ENDURE_PROPOSAL_REJECTED",
+                        json.dumps({"proposal_id": pid, "reason": "no_auth"}))
+            processed.append(pid)
+            continue
+
+        # --- Gate 2: target_file must be tracked in integrity.json ---
+        if tgt not in tracked:
+            print(f"Stage 3: REJECTED {pid}: {tgt!r} not in tracked files.", file=sys.stderr)
+            _append_log(log_path, "sil", "ENDURE_PROPOSAL_REJECTED",
+                        json.dumps({"proposal_id": pid, "reason": "untracked_file", "file": tgt}))
+            processed.append(pid)
+            continue
+
+        abs_tgt = os.path.join(r, tgt)
+
+        # --- Snapshot ---
+        snap_dir = os.path.join(r, "memory", "spool")
+        os.makedirs(snap_dir, exist_ok=True)
+        snap_path = os.path.join(snap_dir, f"endure_snap_{pid}_{ts_now.replace(':', '')}.bak")
+        if os.path.exists(abs_tgt):
+            import shutil
+            shutil.copy2(abs_tgt, snap_path)
+
+        # --- Atomic write ---
+        os.makedirs(os.path.dirname(abs_tgt), exist_ok=True)
+        tmp = abs_tgt + ".endure.tmp"
+        with open(tmp, "w") as f:
+            f.write(content)
+        os.replace(tmp, abs_tgt)
+
+        # --- Update integrity.json hash atomically ---
+        new_hash = sha256_file(abs_tgt)
+        manifest["signatures"][tgt] = new_hash
+        _write_json_atomic(integrity_path, manifest)
+
+        # --- Increment commit counter ---
+        endure_commit_count += 1
+
+        # --- Emit ENDURE_COMMIT to session.jsonl ---
+        commit_data = json.dumps({
+            "proposal_id":   pid,
+            "target_file":   tgt,
+            "content_digest": digest,
+            "new_hash":      new_hash,
+            "commit_n":      endure_commit_count,
+        })
+        _append_acp(session_path, "sil", "ENDURE_COMMIT", commit_data)
+        _append_log(log_path, "sil", "ENDURE_COMMIT",
+                    json.dumps({"proposal_id": pid, "file": tgt, "hash": new_hash}))
+
+        # --- Integrity chain checkpoint (every C commits) ---
+        if endure_commit_count % C == 0:
+            prev_hash = _read_last_chain_hash(chain_path)
+            chain_entry = {
+                "n":    endure_commit_count,
+                "ts":   ts_now,
+                "prev": prev_hash,
+                "hash": hashlib.sha256(
+                    f"{prev_hash}:{tgt}:{new_hash}:{endure_commit_count}".encode()
+                ).hexdigest(),
+            }
+            with open(chain_path, "a") as f:
+                json.dump(chain_entry, f)
+                f.write("\n")
+            print(f"Stage 3: Checkpoint appended at commit {endure_commit_count}.", file=sys.stderr)
+
+        print(f"Stage 3: COMMITTED {pid} → {tgt}", file=sys.stderr)
+        processed.append(pid)
+
+    # Clear processed proposals from pending_proposals.jsonl
+    remaining = [p for p in proposals if p.get("proposal_id") not in set(processed)]
+    tmp = proposals_path + ".tmp"
+    with open(tmp, "w") as f:
+        for p in remaining:
+            json.dump(p, f)
+            f.write("\n")
+    os.replace(tmp, proposals_path)
+
+    print(f"Stage 3: Endure complete. {len(processed)} proposals processed.", file=sys.stderr)
+
+
+def _append_log(log_path: str, actor: str, etype: str, data: str):
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    entry = {"actor": actor, "type": etype, "ts": ts, "data": data}
+    with open(log_path, "a") as f:
+        json.dump(entry, f)
+        f.write("\n")
+
+
+def _append_acp(path: str, actor: str, etype: str, data: str):
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    entry = {"actor": actor, "type": etype, "ts": ts, "data": data}
+    with open(path, "a") as f:
+        json.dump(entry, f)
+        f.write("\n")
+
+
+def _write_json_atomic(path: str, obj: dict):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(obj, f, indent=2)
+    os.replace(tmp, path)
+
+
+def _read_last_chain_hash(chain_path: str) -> str:
+    """Return the hash field of the last entry in the chain, or 'genesis'."""
+    if not os.path.exists(chain_path):
+        return "genesis"
+    last_hash = "genesis"
+    try:
+        with open(chain_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    last_hash = json.loads(line).get("hash", last_hash)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return last_hash
+
+
+# ---------------------------------------------------------------------------
 # baseline-get <dot.path>
 # ---------------------------------------------------------------------------
 def cmd_baseline_get(key: str):
@@ -428,6 +671,8 @@ if __name__ == "__main__":
         cmd_check_critical_conditions()
     elif cmd == "scan-memory-drift":
         cmd_scan_memory_drift()
+    elif cmd == "endure-execute":
+        cmd_endure_execute()
     elif cmd == "baseline-get" and len(args) >= 2:
         cmd_baseline_get(args[1])
     else:

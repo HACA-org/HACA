@@ -479,13 +479,55 @@ session_cycle() {
             evolution_proposal)
                 # HACA-Core §4.5: hold pending explicit Operator approval. Never auto-queue.
                 # Outcome never returned to CPE.
-                local proposal_content
-                proposal_content=$(python3 -c \
-                    "import json,sys; print(json.loads(sys.argv[1]).get('content',''))" \
-                    "$action" 2>/dev/null || echo "")
-                integrity_log "sil" "EVOLUTION_PROPOSAL_PENDING" "awaiting_operator"
-                operator_notify "INFO" "sil" \
-                    "Evolution Proposal received — forwarded to Operator for review: $proposal_content"
+                python3 - "$action" <<'PYEOF'
+import hashlib, json, os, sys
+from datetime import datetime, timezone
+
+root = os.environ.get("FCP_REF_ROOT", "")
+try:
+    d = json.loads(sys.argv[1])
+except Exception:
+    d = {}
+
+target_file   = d.get("target_file", "")
+content       = d.get("content", "")
+reason        = d.get("reason", "")
+proposal_id   = d.get("proposal_id", "") or \
+    hashlib.sha256(f"{target_file}:{content}".encode()).hexdigest()[:16]
+content_digest = hashlib.sha256(content.encode()).hexdigest()
+
+ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+# Write to pending_proposals.jsonl
+proposals_path = os.path.join(root, "state", "pending_proposals.jsonl")
+record = {
+    "proposal_id":    proposal_id,
+    "ts":             ts,
+    "target_file":    target_file,
+    "content":        content,
+    "reason":         reason,
+    "content_digest": content_digest,
+}
+with open(proposals_path, "a") as f:
+    json.dump(record, f)
+    f.write("\n")
+
+# Log to integrity.log via stdout (picked up by integrity_log caller)
+# We print directly since we're inside a python3 - heredoc
+log_path = os.path.join(root, "state", "integrity.log")
+log_entry = {
+    "actor": "sil",
+    "type":  "EVOLUTION_PROPOSAL_PENDING",
+    "ts":    ts,
+    "data":  json.dumps({"proposal_id": proposal_id, "content_digest": content_digest}),
+}
+with open(log_path, "a") as f:
+    json.dump(log_entry, f)
+    f.write("\n")
+
+print(f"[SIL] Evolution Proposal queued: {proposal_id} → {target_file}", file=sys.stderr)
+print(f"[SIL] Awaiting Operator authorization. Run: ./fcp endure approve {proposal_id}", file=sys.stderr)
+PYEOF
                 ;;
             session_close)
                 # Extract Closure Payload from action and write to inbox
@@ -641,14 +683,12 @@ PYEOF
 sleep_stage3_endure() {
     sil_log "SLEEP" "Stage 3: Endure Execution..."
 
-    # Check for pending proposals approved by Operator
     local pending_proposals="$FCP_REF_ROOT/state/pending_proposals.jsonl"
     if [ -f "$pending_proposals" ] && [ -s "$pending_proposals" ]; then
         sil_log "SLEEP" "Stage 3: Processing authorized Evolution Proposals..."
-        # TODO (step 4): implement full Evolution Gate execution
-        # For now: log that proposals exist but cannot execute without authorization records
-        integrity_log "sil" "ENDURE_PROPOSALS_DEFERRED" "evolution_gate_not_yet_implemented"
-        sil_log "SLEEP" "Stage 3: Evolution Gate pending full implementation (step 4)."
+        python3 "$SIL_HELPERS" endure-execute 2>&1 | while IFS= read -r line; do
+            sil_log "SLEEP" "$line"
+        done
     else
         sil_log "SLEEP" "Stage 3: No queued Evolution Proposals."
     fi
