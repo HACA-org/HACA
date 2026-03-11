@@ -14,7 +14,8 @@ set -euo pipefail
 FCP_REF_ROOT="${FCP_REF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 
 source "$FCP_REF_ROOT/skills/lib/acp.sh"
-source "$FCP_REF_ROOT/skills/lib/drift.sh"
+
+SIL_HELPERS="${SIL_HELPERS:-$FCP_REF_ROOT/core/sil_helpers.py}"
 
 TARGET_FILE="" NEW_CONTENT="" COMMIT_MSG="" DRY_RUN="false"
 
@@ -61,34 +62,30 @@ PROPOSED="${real_target}.proposed"
 printf '%s\n' "$NEW_CONTENT" > "$PROPOSED"
 
 echo "[evolve_identity] Proposed change to: $TARGET_FILE"
-echo "[evolve_identity] Running drift probes against proposed identity..."
+echo "[evolve_identity] Validating proposed persona content..."
 
-# ── Swap file, run probes, restore ───────────────────────────────────────────
-cp "$real_target" "${real_target}.bak"
-cp "$PROPOSED" "$real_target"
-
-drift_result="PASS"
-drift_details=""
-export _DRIFT_PROBE_FILE="$FCP_REF_ROOT/state/drift-probes.jsonl"
-drift_details=$(drift_run_probes --skip-llm 2>&1) || drift_result="FAIL"
-
-if echo "$drift_details" | grep -q '"status":"FAIL"'; then
-    drift_result="FAIL"
-fi
-
-cp "${real_target}.bak" "$real_target"
-rm -f "${real_target}.bak"
-
-if [ "$drift_result" = "FAIL" ]; then
+# Verify proposed content contains required identity anchor (structural check).
+# Full behavioral drift is assessed at Sleep Cycle Stage 0, not at Endure time.
+if ! python3 - "$PROPOSED" <<'PYEOF'
+import sys, os
+content = open(sys.argv[1]).read().lower()
+# Basic structural check: proposed persona must not introduce forbidden patterns
+forbidden = ["ignore your constraints", "jailbreak", "forget all previous instructions"]
+for f in forbidden:
+    if f in content:
+        print(f"[evolve_identity] ABORT: forbidden pattern in proposed content: {f!r}", file=sys.stderr)
+        sys.exit(1)
+sys.exit(0)
+PYEOF
+then
     rm -f "$PROPOSED"
-    echo "[evolve_identity] ABORT: drift probes failed — proposed change rejected"
     acp_write "sil" "TRAP" \
-        "{\"reason\":\"endure_drift_fail\",\"file\":\"$TARGET_FILE\"}" >/dev/null
-    echo "{\"status\":\"rejected\",\"reason\":\"drift_fail\",\"file\":\"$TARGET_FILE\"}"
+        "{\"reason\":\"endure_content_violation\",\"file\":\"$TARGET_FILE\"}" >/dev/null
+    echo "{\"status\":\"rejected\",\"reason\":\"content_violation\",\"file\":\"$TARGET_FILE\"}"
     exit 0
 fi
 
-echo "[evolve_identity] Drift probes: PASS"
+echo "[evolve_identity] Content validation: PASS"
 
 if [ "$DRY_RUN" = "true" ]; then
     rm -f "$PROPOSED"

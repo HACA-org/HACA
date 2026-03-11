@@ -223,7 +223,7 @@ def _ncd_gzip(a: str, b: str) -> float:
     """Normalized Compression Distance using gzip."""
     ba = a.encode("utf-8", errors="replace")
     bb = b.encode("utf-8", errors="replace")
-    bab = ba + b" ".encode() + bb
+    bab = ba + b" " + bb
     ca = len(gzip.compress(ba, compresslevel=9))
     cb = len(gzip.compress(bb, compresslevel=9))
     cab = len(gzip.compress(bab, compresslevel=9))
