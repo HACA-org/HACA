@@ -3,6 +3,9 @@ memory/session*.jsonl
 memory/session.jsonl
 memory/inbox/*.msg
 memory/spool/
+memory/episodic/
+memory/semantic/
+memory/archive/
 memory/active_context/*
 !memory/active_context/.keep
 memory/preferences/*
@@ -14,8 +17,13 @@ state/pulses/*.alive
 state/rotation.lock
 state/env.md
 state/agenda.jsonl
+state/integrity.log
 state/sentinels/*
 !state/sentinels/.keep
+state/operator_notifications/
+state/distress.beacon
+state/pending_retries.jsonl
+FIRST_BOOT.md
 workspaces/
 snapshots/
 
