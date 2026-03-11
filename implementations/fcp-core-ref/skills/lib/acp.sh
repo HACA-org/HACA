@@ -146,6 +146,93 @@ print(json.dumps(envelope, ensure_ascii=False))
 }
 
 # ---------------------------------------------------------------------------
+# acp_write_presession <actor> <type> <data> [tx] [seq] [eof]
+# Writes an ACP envelope to the pre-session buffer (memory/inbox/presession/).
+# Enforces capacity from baseline.pre_session_buffer.capacity.
+# On overflow: rejects, notifies Operator, returns 1.
+# ---------------------------------------------------------------------------
+acp_write_presession() {
+    local actor="$1"
+    local type="$2"
+    local data="$3"
+    local tx="${4:-$(acp_new_tx)}"
+    local seq="${5:-1}"
+    local eof="${6:-true}"
+
+    local presession_dir="$FCP_REF_ROOT/memory/inbox/presession"
+    mkdir -p "$presession_dir"
+
+    # Check capacity
+    python3 - "$presession_dir" "$FCP_REF_ROOT/state/baseline.json" "$actor" <<'PYEOF'
+import json, os, sys
+presession_dir = sys.argv[1]
+baseline_path  = sys.argv[2]
+actor          = sys.argv[3]
+notif_dir = os.path.join(os.environ.get("FCP_REF_ROOT",""), "state","operator_notifications")
+
+capacity = 100
+try:
+    bl = json.load(open(baseline_path))
+    capacity = bl.get("pre_session_buffer", {}).get("capacity", capacity)
+except Exception:
+    pass
+
+current = len([f for f in os.listdir(presession_dir) if f.endswith(".msg")])
+if current >= capacity:
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    notif = {
+        "type":      "PRE_SESSION_BUFFER_OVERFLOW",
+        "ts":        ts,
+        "component": actor,
+        "capacity":  capacity,
+        "count":     current,
+        "message":   f"Pre-session buffer full ({current}/{capacity}). Stimulus rejected.",
+    }
+    os.makedirs(notif_dir, exist_ok=True)
+    path = os.path.join(notif_dir, f"PSB_OVERFLOW_{ts.replace(':','')}.json")
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(notif, f, indent=2)
+    os.replace(tmp, path)
+    print(f"[acp] OVERFLOW: pre-session buffer at capacity ({current}/{capacity}). Rejected.", file=sys.stderr)
+    sys.exit(1)
+sys.exit(0)
+PYEOF
+    [ $? -eq 0 ] || return 1
+
+    # Write to spool then atomic rename into presession/
+    local gseq
+    gseq=$(acp_next_gseq "$actor")
+    local ts
+    ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local crc
+    crc=$(acp_crc32 "$data")
+    local spool_dir="$FCP_REF_ROOT/memory/spool/${actor}"
+    mkdir -p "$spool_dir"
+    local epoch
+    epoch=$(python3 -c "import time; print(int(time.time() * 1e9))" 2>/dev/null || date +%s)
+    local tmp_file="${spool_dir}/${epoch}-${gseq}.tmp"
+    local msg_file="${presession_dir}/${epoch}-${gseq}.msg"
+
+    python3 -c "
+import json, sys
+a, gseq, tx, seq, eof_s, typ, ts, data, crc = \
+    sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4]), \
+    sys.argv[5], sys.argv[6], sys.argv[7], sys.argv[8], sys.argv[9]
+envelope = {
+    'actor': a, 'gseq': gseq, 'tx': tx, 'seq': seq, 'eof': (eof_s == 'true'),
+    'type': typ, 'ts': ts, 'data': data, 'crc': crc,
+}
+print(json.dumps(envelope, ensure_ascii=False))
+" "$actor" "$gseq" "$tx" "$seq" "$eof" "$type" "$ts" "$data" "$crc" \
+    > "$tmp_file" || return 1
+
+    mv "$tmp_file" "$msg_file" || return 1
+    echo "$msg_file"
+}
+
+# ---------------------------------------------------------------------------
 # acp_read_inbox
 # Reads all .msg files from memory/inbox/ in chronological order (by name).
 # Outputs one JSON envelope per line, suitable for piping to jq.

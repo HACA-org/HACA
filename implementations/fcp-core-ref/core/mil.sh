@@ -17,6 +17,8 @@ fi
 
 source "$FCP_REF_ROOT/skills/lib/acp.sh"
 
+SIL_HELPERS="${SIL_HELPERS:-$FCP_REF_ROOT/core/sil_helpers.py}"
+
 SESSION_FILE="$FCP_REF_ROOT/memory/session.jsonl"
 AGENDA_FILE="$FCP_REF_ROOT/state/agenda.jsonl"
 EPISODIC_DIR="$FCP_REF_ROOT/memory/episodic"
@@ -416,6 +418,11 @@ for line in lines:
 # CLI entry point
 # ---------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    # Reciprocal SIL Watchdog: check heartbeat before any operation.
+    # Non-fatal for MIL — notification is written to Operator Channel but
+    # memory operations proceed (memory integrity must not depend on SIL liveness).
+    python3 "$SIL_HELPERS" watchdog-check mil 2>&1 | grep -v "^$" >&2 || true
+
     case "${1:-}" in
         drain)   mil_drain_inbox ;;
         stage1)  mil_stage1_consolidate ;;

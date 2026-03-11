@@ -15,6 +15,7 @@ fi
 # Load ACP library
 source "$FCP_REF_ROOT/skills/lib/acp.sh"
 
+SIL_HELPERS="${SIL_HELPERS:-$FCP_REF_ROOT/core/sil_helpers.py}"
 SKILL_INDEX="$FCP_REF_ROOT/skills/index.json"
 
 # ---------------------------------------------------------------------------
@@ -114,6 +115,13 @@ for k, v in params.items():
 
 # CLI entry point
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    # Reciprocal SIL Watchdog: check before any skill execution.
+    # If SIL is unresponsive, halt execution and escalate to Operator.
+    if ! python3 "$SIL_HELPERS" watchdog-check exec 2>&1; then
+        echo "[EXEC] HALTED: SIL unresponsive — skill execution suspended." >&2
+        exit 1
+    fi
+
     case "${1:-}" in
         execute) exec_skill "${2:-}" "${3:-{}}" ;;
         *) echo "Usage: $0 execute <skill_name> <params_json>" >&2; exit 1 ;;

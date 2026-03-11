@@ -33,6 +33,11 @@ Commands:
                             (Sleep Cycle Stage 3). Verifies EVOLUTION_AUTH, applies
                             atomic writes, updates integrity.json, emits ENDURE_COMMIT.
                             Exits 0 on success.
+
+  watchdog-check <component> Check SIL heartbeat freshness from state/integrity.log.
+                            If SIL has been silent beyond watchdog.sil_threshold_seconds,
+                            writes SIL_UNRESPONSIVE notification to Operator Channel and
+                            exits 1. Exits 0 if heartbeat is current.
 """
 
 import gzip
@@ -582,6 +587,98 @@ def cmd_endure_execute():
     print(f"Stage 3: Endure complete. {len(processed)} proposals processed.", file=sys.stderr)
 
 
+# ---------------------------------------------------------------------------
+# watchdog-check <component>
+#
+# Reads the most recent HEARTBEAT or HEARTBEAT_OK record from state/integrity.log.
+# Computes elapsed seconds since that record's timestamp.
+# If elapsed > watchdog.sil_threshold_seconds (from baseline.json):
+#   - Writes SIL_UNRESPONSIVE notification to state/operator_notifications/
+#   - Exits 1 (caller should escalate / halt operation)
+# Exits 0 if heartbeat is current or log is absent (boot time).
+# ---------------------------------------------------------------------------
+def cmd_watchdog_check(component: str):
+    import time
+    from datetime import datetime, timezone
+
+    r = root()
+    log_path      = os.path.join(r, "state", "integrity.log")
+    baseline_path = os.path.join(r, "state", "baseline.json")
+    notif_dir     = os.path.join(r, "state", "operator_notifications")
+
+    # Load threshold
+    threshold = 300
+    try:
+        bl = json.load(open(baseline_path))
+        threshold = bl.get("watchdog", {}).get("sil_threshold_seconds", threshold)
+    except Exception:
+        pass
+
+    # Find the most recent HEARTBEAT/HEARTBEAT_OK timestamp.
+    # integrity.log uses {"ts":..., "component":..., "event":..., "detail":...}
+    # ACP-format entries from other writers use {"type":..., "ts":...}
+    last_heartbeat_ts = None
+    heartbeat_events = {"HEARTBEAT", "HEARTBEAT_OK"}
+    try:
+        with open(log_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    # Support both integrity_log format (event) and ACP format (type)
+                    etype = entry.get("event") or entry.get("type", "")
+                    if etype in heartbeat_events:
+                        last_heartbeat_ts = entry.get("ts", "")
+                except Exception:
+                    pass
+    except FileNotFoundError:
+        sys.exit(0)  # Log absent → boot time, no issue
+    except Exception:
+        sys.exit(0)
+
+    if not last_heartbeat_ts:
+        sys.exit(0)  # No heartbeat yet → first session, OK
+
+    # Parse and compare
+    try:
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        last_dt = datetime.strptime(last_heartbeat_ts, fmt).replace(tzinfo=timezone.utc)
+        now_dt  = datetime.now(timezone.utc)
+        elapsed = int((now_dt - last_dt).total_seconds())
+    except Exception:
+        sys.exit(0)
+
+    if elapsed <= threshold:
+        sys.exit(0)
+
+    # SIL is unresponsive — write notification bypassing SIL
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    notification = {
+        "type":             "SIL_UNRESPONSIVE",
+        "ts":               ts,
+        "component":        component,
+        "last_heartbeat":   last_heartbeat_ts,
+        "elapsed_seconds":  elapsed,
+        "threshold":        threshold,
+        "message": (
+            f"SIL has not written a heartbeat for {elapsed}s "
+            f"(threshold={threshold}s). Detected by {component}."
+        ),
+    }
+    os.makedirs(notif_dir, exist_ok=True)
+    notif_path = os.path.join(notif_dir, f"SIL_UNRESPONSIVE_{ts.replace(':', '')}.json")
+    _write_json_atomic(notif_path, notification)
+    print(
+        f"[{component.upper()}] WARNING: SIL_UNRESPONSIVE — "
+        f"last heartbeat {elapsed}s ago (threshold={threshold}s). "
+        f"Notification written to Operator Channel.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def _append_log(log_path: str, actor: str, etype: str, data: str):
     from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -673,6 +770,8 @@ if __name__ == "__main__":
         cmd_scan_memory_drift()
     elif cmd == "endure-execute":
         cmd_endure_execute()
+    elif cmd == "watchdog-check" and len(args) >= 2:
+        cmd_watchdog_check(args[1])
     elif cmd == "baseline-get" and len(args) >= 2:
         cmd_baseline_get(args[1])
     else:

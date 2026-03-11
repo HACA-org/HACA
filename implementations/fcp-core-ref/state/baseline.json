@@ -2,17 +2,14 @@
   "version": "1.0",
   "profile": "HACA-Core",
   "topology": "transparent",
-
   "heartbeat": {
     "T": 10,
     "I_seconds": 300
   },
-
   "watchdog": {
     "skill_timeout_seconds": 60,
     "sil_threshold_seconds": 300
   },
-
   "thresholds": {
     "N_boot": 3,
     "N_retry": 3,
@@ -22,25 +19,21 @@
     "context_window_critical_pct": 85,
     "context_budget_chars": 600000
   },
-
   "operator_channel": {
     "mechanism": "file",
     "path": "state/operator_notifications"
   },
-
   "pre_session_buffer": {
     "capacity": 100,
     "ordering": "fifo",
     "persistence": "disk",
     "overflow_policy": "reject_and_notify"
   },
-
   "drift": {
     "model": "ncd-gzip-v1",
     "comparison_mechanism": "ncd_gzip",
     "cpe_isolated": true
   },
-
   "integrity_chain": {
     "checkpoint_interval_C": 10,
     "log_path": "state/integrity.log",
