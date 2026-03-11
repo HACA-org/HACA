@@ -4,7 +4,7 @@
   "algorithm": "sha256",
   "drift_model": "ncd-gzip-v1",
   "signatures": {
-    "BOOT.md": "b7df66cc9cd70bad1472c63a4f39b80ba117ec0c18f9c8d136338f4f06ff4752",
+    "BOOT.md": "d51b8e41aa157c83f65c4fa3eae400d21f83e85511332a05dda7650d36b564e6",
     "persona/identity.md": "62cdc5049812b673f3408269a2035a85fd8e47c12543958be093b4580b61f38f",
     "persona/values.md": "077e4cb6596d38507d27ae40acba0bf593b8ef4bbf828e1414b9ebfc4c36ec1e",
     "persona/constraints.md": "b23259b35dabfd21b9e0e6f19c3ec1bb555b14c45ab2734171736404d9a322f0",
@@ -37,7 +37,7 @@
     "skills/sys_endure/handlers/status.sh": "9a06d14e191380fc0b37ee1299cee1bb4e6ee602e16b930dfe62bc26f10dcfb3",
     "core/cpe.sh": "e841f7d1dad1f13a6f0812ff9e533e9cd0a41b6789533fdc55b50a456984e706",
     "core/exec.sh": "27b8a761a3ce3c2d2a5c910ff6b08cb856901b2fb4b7f3f98b75777baf3ade0c",
-    "core/mil.sh": "e8acf9742514c075d91013215ae317c4d910a6a5165c0f0dc62e225f5f8c2c38",
+    "core/mil.sh": "587804554f843a3dc8b7063a5fe1be537035a00d58c1993c3750e0fe71006aec",
     "skills/lib/acp.sh": "781b8cc84bbdcecda843b4bb3e70ba5fe2258dddf59e3abb71969e3aaa0c812a",
     "skills/lib/drift.sh": "248c783176635a95bc0d2064aee308b1519112de493ad0f361bc1550d6bb8f46",
     "skills/lib/params.sh": "317ee349bed4c11ca83d211c1fc0f2be9f74b4de40895f96dd2370097348f268",
@@ -46,7 +46,7 @@
     "skills/hello_world/hello_world.sh": "90e4065d9762e090152bffd4d708fc0df505914047b71dd7df90944a81303ec6",
     "skills/sys_telemetry/manifest.json": "98b779cdb2c876ccc09c5aff84634dc7ab843242c68318bc9f3baa8a729f8c9c",
     "skills/sys_telemetry/sys_telemetry.sh": "f850552b548e166dc24e47fca8ccc31ba17b50fe7d19474f6e64a24fa4361e28",
-    "core/sil.sh": "f3c90b4e1f880dc337e428735037fdc3e32baedeb1aa72e607c29c7b5a4ba2ca",
+    "core/sil.sh": "f53434dd2d6e6a4ea363ae64b421655ce15638bb1c617f4141b843051c11599a",
     "state/baseline.json": "33a62d77acced7dbd52eb2a35e97ec9ba0edd4907fa57b2b4c970bb1bbee5f64",
     "core/sil_helpers.py": "fa2b4cebe63dec3bfda6fae4dfae49b24575340e73dbdcd1d6616d15f217aef4"
   }

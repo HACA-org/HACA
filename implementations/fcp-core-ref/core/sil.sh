@@ -488,6 +488,36 @@ session_cycle() {
                     "Evolution Proposal received — forwarded to Operator for review: $proposal_content"
                 ;;
             session_close)
+                # Extract Closure Payload from action and write to inbox
+                python3 - "$action" <<'PYEOF'
+import json, os, sys
+from datetime import datetime, timezone
+
+root = os.environ.get("FCP_REF_ROOT", "")
+try:
+    d = json.loads(sys.argv[1])
+except Exception:
+    d = {}
+
+payload = {
+    "working_memory":       d.get("working_memory", []),
+    "session_handoff":      d.get("session_handoff", {}),
+    "consolidation_content": d.get("consolidation_content", ""),
+}
+ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+envelope = {
+    "actor": "cpe",
+    "type":  "CLOSURE_PAYLOAD",
+    "ts":    ts,
+    "data":  json.dumps(payload),
+}
+inbox = os.path.join(root, "memory", "inbox")
+os.makedirs(inbox, exist_ok=True)
+msg_path = os.path.join(inbox, "closure_payload.msg")
+with open(msg_path, "w") as f:
+    json.dump(envelope, f)
+    f.write("\n")
+PYEOF
                 export FCP_CONTEXT_CRITICAL=true
                 ;;
             log_note | reply)

@@ -103,12 +103,13 @@ Your intentions are expressed as **Intent Envelopes** — a declarative descript
 
 | action          | description |
 |-----------------|-------------|
-| `skill_request` | Execute a registered skill. |
-| `memory_flag`   | Add/remove a symlink in `memory/active_context/`. |
-| `agenda_add`    | Schedule a future task (cron expression + task description). |
-| `log_note`      | Write a plain note to the session log (no side effects). |
-| `reply`         | Deliver a text response to the operator. |
-| `trap`          | Signal a system anomaly. |
+| `skill_request`   | Execute a registered skill. |
+| `memory_flag`     | Add/remove a symlink in `memory/active_context/`. |
+| `agenda_add`      | Schedule a future task (cron expression + task description). |
+| `log_note`        | Write a plain note to the session log (no side effects). |
+| `reply`           | Deliver a text response to the operator. |
+| `trap`            | Signal a system anomaly. |
+| `session_close`   | Signal end of session and emit a Closure Payload (see §5). |
 
 ---
 
@@ -173,6 +174,21 @@ Higher numeric priority = loaded later = dropped first when context is full. Use
 
 ### Session Log
 Everything in the session tail is already in your context. Use `memory_store` to persist important facts, decisions, and events explicitly.
+
+### Session Close and Closure Payload
+
+When you decide to end the session (context window filling, task complete, operator requested), emit a `session_close` action carrying a **Closure Payload**. This is the last Cognitive Cycle of the session.
+
+```fcp-actions
+{"action": "session_close", "consolidation_content": "Concise semantic summary of what was accomplished this session: decisions, key facts, learnings.", "working_memory": [{"priority": 10, "path": "memory/episodic/session_2026-03-11T120000Z.jsonl"}, {"priority": 20, "path": "memory/session-handoff.json"}], "session_handoff": {"pending_tasks": ["Finish implementing step 3"], "next_steps": ["Run test suite", "Review output"], "notes": "Left off mid-way through feature X."}}
+```
+
+**Fields:**
+- `consolidation_content` — A brief semantic summary (max 2000 chars) of the session: what was accomplished, key decisions, important facts for the next session.
+- `working_memory` — Ordered list of `{"priority": N, "path": "..."}` entries. Paths must be relative to `FCP_REF_ROOT` and point to existing Memory Store artefacts. Lower priority number = loaded earlier = higher importance. Limit: 20 entries.
+- `session_handoff` — Prospective record: `pending_tasks` (list of strings), `next_steps` (list of strings), `notes` (string). Replaces the previous handoff on every clean close.
+
+The Closure Payload is consumed by the MIL during Sleep Cycle Stage 1. The `working_memory` pointer map seeds the Active Context at the next boot.
 
 ---
 

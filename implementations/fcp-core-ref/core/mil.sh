@@ -139,22 +139,25 @@ PYEOF
 # ---------------------------------------------------------------------------
 # mil_apply_closure_payload <fragment_path>
 # Extracts CPE-authored Closure Payload from an episodic fragment and applies:
-#   - working_memory entries → added to Working Memory
-#   - session_handoff text → written to session-handoff.json
-# This is a stub until CPE produces structured Closure Payloads (step 2).
+#   - working_memory entries → validated + written to Working Memory
+#   - session_handoff       → written to session-handoff.json
+#   - consolidation_content → appended to session.jsonl for the next session
 # ---------------------------------------------------------------------------
 mil_apply_closure_payload() {
     local fragment="$1"
     python3 - "$fragment" <<'PYEOF'
 import json, os, sys
+from datetime import datetime, timezone
 
 fragment_path = sys.argv[1]
 root = os.environ.get("FCP_REF_ROOT", "")
-handoff_path = os.path.join(root, "memory", "session-handoff.json")
-wm_path = os.path.join(root, "memory", "working-memory.json")
+handoff_path  = os.path.join(root, "memory", "session-handoff.json")
+wm_path       = os.path.join(root, "memory", "working-memory.json")
+session_path  = os.path.join(root, "memory", "session.jsonl")
 
-wm_entries = []
-handoff_data = None
+wm_entries    = []
+handoff_data  = None
+consolidation = ""
 
 try:
     with open(fragment_path) as f:
@@ -168,45 +171,75 @@ try:
                     continue
                 data_raw = env.get("data", "{}")
                 data = json.loads(data_raw) if isinstance(data_raw, str) else data_raw
-                wm_entries = data.get("working_memory", [])
+                wm_entries   = data.get("working_memory", [])
                 handoff_data = data.get("session_handoff", None)
+                consolidation = data.get("consolidation_content", "")
             except Exception:
                 pass
 except Exception:
     pass
 
+# --- Session Handoff ---
 if handoff_data:
-    ts = __import__('datetime').datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     record = {
-        "version": "1.0",
-        "updated_at": ts,
+        "version":      "1.0",
+        "updated_at":   ts,
         "pending_tasks": handoff_data.get("pending_tasks", []),
-        "next_steps": handoff_data.get("next_steps", []),
-        "notes": handoff_data.get("notes", ""),
+        "next_steps":    handoff_data.get("next_steps", []),
+        "notes":         handoff_data.get("notes", ""),
     }
     tmp = handoff_path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(record, f, indent=2)
     os.replace(tmp, handoff_path)
-    print(f"[MIL] Stage 1: Session Handoff written from Closure Payload.", file=sys.stderr)
+    print("[MIL] Stage 1: Session Handoff written from Closure Payload.", file=sys.stderr)
 
+# --- Working Memory (validate paths exist in Memory Store) ---
 if wm_entries:
     try:
         wm = json.load(open(wm_path)) if os.path.exists(wm_path) else {"version": "1.0", "entries": []}
     except Exception:
         wm = {"version": "1.0", "entries": []}
     existing_paths = {e["path"] for e in wm.get("entries", [])}
+    added = 0
     for entry in wm_entries:
-        p = entry.get("path", "")
-        if p and p not in existing_paths:
-            wm["entries"].append({"priority": entry.get("priority", 50), "path": p})
-    # Sort by priority ascending
+        raw_path = entry.get("path", "")
+        if not raw_path:
+            continue
+        # Resolve: relative paths are relative to FCP_REF_ROOT
+        abs_path = raw_path if os.path.isabs(raw_path) else os.path.join(root, raw_path)
+        if not os.path.exists(abs_path):
+            print(f"[MIL] Stage 1: WM entry dropped (absent): {raw_path}", file=sys.stderr)
+            continue
+        store_path = abs_path  # store absolute path
+        if store_path not in existing_paths:
+            wm["entries"].append({"priority": entry.get("priority", 50), "path": store_path})
+            existing_paths.add(store_path)
+            added += 1
+    # Sort by priority ascending; keep bounded at 20
     wm["entries"].sort(key=lambda e: e.get("priority", 50))
+    if len(wm["entries"]) > 20:
+        wm["entries"] = wm["entries"][:20]
     tmp = wm_path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(wm, f, indent=2)
     os.replace(tmp, wm_path)
-    print(f"[MIL] Stage 1: Working Memory updated from Closure Payload.", file=sys.stderr)
+    print(f"[MIL] Stage 1: Working Memory updated ({added} new entries).", file=sys.stderr)
+
+# --- Consolidation Content → append to session.jsonl for next session ---
+if consolidation:
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    envelope = {
+        "actor": "cpe",
+        "type":  "CONSOLIDATION",
+        "ts":    ts,
+        "data":  json.dumps({"content": consolidation}),
+    }
+    with open(session_path, "a") as f:
+        json.dump(envelope, f)
+        f.write("\n")
+    print("[MIL] Stage 1: Consolidation content written to session.jsonl.", file=sys.stderr)
 PYEOF
 }
 
