@@ -445,6 +445,8 @@ FCP also verifies that both Operator Channel mechanisms are available: `state/op
 **Phase 1 — Host Introspection.**
 The SIL verifies the declared CPE topology is `transparent` and that the execution boundary is enforceable. If the topology is Opaque, or if the detected deployment does not match the declaration, boot aborts immediately — no recovery path exists and no session token is issued for this boot attempt.
 
+The SIL also validates inter-parameter constraints in `state/baseline.json`. If `watchdog.sil_threshold_seconds` is greater than `heartbeat.interval_seconds`, boot aborts immediately — a watchdog threshold that exceeds the Heartbeat interval cannot detect SIL silence within a single Heartbeat window, violating HACA-Core §4.2.
+
 **Phase 2 — Crash Recovery.**
 The SIL checks for `state/sentinels/session.token`. Its presence at boot is the primary crash indicator. See §5.2.
 
@@ -482,7 +484,7 @@ FCP assembles the CPE input context in the following order:
 [PRESESSION]    ← contents of io/inbox/presession/, arrival order
 ```
 
-Working Memory entries are loaded at the highest priority — they are never dropped before other context fragments. Session history is loaded newest-first; when the context budget declared in `state/baseline.json` is exhausted, older entries are dropped and each skip is logged as a `CTX_SKIP` envelope to `memory/session.jsonl`.
+Working Memory entries are loaded at the highest priority — they are never dropped before other context fragments. Entries in `memory/working-memory.json` that point to absent Memory Store artefacts are silently dropped at Phase 5; each drop is logged as a `CTX_SKIP` envelope to `state/integrity.log`. This is not a Critical condition — missing Working Memory targets are an operational artifact, not a structural violation. Session history is loaded newest-first; when the context budget declared in `state/baseline.json` is exhausted, older entries are dropped and each skip is logged as a `CTX_SKIP` envelope to `memory/session.jsonl`.
 
 ### 5.2 Crash Recovery
 
@@ -584,7 +586,7 @@ The Heartbeat Protocol and Vital Check are defined in §10.3.
 
 ## 7. Sleep Cycle
 
-The Sleep Cycle is the ordered shutdown protocol that executes at every clean session close. It is the sole authorized window for structural writes. FCP orchestrates four sequential stages; each must complete before the next begins. No two stages execute concurrently.
+The Sleep Cycle is the ordered shutdown protocol that executes at every clean session close. It is the sole authorized window for structural writes. FCP orchestrates four sequential stages; each must complete before the next begins. No two stages execute concurrently. HACA-Arch §6.4 describes three canonical stages (memory consolidation → garbage collection → Endure execution); FCP adds a preparatory Stage 0 (Semantic Drift Detection) required by HACA-Core §4.2, which mandates drift detection during the Sleep Cycle. Stage 0 executes before any mnemonic or structural write occurs.
 
 **Session token revocation.** Before Stage 0 begins, the SIL revokes the session token by appending `revoked_at` to `state/sentinels/session.token`. No further Operator-initiated Cognitive Cycles are dispatched after revocation. The token artefact remains in place throughout the Sleep Cycle as a crash indicator; the SIL removes it only after Stage 3 completes.
 
@@ -656,7 +658,13 @@ The memory layer is the MIL's exclusive write territory. No other component may 
 
 The MIL is the sole writer to `session.jsonl`. Components that produce results write to `io/inbox/` via the spool-then-rename pattern; FCP consolidates the inbox into `session.jsonl` at the start of each Cognitive Cycle.
 
-The Session Store grows throughout the session. When it exceeds `session_store.rotation_threshold_bytes`, the SIL performs a crash-safe rotation at Sleep Cycle Stage 2 — archiving the current file to `memory/episodic/` and starting a fresh `session.jsonl`.
+The Session Store grows throughout the session. There are two mechanisms that manage its size, serving distinct purposes:
+
+**Mid-session Session Summarization** — a corrective action triggered by the SIL when a Vital Check detects the Session Store approaching `session_store.rotation_threshold_bytes`. The SIL issues a corrective signal to the MIL; if re-verification fails after the corrective action, the condition escalates to Critical. This is a Degraded-class response (externally verifiable by the SIL), not a Sleep Cycle operation. It compresses or summarizes the physical content without semantic consolidation.
+
+**Sleep Cycle Stage 2 rotation** — archival at every Sleep Cycle if the Session Store exceeds `session_store.rotation_threshold_bytes`. The SIL performs a crash-safe rotation: renames `session.jsonl` to `memory/episodic/<year>/<timestamp>.jsonl` and starts a fresh `session.jsonl`. This is structural housekeeping, not a corrective response.
+
+The two mechanisms are independent. Mid-session summarization is reactive and bounded; Stage 2 rotation is routine and unconditional when the threshold is exceeded.
 
 ### 8.2 Memory Store
 
@@ -733,6 +741,8 @@ Worker skills are declared in `skills/index.json` and subject to the same two-ga
 ## 10. Integrity Layer
 
 The integrity layer is the SIL's domain. It operates independently of the cognitive pipeline — it does not reason, it verifies. Its authority is structural: it monitors state, enforces boundaries, and escalates when violations are detected. It does not attempt to resolve conditions it cannot verify independently.
+
+**Integrity Log retention.** `state/integrity.log` grows without bound and is never compacted, archived, or deleted. No truncation, rotation, or archival of any record is permitted under HACA-Core — this log targets regulated and auditable environments where complete record retention is a requirement. Log storage growth over time is an operational concern outside the entity's scope; the Operator is responsible for provisioning adequate storage infrastructure for the lifetime of the deployment.
 
 ### 10.1 Structural Verification
 
@@ -904,6 +914,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] Operator Bound verified at Phase 0; absent or invalid Bound → permanent inactivity.
 - [ ] Both Operator Channel mechanisms verified at Phase 0; unavailable mechanisms → no session token issued.
 - [ ] Topology verified as `transparent` at Phase 1; Opaque topology → boot abort with no recovery path.
+- [ ] `watchdog.sil_threshold_seconds` verified ≤ `heartbeat.interval_seconds` at Phase 1; violation → boot abort.
 - [ ] Integrity Chain validated from last checkpoint forward at Phase 3 Step 1.
 - [ ] All tracked structural file hashes verified against `state/integrity.json` at Phase 3 Step 2.
 - [ ] `skills/index.json` loaded (already verified in Phase 3) at Phase 4.
@@ -939,6 +950,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] CPE-invoked Worker Skills receive all three fields: persona, context, and task.
 
 **Integrity Layer**
+- [ ] `state/integrity.log` is never compacted, archived, truncated, or deleted; retention is unbounded.
 - [ ] All three drift categories (Semantic, Identity, Evolutionary) escalate directly to Critical under HACA-Core — no Degraded intermediate state.
 - [ ] Heartbeat Vital Check includes full entity health scan as defined in §10.3.
 - [ ] Reciprocal SIL Watchdog managed by FCP; EXEC and MIL check SIL heartbeat independently; unresponsive SIL escalates via terminal prompt.
