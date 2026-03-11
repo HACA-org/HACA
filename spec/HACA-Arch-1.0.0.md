@@ -40,6 +40,7 @@ The specification defines a shared structural topology through five foundational
    - 5.1 [Component Topology](#51-component-topology)
    - 5.2 [Trust Model](#52-trust-model)
    - 5.3 [Concept Realization](#53-concept-realization)
+   - 5.4 [Orchestration](#54-orchestration)
 6. [Lifecycle](#6-lifecycle)
    - 6.1 [Cold-Start and First Activation](#61-cold-start-and-first-activation)
    - 6.2 [Boot Sequence](#62-boot-sequence)
@@ -54,7 +55,8 @@ The specification defines a shared structural topology through five foundational
    - 7.5 [Mesh Spoofing and Sybil Attacks](#75-mesh-spoofing-and-sybil-attacks)
    - 7.6 [Scope Boundary](#76-scope-boundary)
    - 7.7 [Operator Channel Authentication](#77-operator-channel-authentication)
-8. [Glossary](#8-glossary)
+8. [Compliance](#8-compliance)
+9. [Glossary](#9-glossary)
 
 ---
 
@@ -333,6 +335,14 @@ Each concept defined in Section 3 is realized by a specific configuration of com
 
 **Individuation** is realized sequentially across all components during the FAP. The FAP is the only point in the entity's lifecycle where components initialize in strict dependency order rather than operating concurrently. The output of a completed FAP — the Imprint Record in the Memory Store and the Genesis Omega in the integrity chain — is the product of all components having completed their initialization stages in sequence.
 
+### 5.4 Orchestration
+
+The five components define what the entity does — they do not coordinate themselves. A concrete implementation is required to coordinate them: it is the operational substrate where all components run, the layer that drives the session loop, routes signals between components, and enforces the sequencing defined in Sections 5 and 6.
+
+The implementation is not itself a component. It does not reason, store state, or enforce integrity — those responsibilities belong exclusively to the components. Its role is structural: it assembles context for the CPE, dispatches intent payloads to the appropriate component, injects stimuli into the cognitive pipeline, and sequences lifecycle transitions from boot through Sleep Cycle. Components do not invoke each other directly — the implementation is the intermediary that makes coordinated operation possible.
+
+HACA-Arch defines the contracts each component must satisfy and the invariants the entity must maintain. How those contracts are realized in a concrete runtime — what mechanism the implementation uses to route signals, how it persists inter-component state, how it drives the session loop — is the responsibility of the active Cognitive Profile and its implementation specification.
+
 ---
 
 ## 6. Lifecycle
@@ -452,7 +462,50 @@ The Operator Channel is defined as a system-level primitive that operates indepe
 
 ---
 
-## 8. Glossary
+## 8. Compliance
+
+A deployment is HACA-Arch compliant if and only if it satisfies all requirements below. Each item is non-negotiable — partial compliance is not compliance. Profile-specific and implementation-specific requirements are defined in the active Cognitive Profile and its implementation specification.
+
+**Entity and State**
+- [ ] All persistent entity state resides exclusively in the Entity Store; no external system holds authoritative entity state.
+- [ ] The Imprint Record is written once during FAP and never modified thereafter.
+- [ ] The Genesis Omega is a cryptographic digest of the finalized Imprint Record and is the root entry of the integrity chain.
+- [ ] The integrity chain is append-only; no entry is modified or removed after commitment.
+
+**Component Authority**
+- [ ] The SIL has exclusive write authority over integrity content: the Integrity Document, the Integrity Log, and the session token.
+- [ ] The MIL is the sole writer of mnemonic content to the Session Store and the Memory Store.
+- [ ] The EXEC is the sole path for host actuation; no component reaches the host environment outside of an authorized skill execution.
+- [ ] The CPE produces intent payloads only; it does not write to the Entity Store directly.
+
+**Authority Hierarchy**
+- [ ] The invariant Operator > SIL > CPE is enforced at all times.
+- [ ] The SIL contacts the Operator directly when the CPE may be compromised; no CPE intermediation is permitted on integrity escalations.
+- [ ] No component can alter the Imprint Record or the Operator Bound without explicit Operator authorization.
+
+**Skill Authorization**
+- [ ] Every skill execution passes both authorization gates independently: SIL gate (Skill Index verification) and EXEC gate (manifest validation).
+- [ ] Skills that produce irreversible side effects are covered by an Action Ledger write-ahead entry before execution begins.
+- [ ] Unresolved Action Ledger entries are surfaced to the Operator at the next boot; they are never re-executed automatically.
+
+**Lifecycle**
+- [ ] FAP executes if and only if the Imprint Record is absent; it cannot re-execute on a live entity.
+- [ ] All structural writes are confined to the Sleep Cycle; no structural modification occurs during active operation.
+- [ ] The Sleep Cycle completes before the entity returns to an operational state after any session close.
+- [ ] Decommission executes a complete Sleep Cycle before disposition; the entity does not resist, delay, or circumvent a decommission instruction.
+
+**Integrity and Drift**
+- [ ] All three drift categories — Semantic Drift, Identity Drift, Evolutionary Drift — are detected and classified exclusively by the SIL.
+- [ ] The Passive Distress Beacon is a passive artefact readable without any component active; its presence at boot suspends the Boot Sequence before any phase executes.
+- [ ] The Beacon is cleared only after the underlying cause is independently verified as resolved.
+
+**Cognitive Sovereignty**
+- [ ] No external entity writes directly to the local Entity Store; peer-sourced content enters exclusively as stimuli through the cognitive pipeline.
+- [ ] The declared CPE topology matches the actual deployment; a mismatch causes boot abort with no recovery path.
+
+---
+
+## 9. Glossary
 
 All terms defined in this specification, in alphabetical order.
 
