@@ -370,13 +370,27 @@ session_cycle() {
     local context
     context=$("$CPE" context)
 
+    # Context window check: compare assembled size against critical threshold
+    local ctx_size budget ctx_pct ctx_critical
+    ctx_size=${#context}
+    budget=$(baseline_get thresholds.context_budget_chars 2>/dev/null || echo "${CONTEXT_BUDGET:-600000}")
+    ctx_pct=$(baseline_get thresholds.context_window_critical_pct)
+    ctx_critical=$(( budget * ctx_pct / 100 ))
+    if [ "$ctx_size" -ge "$ctx_critical" ]; then
+        export FCP_CONTEXT_CRITICAL=true
+        sil_log "SESSION" "Context window critical (${ctx_size}/${ctx_critical}) — closing session."
+        integrity_log "sil" "CONTEXT_WINDOW_CRITICAL" "size=${ctx_size}"
+        operator_notify "INFO" "sil" "Context window critical — session closed for consolidation."
+        return 1
+    fi
+
     if [ "$DRY_RUN" = "true" ]; then
         echo "$context"
         return 0
     fi
 
     local output
-    output=$("$CPE" query <<< "$context")
+    output=$("$CPE" query "$context")
 
     # Log CPE response
     local response_json
@@ -387,7 +401,7 @@ session_cycle() {
 
     # Parse and dispatch actions (SIL mediates all host actuation)
     local actions
-    actions=$("$CPE" parse <<< "$output")
+    actions=$("$CPE" parse "$output")
 
     while IFS= read -r action; do
         [ -z "$action" ] && continue

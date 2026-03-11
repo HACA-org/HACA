@@ -19,7 +19,8 @@
     "N_channel": 3,
     "S_bytes": 10485760,
     "C_commits": 10,
-    "context_window_critical_pct": 85
+    "context_window_critical_pct": 85,
+    "context_budget_chars": 600000
   },
 
   "operator_channel": {
