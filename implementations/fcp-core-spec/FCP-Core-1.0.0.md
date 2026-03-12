@@ -459,7 +459,7 @@ All six built-in skills (§9.5) must be present in `skills[]` at every point aft
 
 ### 3.10 Skill Manifest
 
-Each skill's `manifest.json`, located at `skills/<name>/manifest.json` (or `skills/lib/<name>/manifest.json` for built-in skills), declares the skill's identity and execution constraints. The EXEC validates this file at Gate 2 before every dispatch.
+Each skill's `manifest.json`, located at `skills/<name>/manifest.json` (or `skills/lib/<name>/manifest.json` for built-in skills), declares the skill's identity and execution constraints. The SIL validates this file at boot during Skill Index construction; a skill that fails validation is excluded from `skills/index.json`.
 
 ```json
 {
@@ -483,8 +483,8 @@ Each skill's `manifest.json`, located at `skills/<name>/manifest.json` (or `skil
 | `timeout_seconds` | integer | Execution timeout in seconds; monitored by the SIL skill timeout watchdog (§10.4) |
 | `background` | boolean | If `true`, the skill executes asynchronously and declares a TTL; background skills return their result through `io/inbox/` after the dispatching cycle ends |
 | `ttl_seconds` | integer or null | Required when `background: true`; the SIL treats TTL expiry without a registered result as an incomplete execution and logs it to `state/integrity.log`; must be absent or `null` when `background: false` |
-| `permissions` | array | List of permission tokens the skill requires; validated by Gate 2 against the execution context; permission token semantics are implementation-defined |
-| `dependencies` | array | List of skill names or host capabilities required; Gate 2 validates availability before dispatch |
+| `permissions` | array | List of permission tokens the skill requires; validated by the SIL at boot; permission token semantics are implementation-defined |
+| `dependencies` | array | List of skill names or host capabilities required; the SIL validates availability at boot; a skill with unmet dependencies is excluded from `skills/index.json` |
 | `operator_only` | boolean | If `true`, the skill may only be dispatched when the originating request was issued by the Operator from the interactive terminal prompt; default `false` |
 
 ### 3.11 Drift Probe
@@ -921,7 +921,7 @@ At Phase 5 of the Boot Sequence, FCP loads the buffer contents into the Boot Man
 
 ## 9. Execution Layer
 
-The execution layer is responsible for all skill dispatch and host actuation. The EXEC enforces the two-gate authorization model: no skill executes unless it passed both gates.
+The execution layer is responsible for all skill dispatch and host actuation. Skill authorization is established once, at boot, when the SIL builds and seals `skills/index.json`. The EXEC dispatches against this index without per-execution re-validation.
 
 ### 9.1 Skill Index
 
@@ -937,11 +937,7 @@ The EXEC operates exclusively against `skills/index.json`. A skill invocation re
 
 ### 9.2 Dispatch
 
-Skill dispatch follows a two-gate model:
-
-**Gate 1 — Skill Index.** Established at boot by the SIL. A skill not present in the runtime index never reaches Gate 2.
-
-**Gate 2 — Manifest validation.** At dispatch time, the EXEC validates the request against the skill's `manifest.json`: declared permissions, required dependencies, and execution context constraints. A request that violates the manifest is rejected and logged. There is no SIL roundtrip per execution — Gate 1 provides the pre-authorization established at boot.
+The EXEC dispatches skill requests against `skills/index.json`. A skill present in the index is executed directly — no per-execution re-validation occurs.
 
 If a skill fails, the EXEC writes a `SKILL_ERROR` ACP envelope to `io/inbox/`. If a skill exceeds its declared timeout, the SIL writes a `SKILL_TIMEOUT` envelope to `io/inbox/` at the next Vital Check (§10.3). Both results reach the CPE as stimuli in the next Cognitive Cycle. If a skill fails on `fault.n_retry` consecutive attempts, the EXEC writes a notification to `state/operator_notifications/`.
 
@@ -961,11 +957,11 @@ Worker skills are skills that execute in isolation, outside the main CPE context
 
 Worker Skills are for isolated, single-agent specialized execution. When the CPE requires coordinated work across multiple agents, the correct mechanism is the Cognitive Mesh Interface — Worker Skills must not be used as a substitute for collective coordination.
 
-Worker skills are declared in `skills/index.json` and subject to the same two-gate authorization as any other skill. SIL-invoked workers return their results directly to the SIL; CPE-invoked workers route results through `io/inbox/`.
+Worker skills are declared in `skills/index.json` and authorized at boot like any other skill. SIL-invoked workers return their results directly to the SIL; CPE-invoked workers route results through `io/inbox/`.
 
 ### 9.5 Built-in Skills
 
-Built-in skills are shipped with FCP and present in every entity's Skill Index from genesis. They are regular skills — declared in `skills/index.json`, subject to two-gate dispatch, and invokable by the CPE via `skill_request`. Their executables reside in `skills/lib/` and are excluded from the `[SKILLS INDEX]` context block in the CPE input — built-in skills are always available but not advertised in the cognitive context.
+Built-in skills are shipped with FCP and present in every entity's Skill Index from genesis. They are regular skills — declared in `skills/index.json`, authorized at boot, and invokable by the CPE via `skill_request`. Their executables reside in `skills/lib/` and are excluded from the `[SKILLS INDEX]` context block in the CPE input — built-in skills are always available but not advertised in the cognitive context.
 
 | Skill | Description |
 |---|---|
@@ -1264,7 +1260,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 
 **Execution Layer**
 - [ ] EXEC operates exclusively against `skills/index.json`; absent skill requests logged and SIL notified.
-- [ ] Two-gate dispatch enforced: Gate 1 (Skill Index), Gate 2 (manifest validation at dispatch time).
+- [ ] EXEC operates exclusively against `skills/index.json`; absent skill requests are rejected, logged to `state/integrity.log`, and the SIL is notified.
 - [ ] `ACTION_LEDGER` write-ahead entry created before executing any skill with irreversible side effects.
 - [ ] Unresolved `ACTION_LEDGER` entries surfaced to Operator via terminal prompt at next boot; never re-executed automatically.
 - [ ] CPE-invoked Worker Skills receive all three fields: persona, context, and task.
