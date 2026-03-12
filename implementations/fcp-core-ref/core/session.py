@@ -20,6 +20,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +94,7 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
     budget_tokens    = baseline.get("context_window", {}).get("budget_tokens", 200_000)
     critical_pct     = baseline.get("context_window", {}).get("critical_pct", 85)
     hb_cycle_thresh  = baseline.get("heartbeat", {}).get("cycle_threshold", 10)
+    hb_interval_secs = baseline.get("heartbeat", {}).get("interval_seconds", 300)
 
     # System prompt: stays fixed throughout the session (persona + boot protocol
     # + skills + memory from previous sessions).
@@ -103,14 +105,17 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
     # Each assistant turn = raw CPE response.
     chat_history: list[dict] = []
     cycle_count = 0
+    last_hb_time = time.monotonic()
 
     ui.session_start(session_id)
 
     while True:
         # ── Heartbeat Vital Check (simplified — no background thread in MVP) ──
         cycle_count += 1
-        if cycle_count % hb_cycle_thresh == 0:
+        now = time.monotonic()
+        if (cycle_count % hb_cycle_thresh == 0) or (now - last_hb_time >= hb_interval_secs):
             write_heartbeat(root, sil_gseq, session_id)
+            last_hb_time = now
 
         # ── Drain inbox ────────────────────────────────────────────────────
         inbox_envs = drain_inbox(root)
@@ -442,7 +447,7 @@ def _handle_slash(ctx: BootContext, slash_input: str, ui: UI) -> None:
     ui.info(f"→ dispatching {slash_input.split()[0]}")
     ctx.dispatcher.dispatch_slash(slash_input)
     # Results will arrive in io/inbox/ — drain and show immediately
-    import time; time.sleep(0.1)   # brief settle for filesystem
+    time.sleep(0.1)   # brief settle for filesystem
     envs = drain_inbox(ctx.entity_root)
     consolidate_inbox(ctx.entity_root, envs)
     for env in envs:

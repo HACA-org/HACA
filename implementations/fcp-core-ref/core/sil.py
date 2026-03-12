@@ -2,7 +2,7 @@
 
 MVP scope (Fase 1):
   - SHA-256 hash computation and Integrity Document build/verify (§10.1)
-  - Integrity Chain validation — root entry present check (§10.1)
+  - Integrity Chain validation — full chain traversal with prev_hash (§10.1)
   - Session token lifecycle: issue / revoke / remove (§3.5)
   - Integrity Log append (state/integrity.log) (§10)
   - HEARTBEAT envelope write (§10.3, simplified — no background thread)
@@ -190,11 +190,23 @@ def verify_integrity_document(entity_root: str | Path) -> tuple[bool, list[str]]
 # Integrity Chain (§10.1, §7.4)
 # ---------------------------------------------------------------------------
 
-def verify_integrity_chain(entity_root: str | Path) -> tuple[bool, str]:
-    """Validate that the Integrity Chain has at least a valid root entry.
+def _entry_hash(entry: dict[str, Any]) -> str:
+    """Canonical SHA-256 of a chain entry (for prev_hash chaining)."""
+    canonical = json.dumps(entry, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
-    MVP-level check: verifies the root (Genesis Omega) entry exists and
-    has the required fields.  Full chain traversal is Fase 2.
+
+def verify_integrity_chain(entity_root: str | Path) -> tuple[bool, str]:
+    """Validate the Integrity Chain.
+
+    Checks:
+      - integrity_chain.jsonl exists and is non-empty.
+      - First entry is GENESIS_OMEGA with required fields.
+      - For each subsequent entry: ``prev_hash`` matches the SHA-256 of
+        the preceding entry's canonical JSON (skipped if field absent —
+        backwards-compatible with pre-chaining entries).
+      - ``seq`` values are monotonically increasing without gaps
+        (skipped if field absent).
 
     Returns:
         (ok, error_message) — ok is True iff validation passes.
@@ -217,12 +229,44 @@ def verify_integrity_chain(entity_root: str | Path) -> tuple[bool, str]:
     if root.get("type") != "GENESIS_OMEGA":
         return False, f"first chain entry type must be GENESIS_OMEGA, got {root.get('type')!r}"
 
+    for i in range(1, len(entries)):
+        prev = entries[i - 1]
+        cur  = entries[i]
+
+        # seq continuity (if both entries carry the field)
+        if "seq" in cur and "seq" in prev:
+            if cur["seq"] != prev["seq"] + 1:
+                return False, (
+                    f"chain gap at entry {i}: seq {prev['seq']} → {cur['seq']}"
+                )
+
+        # prev_hash verification (if field present and non-empty)
+        if cur.get("prev_hash"):
+            expected = _entry_hash(prev)
+            if cur["prev_hash"] != expected:
+                return False, (
+                    f"chain entry {i} prev_hash mismatch "
+                    f"(expected {expected[:16]}…, got {cur['prev_hash'][:16]}…)"
+                )
+
     return True, ""
 
 
 def append_chain_entry(entity_root: str | Path, entry: dict[str, Any]) -> None:
-    """Append an entry to ``state/integrity_chain.jsonl``."""
-    append_jsonl(Path(entity_root) / "state" / "integrity_chain.jsonl", entry)
+    """Append an entry to ``state/integrity_chain.jsonl``.
+
+    Injects ``seq`` (0-based position) and ``prev_hash`` (SHA-256 of the
+    preceding entry's canonical JSON) before writing.  The genesis entry
+    (seq=0) gets ``prev_hash = ""``.
+    """
+    chain_path = Path(entity_root) / "state" / "integrity_chain.jsonl"
+    existing = read_jsonl(chain_path) if chain_path.exists() else []
+
+    entry_out = dict(entry)
+    entry_out["seq"]      = len(existing)
+    entry_out["prev_hash"] = _entry_hash(existing[-1]) if existing else ""
+
+    append_jsonl(chain_path, entry_out)
 
 
 # ---------------------------------------------------------------------------
