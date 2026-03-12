@@ -404,11 +404,16 @@ def _format_inbox_event(env: dict) -> str:
     if t == "SKILL_ERROR":
         try:
             d = json.loads(data)
-            if actor == "mil":
-                return f"[Memory error]\n{d.get('error', data)}"
             return f"[Skill error: {d.get('skill', '?')}]\n{d.get('error', '').strip()}"
         except Exception:
             return f"[Error]\n{data}"
+
+    if t == "SKILL_TIMEOUT":
+        try:
+            d = json.loads(data)
+            return f"[Skill timeout: {d.get('skill', '?')}]\n{d.get('error', '').strip()}"
+        except Exception:
+            return f"[Timeout]\n{data}"
 
     # Generic fallback for any other envelope type
     return f"[{t}]\n{data}" if data else f"[{t}]"

@@ -35,6 +35,7 @@ from .acp import (
     ACTOR_EXEC,
     TYPE_SKILL_RESULT,
     TYPE_SKILL_ERROR,
+    TYPE_SKILL_TIMEOUT,
     TYPE_STRUCTURAL_ANOMALY,
     build_envelope,
     chunk_payload,
@@ -317,6 +318,7 @@ class ExecDispatcher:
             return self._write_skill_error(
                 skill_name,
                 f"Skill {skill_name!r} timed out after {timeout}s.",
+                type_=TYPE_SKILL_TIMEOUT,
             )
         except Exception as exc:
             return self._write_skill_error(skill_name, str(exc))
@@ -362,6 +364,7 @@ class ExecDispatcher:
         self,
         skill_name: str,
         error:      str,
+        type_:      str = TYPE_SKILL_ERROR,
     ) -> list[dict[str, Any]]:
         payload = json.dumps({
             "skill":  skill_name,
@@ -371,7 +374,7 @@ class ExecDispatcher:
         })
         envelopes = chunk_payload(
             actor=ACTOR_EXEC,
-            type_=TYPE_SKILL_ERROR,
+            type_=type_,
             payload_str=payload,
             gseq_start=self.gseq_counter.next(),
         )

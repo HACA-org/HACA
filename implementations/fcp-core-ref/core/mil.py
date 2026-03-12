@@ -145,8 +145,7 @@ def memory_write(
     for env in envelopes:
         spool_msg(entity_root, env.to_dict())
         inbox_envelopes.append(env.to_dict())
-        if not env.eof:
-            gseq_counter._value = env.gseq  # keep counter in sync for multi-chunk
+    gseq_counter._value = envelopes[-1].gseq
 
     return inbox_envelopes
 
