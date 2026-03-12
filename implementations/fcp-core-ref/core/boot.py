@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from . import __haca_arch_version__, __haca_core_version__
 from .acp import (
     GseqCounter, ACTOR_SIL, ACTOR_FCP, build_envelope,
     TYPE_MSG, TYPE_CTX_SKIP, TYPE_CRITICAL_CLEARED, TYPE_ACTION_LEDGER,
@@ -208,6 +209,11 @@ def run_boot(entity_root: str | Path) -> BootContext:
     char_budget = budget_tokens * 4
 
     ctx_parts: list[str] = []
+
+    # [FCP-HACA] version header — always first
+    ctx_parts.append(
+        f"[FCP-HACA] {__haca_arch_version__} / {__haca_core_version__}"
+    )
 
     # [PERSONA]
     persona_dir = root / "persona"
