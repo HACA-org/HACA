@@ -34,6 +34,7 @@ from .acp import (
     GseqCounter,
     TYPE_CTX_SKIP,
     TYPE_CRASH_RECOVERY,
+    TYPE_CLOSURE_PAYLOAD,
     TYPE_EVOLUTION_AUTH,
     TYPE_EVOLUTION_REJECTED,
     TYPE_PROPOSAL_PENDING,
@@ -386,6 +387,33 @@ def write_sleep_complete(
     env = build_envelope(
         actor=ACTOR_SIL,
         type_=TYPE_SLEEP_COMPLETE,
+        data=data,
+        gseq=gseq_counter.next(),
+    )
+    append_integrity_log(entity_root, env)
+    return env
+
+
+def log_closure_payload(
+    entity_root:  str | Path,
+    gseq_counter: GseqCounter,
+    payload:      dict[str, Any],
+) -> ACPEnvelope:
+    """Log a closure_payload receipt to ``state/integrity.log``.
+
+    Fase 1 stub: records which fields were present.  Full Fase 2
+    implementation routes working_memory to the MIL pointer map and
+    writes session_handoff to ``memory/session-handoff.json``.
+    """
+    data = json.dumps({
+        "has_consolidation":  bool(payload.get("consolidation")),
+        "has_working_memory": bool(payload.get("working_memory")),
+        "has_session_handoff": bool(payload.get("session_handoff")),
+        "ts": utcnow_iso(),
+    })
+    env = build_envelope(
+        actor=ACTOR_SIL,
+        type_=TYPE_CLOSURE_PAYLOAD,
         data=data,
         gseq=gseq_counter.next(),
     )

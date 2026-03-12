@@ -26,7 +26,7 @@ from typing import Any
 
 from .acp import (
     ACTOR_FCP, ACTOR_CPE, ACTOR_SIL,
-    TYPE_MSG, TYPE_SESSION_CLOSE, TYPE_EVOLUTION_PROPOSAL,
+    TYPE_MSG, TYPE_SESSION_CLOSE, TYPE_EVOLUTION_PROPOSAL, TYPE_CLOSURE_PAYLOAD,
     GseqCounter, build_envelope, chunk_payload,
 )
 from .boot import BootContext
@@ -38,6 +38,7 @@ from .sil import (
     remove_session_token,
     write_heartbeat,
     write_sleep_complete,
+    log_closure_payload,
     write_evolution_auth,
     write_evolution_rejected,
     write_proposal_pending,
@@ -240,6 +241,9 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
 
             if target == "sil" and atype == "session_close":
                 close_requested = True
+
+            elif target == "sil" and atype == "closure_payload":
+                _handle_closure_payload(root, action, sil_gseq, mil_gseq, ui)
 
             elif target == "sil" and atype == "evolution_proposal":
                 _handle_evolution_proposal(root, action, sil_gseq, ui, pending_proposals)
@@ -501,6 +505,33 @@ def _handle_evolution_proposal(
     pending_proposals.append({"tx": env.tx, "content": content})
     # Per §10.5, outcome is never returned to the CPE.
     ui.info("[SIL] Evolution Proposal received. Decision at session close.")
+
+
+# ---------------------------------------------------------------------------
+# Closure Payload handler (§7.2, Fase 1 stub)
+# ---------------------------------------------------------------------------
+
+def _handle_closure_payload(
+    root:      Path,
+    action:    dict[str, Any],
+    sil_gseq:  GseqCounter,
+    mil_gseq:  GseqCounter,
+    ui:        UI,
+) -> None:
+    """Fase 1 stub: log receipt + write consolidation to episodic memory.
+
+    working_memory and session_handoff routing are deferred to Fase 2
+    (Sleep Cycle Stage 1 — MIL consolidation).
+    """
+    log_closure_payload(root, sil_gseq, action)
+
+    consolidation = action.get("consolidation", "")
+    if consolidation:
+        memory_write(root, consolidation, mil_gseq, label="consolidation")
+
+    deferred = [f for f in ("working_memory", "session_handoff") if action.get(f)]
+    if deferred:
+        ui.info(f"[SIL] closure_payload: {', '.join(deferred)} deferred to Fase 2.")
 
 
 # ---------------------------------------------------------------------------
