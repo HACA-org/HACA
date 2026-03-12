@@ -912,7 +912,7 @@ The SIL processes all queued Evolution Proposals. For each proposal:
 4. Recompute SHA-256 hashes for all modified tracked files.
 5. Update `state/integrity.json` atomically. If the number of Endure commits since the last checkpoint has reached `integrity_chain.checkpoint_interval`, include the updated `last_checkpoint` field in this same write.
 6. Append the commit entry to `state/integrity_chain.jsonl`. If step 5 updated `last_checkpoint`, this entry is a checkpoint entry — the Integrity Document is the verifiable anchor; the chain entry carries the full chain data.
-7. Log an `ENDURE_COMMIT` ACP envelope to `memory/session.jsonl`.
+7. The SIL invokes the MIL synchronously in-process to append an `ENDURE_COMMIT` ACP envelope to `memory/session.jsonl` — no ACP roundtrip is required. This is the only Sleep Cycle write to `session.jsonl`; the MIL remains the authoritative writer even during Stage 3.
 8. If the proposal originated from a staged cartridge under `workspace/stage/<name>/`, the SIL deletes that staging directory. Staged cartridges are not retained after promotion.
 
 Proposals without a valid `EVOLUTION_AUTH` record are discarded and logged — they are never executed.
@@ -1045,6 +1045,22 @@ Built-in skills are shipped with FCP and present in every entity's Skill Index f
 | `commit` | Stages and records a version-control checkpoint; requires an explicit path parameter; validates that the path is within the active workspace_focus declared in `state/workspace_focus.json`; accepts `--remote` to push to the remote configured in the workspace repository's git config (conventionally `origin`); rejects execution if workspace_focus is unset or if the path falls outside it |
 
 `skill_audit` has three invocation paths: CPE dispatches it via `skill_request` to validate skills under development; the SIL invokes it as a read-only Worker Skill for `SEVERANCE_PENDING` resolution (§10.8); and the Operator invokes it via the `/skill audit` platform command (§12.3).
+
+### 9.6 Lifecycle Hooks
+
+Lifecycle hooks are host executables stored in `hooks/` and tracked by the Integrity Document. FCP invokes them at defined lifecycle events:
+
+| Event | Trigger point |
+|---|---|
+| `on_boot` | After Phase 7 — session token issued, before the first Cognitive Cycle |
+| `on_session_close` | After the session-close signal is received, before token revocation |
+| `pre_skill` | Before EXEC dispatches a skill; receives skill name and params as environment variables |
+| `post_skill` | After a skill result is written to `io/inbox/`; receives skill name and exit status |
+| `post_endure` | After all Stage 3 proposals are processed, before `SLEEP_COMPLETE` is written |
+
+Hooks run as ordinary host processes within the FCP execution context. They operate outside the cognitive pipeline — they cannot dispatch skill requests, write to `io/inbox/`, or invoke the CPE. A hook's exit code is informational: FCP logs it but does not alter control flow based on it.
+
+Recursion is structurally prohibited. FCP sets a hook-execution guard before invoking any hook; any lifecycle event that would ordinarily trigger a hook while the guard is active is suppressed. A hook cannot cause another hook to fire, directly or indirectly.
 
 ---
 
