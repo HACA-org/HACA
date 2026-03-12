@@ -83,11 +83,16 @@ def _tracked_files(entity_root: Path) -> list[Path]:
     if skill_index.exists():
         files.append(skill_index)
 
-    # skills/<name>/manifest.json
+    # skills/<name>/manifest.json  +  skills/<name>/<name>.md
     skills_dir = entity_root / "skills"
     if skills_dir.exists():
         for manifest in sorted(skills_dir.glob("*/manifest.json")):
             files.append(manifest)
+        for skill_dir in sorted(skills_dir.iterdir()):
+            if skill_dir.is_dir():
+                narrative = skill_dir / f"{skill_dir.name}.md"
+                if narrative.exists():
+                    files.append(narrative)
 
     # hooks/ — all files
     hooks_dir = entity_root / "hooks"
@@ -694,22 +699,54 @@ def write_evolution_rejected(
 # ---------------------------------------------------------------------------
 
 def _is_skill_install(target_file: str) -> tuple[bool, str]:
-    """Return (True, skill_name) if target_file is skills/<name>/manifest.json."""
+    """Return (True, skill_name) if target_file is stage/<name> (cartridge install)."""
     parts = Path(target_file).parts
-    if len(parts) == 3 and parts[0] == "skills" and parts[2] == "manifest.json":
+    if len(parts) == 2 and parts[0] == "stage":
         return True, parts[1]
     return False, ""
 
 
-def _install_skill_script(entity_root: Path, skill_name: str) -> None:
-    """Copy stage/<skill_name>/run.sh → skills/<skill_name>/run.sh if present."""
+def _install_skill_cartridge(
+    entity_root:      Path,
+    skill_name:       str,
+    manifest_content: str,
+) -> list[str]:
+    """Install cartridge from stage/<skill_name>/ to skills/<skill_name>/.
+
+    Writes manifest.json from manifest_content, copies <skill_name>.md and
+    execute.* from stage/.  Returns list of error strings (empty = success).
+    """
     import shutil
-    src = entity_root / "stage" / skill_name / "run.sh"
-    dst = entity_root / "skills" / skill_name / "run.sh"
-    if src.exists():
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        dst.chmod(0o755)
+
+    stage_dir  = entity_root / "stage"  / skill_name
+    skills_dir = entity_root / "skills" / skill_name
+
+    if not stage_dir.exists():
+        return [f"stage/{skill_name}/ not found"]
+
+    try:
+        json.loads(manifest_content)
+    except json.JSONDecodeError as exc:
+        return [f"invalid manifest JSON for {skill_name!r}: {exc}"]
+
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(skills_dir / "manifest.json", manifest_content)
+
+    # Copy narrative
+    narrative_src = stage_dir / f"{skill_name}.md"
+    if narrative_src.exists():
+        shutil.copy2(narrative_src, skills_dir / f"{skill_name}.md")
+
+    # Copy execute.* (optional)
+    for exe_name in ("execute.sh", "execute.py"):
+        src = stage_dir / exe_name
+        if src.exists():
+            dst = skills_dir / exe_name
+            shutil.copy2(src, dst)
+            dst.chmod(0o755)
+            break
+
+    return []
 
 
 def _take_snapshot(
@@ -823,16 +860,6 @@ def run_endure(
                 committed.add(ptx)
 
     allowed = {str(f.relative_to(entity_root)) for f in _tracked_files(entity_root)}
-    # Extend allowed set: new skill manifest installs are permitted even before
-    # the manifest file exists (they will be tracked after the first install).
-    for proposal_tx, auth_data in auths.items():
-        if proposal_tx in committed:
-            continue
-        pd = proposals.get(proposal_tx, {})
-        is_skill, _sn = _is_skill_install(pd.get("target_file", ""))
-        if is_skill:
-            allowed.add(pd["target_file"])
-
     errors: list[str] = []
     commit_count = len(committed)
 
@@ -854,6 +881,7 @@ def run_endure(
 
         content     = proposal_data.get("content", "")
         target_file = proposal_data.get("target_file", "")
+        is_skill, skill_name = _is_skill_install(target_file)
 
         # Verify digest
         actual_digest = hashlib.sha256(content.encode()).hexdigest()
@@ -864,37 +892,39 @@ def run_endure(
             )
             continue
 
-        # Security gate
-        if target_file not in allowed:
+        # Security gate (skill installs bypass file-path check)
+        if not is_skill and target_file not in allowed:
             errors.append(
                 f"target_file {target_file!r} is not a tracked structural file — rejected"
             )
             continue
 
-        # Atomic write
-        try:
-            atomic_write_text(entity_root / target_file, content)
-        except Exception as exc:
-            errors.append(f"write failed for {target_file!r}: {exc}")
-            continue
+        # Write
+        if is_skill:
+            errs = _install_skill_cartridge(entity_root, skill_name, content)
+            if errs:
+                errors.extend(errs)
+                continue
+        else:
+            try:
+                atomic_write_text(entity_root / target_file, content)
+            except Exception as exc:
+                errors.append(f"write failed for {target_file!r}: {exc}")
+                continue
 
         # Rebuild Integrity Document
         new_doc = build_integrity_document(entity_root)
         write_integrity_document(entity_root, new_doc)
 
-        # Skill install: copy run.sh from stage/, rebuild index, clean stage/
-        is_skill, skill_name = _is_skill_install(target_file)
+        # Skill post-install: rebuild index, re-snapshot integrity doc, clean stage/
         if is_skill:
             import shutil
             from .exec_ import build_skill_index
             from .fs import atomic_write_json as _awj
-            _install_skill_script(entity_root, skill_name)
             new_index = build_skill_index(entity_root)
             _awj(entity_root / "skills" / "index.json", new_index)
-            # Rebuild integrity doc again to capture updated index hash
             new_doc = build_integrity_document(entity_root)
             write_integrity_document(entity_root, new_doc)
-            # Clean stage/<skill_name>/
             stage_dir = entity_root / "stage" / skill_name
             if stage_dir.exists():
                 shutil.rmtree(stage_dir)
