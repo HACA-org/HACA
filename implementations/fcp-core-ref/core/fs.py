@@ -39,6 +39,22 @@ def atomic_write_json(path: str | Path, data: Any) -> None:
         raise
 
 
+def atomic_write_text(path: str | Path, content: str) -> None:
+    """Write *content* to *path* atomically using a .tmp sibling + rename(2).
+
+    Equivalent to atomic_write_json but for plaintext files (persona/*.md, boot.md).
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_text(content, encoding="utf-8")
+        os.rename(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def read_json(path: str | Path) -> Any:
     """Read and parse a JSON file.  Raises FileNotFoundError if absent."""
     return json.loads(Path(path).read_text(encoding="utf-8"))

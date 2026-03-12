@@ -1,4 +1,4 @@
-"""Memory Interface Layer (MIL) — FCP-Core §8 MVP subset.
+"""Memory Interface Layer (MIL) — FCP-Core §8.
 
 The MIL has full authority over memory/ — it is the sole component authorized
 to read and write the Memory Store.  Write routing depends on the caller context:
@@ -6,21 +6,20 @@ to read and write the Memory Store.  Write routing depends on the caller context
   CPE mid-session (memory_write action):
     Writes go to memory/episodic/ — free mnemonic writes, no authorization needed.
 
-  SIL during Sleep Cycle Stage 1 (Fase 2 — consolidation):
-    Writes routed by the consolidation logic: consolidated/promoted knowledge
-    goes to memory/semantic/, working memory pointer map to working-memory.json,
-    session handoff to session-handoff.json, etc.
+  Session close (closure_payload processing — Sleep Cycle Stage 1):
+    Consolidation content → memory/episodic/ (label="consolidation") + session.jsonl.
+    Working memory pointer map → working-memory.json.
+    Session handoff → session-handoff.json.
 
-MVP scope (Fase 1):
+Fase 2 scope (now included):
   - memory_write: persist CPE mnemonic content to memory/episodic/
   - memory_recall: search all memory/ .md artifacts by substring
   - append_to_session_store: direct write to session.jsonl (used by FCP orchestrator)
+  - write_working_memory: write working-memory.json (Sleep Cycle Stage 1)
+  - write_session_handoff: write session-handoff.json (Sleep Cycle Stage 1)
 
-Deferred to Fase 2:
-  - Sleep Cycle Stage 1 (Memory Consolidation / Closure Payload processing)
+Deferred to Fase 3:
   - Sleep Cycle Stage 2 (Garbage Collection / session store rotation)
-  - Working Memory pointer map management
-  - Session Handoff record
   - Pre-session buffer overflow handling
 """
 

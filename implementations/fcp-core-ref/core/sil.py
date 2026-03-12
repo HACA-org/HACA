@@ -35,6 +35,8 @@ from .acp import (
     TYPE_CTX_SKIP,
     TYPE_CRASH_RECOVERY,
     TYPE_CLOSURE_PAYLOAD,
+    TYPE_ENDURE_COMMIT,
+    TYPE_EVOLUTION_PROPOSAL,
     TYPE_EVOLUTION_AUTH,
     TYPE_EVOLUTION_REJECTED,
     TYPE_PROPOSAL_PENDING,
@@ -45,6 +47,7 @@ from .acp import (
 )
 from .fs import (
     atomic_write_json,
+    atomic_write_text,
     append_jsonl,
     read_json,
     read_jsonl,
@@ -687,3 +690,147 @@ def write_evolution_rejected(
     )
     append_integrity_log(entity_root, env)
     return env
+
+
+# ---------------------------------------------------------------------------
+# Endure Protocol — Stage 3 (§7.4)
+# ---------------------------------------------------------------------------
+
+def run_endure(
+    entity_root:         str | Path,
+    gseq_counter:        GseqCounter,
+    session_id:          str = "",
+    checkpoint_interval: int = 10,
+) -> list[str]:
+    """Apply all authorized Evolution Proposals to structural files (§7.4).
+
+    Scans integrity.log for EVOLUTION_AUTH records with no matching
+    ENDURE_COMMIT, then for each:
+      1. Verifies content_digest against SHA-256 of proposal content.
+      2. Validates target_file is a tracked structural file (security gate).
+      3. Writes content atomically to target_file.
+      4. Rebuilds and writes the Integrity Document.
+      5. Logs ENDURE_COMMIT to integrity.log.
+      6. Checkpoints the Integrity Chain if interval is reached.
+
+    Returns a list of error strings (empty = success).
+    """
+    entity_root = Path(entity_root)
+    entries = _read_integrity_log(entity_root)
+
+    # Build maps in a single pass
+    proposals: dict[str, dict[str, Any]] = {}   # envelope_tx → data
+    auths:     dict[str, dict[str, Any]] = {}   # proposal_tx → auth_data
+    committed: set[str] = set()                 # proposal_tx already ENDURE_COMMITted
+
+    for entry in entries:
+        t  = entry.get("type", "")
+        tx = entry.get("tx", "")
+        try:
+            d = json.loads(entry.get("data", "{}"))
+        except Exception:
+            d = {}
+
+        if t == TYPE_EVOLUTION_PROPOSAL and tx:
+            proposals[tx] = d
+        elif t == TYPE_EVOLUTION_AUTH:
+            ptx = d.get("proposal_tx", "")
+            if ptx:
+                auths[ptx] = d
+        elif t == TYPE_ENDURE_COMMIT:
+            ptx = d.get("proposal_tx", "")
+            if ptx:
+                committed.add(ptx)
+
+    allowed = {str(f.relative_to(entity_root)) for f in _tracked_files(entity_root)}
+    errors: list[str] = []
+    commit_count = len(committed)
+
+    for proposal_tx, auth_data in auths.items():
+        if proposal_tx in committed:
+            continue   # already applied
+
+        proposal_data = proposals.get(proposal_tx)
+        if proposal_data is None:
+            errors.append(
+                f"EVOLUTION_AUTH {proposal_tx[:8]}… has no matching EVOLUTION_PROPOSAL"
+            )
+            continue
+
+        content     = proposal_data.get("content", "")
+        target_file = proposal_data.get("target_file", "")
+
+        # Verify digest
+        actual_digest = hashlib.sha256(content.encode()).hexdigest()
+        if actual_digest != auth_data.get("content_digest", ""):
+            errors.append(
+                f"content_digest mismatch for proposal {proposal_tx[:8]}…"
+                f" (target: {target_file!r})"
+            )
+            continue
+
+        # Security gate
+        if target_file not in allowed:
+            errors.append(
+                f"target_file {target_file!r} is not a tracked structural file — rejected"
+            )
+            continue
+
+        # Atomic write
+        try:
+            atomic_write_text(entity_root / target_file, content)
+        except Exception as exc:
+            errors.append(f"write failed for {target_file!r}: {exc}")
+            continue
+
+        # Rebuild Integrity Document
+        new_doc = build_integrity_document(entity_root)
+        write_integrity_document(entity_root, new_doc)
+
+        # Log ENDURE_COMMIT
+        _write_endure_commit(entity_root, gseq_counter, proposal_tx, target_file)
+        commit_count += 1
+
+        # Integrity Chain checkpoint
+        if checkpoint_interval > 0 and commit_count % checkpoint_interval == 0:
+            _write_endure_checkpoint(entity_root, gseq_counter, commit_count)
+
+    return errors
+
+
+def _write_endure_commit(
+    entity_root:  str | Path,
+    gseq_counter: GseqCounter,
+    proposal_tx:  str,
+    target_file:  str,
+) -> ACPEnvelope:
+    """Append an ENDURE_COMMIT envelope to integrity.log."""
+    data = json.dumps({
+        "proposal_tx": proposal_tx,
+        "target_file": target_file,
+        "ts":          utcnow_iso(),
+    })
+    env = build_envelope(
+        actor=ACTOR_SIL,
+        type_=TYPE_ENDURE_COMMIT,
+        data=data,
+        gseq=gseq_counter.next(),
+    )
+    append_integrity_log(entity_root, env)
+    return env
+
+
+def _write_endure_checkpoint(
+    entity_root:  str | Path,
+    gseq_counter: GseqCounter,
+    commit_count: int,
+) -> None:
+    """Append an ENDURE_CHECKPOINT entry to the Integrity Chain."""
+    doc_path   = Path(entity_root) / "state" / "integrity.json"
+    doc_digest = compute_file_hash(doc_path) if doc_path.exists() else ""
+    append_chain_entry(entity_root, {
+        "type":          "ENDURE_CHECKPOINT",
+        "integrity_doc": doc_digest,
+        "commit_count":  commit_count,
+        "ts":            utcnow_iso(),
+    })
