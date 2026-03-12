@@ -103,8 +103,8 @@ def load_skill_index(entity_root: str | Path) -> SkillIndex:
 def build_skill_index(entity_root: str | Path) -> dict[str, Any]:
     """Scan ``skills/`` and produce the skills/index.json content.
 
-    Only skills with a valid manifest.json and a present executable are
-    included (§9.1 / §4 step 1).
+    Only skills with a valid manifest.json are included (§9.1 / §4 step 1).
+    execute.* is optional; skills without one are included but not executable.
     """
     entity_root = Path(entity_root)
     skills_dir  = entity_root / "skills"
@@ -123,17 +123,19 @@ def build_skill_index(entity_root: str | Path) -> dict[str, Any]:
             manifest = read_json(manifest_path)
         except Exception:
             continue
-        # Verify executable present
-        exe = skill_dir / "run.sh"
-        if not exe.exists():
-            # Try run.py as well
-            exe = skill_dir / "run.py"
-        if not exe.exists():
-            continue
-        # Minimal manifest validation
         if "name" not in manifest:
             continue
-        manifest["_executable"] = str(exe.relative_to(entity_root))
+        # Locate executable (optional)
+        exe: Path | None = None
+        for exe_name in ("execute.sh", "execute.py"):
+            candidate = skill_dir / exe_name
+            if candidate.exists():
+                exe = candidate
+                break
+        manifest["_executable"] = str(exe.relative_to(entity_root)) if exe else ""
+        # Narrative presence flag
+        narrative = skill_dir / f"{skill_dir.name}.md"
+        manifest["_has_narrative"] = narrative.exists()
         skills.append(manifest)
 
     return {"version": "1.0", "skills": skills}
@@ -245,6 +247,29 @@ class ExecDispatcher:
 
         return self.dispatch_skill(skill_name, params)
 
+    def dispatch_skill_info(self, skill_name: str) -> list[dict[str, Any]]:
+        """Read skills/<skill_name>/<skill_name>.md and spool as SKILL_RESULT.
+
+        Returns error envelope if skill not found or narrative absent.
+        """
+        entry = self.skill_index.get(skill_name)
+        if entry is None:
+            return self._write_skill_error(
+                skill_name,
+                f"Skill {skill_name!r} not found in index.",
+            )
+        if not entry.get("_has_narrative"):
+            return self._write_skill_error(
+                skill_name,
+                f"No narrative ({skill_name}.md) for skill {skill_name!r}.",
+            )
+        narrative_path = self.entity_root / "skills" / skill_name / f"{skill_name}.md"
+        try:
+            content = narrative_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return self._write_skill_error(skill_name, f"Could not read narrative: {exc}")
+        return self._write_skill_result(skill_name, content)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -257,6 +282,11 @@ class ExecDispatcher:
     ) -> list[dict[str, Any]]:
         """Run the skill's executable as a subprocess and return result envelopes."""
         exe_rel  = entry.get("_executable", "")
+        if not exe_rel:
+            return self._write_skill_error(
+                skill_name,
+                f"Skill {skill_name!r} has no executable (execute.sh / execute.py).",
+            )
         exe_path = self.entity_root / exe_rel
         timeout  = entry.get("timeout_seconds", 60)
 
