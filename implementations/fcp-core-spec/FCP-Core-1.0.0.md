@@ -266,6 +266,10 @@ The ACP (Atomic Chunked Protocol) envelope is the inter-component communication 
 {
   "version": "1.0",
   "algorithm": "sha256",
+  "last_checkpoint": {
+    "seq": 12,
+    "digest": "sha256:4d2a3581f3b5f6c9..."
+  },
   "files": {
     "boot.md": "8d969eef6ecad3c29a3a...",
     "persona/identity.md": "e3b0c44298fc1c149afb...",
@@ -280,6 +284,8 @@ The ACP (Atomic Chunked Protocol) envelope is the inter-component communication 
 ```
 
 Tracked files are: `boot.md`, all files in `persona/`, `skills/index.json`, all skill `manifest.json` files, all files in `hooks/`, and `state/baseline.json`. A file present in any of these paths but absent from `files` is treated as an unauthorized addition and causes boot abort.
+
+`last_checkpoint` records the sequence number and digest of the most recent checkpoint entry in `state/integrity_chain.jsonl`. It is `null` before the first checkpoint is produced. At boot, the SIL reads this field to locate the verified anchor in the chain, enabling re-verification without traversing from genesis.
 
 ### 3.4 Operator Bound
 
@@ -317,6 +323,8 @@ At session close, before the Sleep Cycle begins, the SIL rewrites the token arte
 ```
 
 The artefact remains in place throughout the Sleep Cycle. It is removed — not revoked, removed — only after the `SLEEP_COMPLETE` record is written to the Integrity Log. Its presence at boot is the primary crash indicator.
+
+Senders that route stimuli to the entity use the session token state to determine the correct inbox: a token present without `revoked_at` indicates an active session — stimuli go to `io/inbox/`. A token with `revoked_at`, or no token at all, indicates no active session — stimuli go to `io/inbox/presession/`. FCP enforces this routing for Operator input and schedule triggers; CMI-layer senders are required to implement the same check.
 
 ### 3.6 Working Memory
 
@@ -453,7 +461,7 @@ The SIL checks for `state/sentinels/session.token`. Its presence at boot is the 
 **Phase 3 — Integrity Verification.**
 Two-step verification executed by the SIL:
 
-- **Step 1 — Chain anchor.** The SIL reads `state/integrity_chain.jsonl` and validates the chain from the most recent checkpoint forward. Any gap, hash mismatch, or missing authorization reference → boot aborts.
+- **Step 1 — Chain anchor.** The SIL reads `state/integrity.json` to locate the chain anchor: the `last_checkpoint` field identifies the sequence number and digest of the most recent checkpoint. The SIL then reads `state/integrity_chain.jsonl` and validates the chain from that checkpoint forward. Any gap, hash mismatch, or missing authorization reference → boot aborts. If `last_checkpoint` is `null`, the SIL validates from genesis.
 - **Step 2 — Structural files.** The SIL recomputes SHA-256 hashes of all tracked structural files and compares them against `state/integrity.json`. Any mismatch → boot aborts.
 
 **Phase 4 — Skill Index Resolution.**
@@ -614,7 +622,7 @@ A `DRIFT_FAULT` does not halt the Sleep Cycle — Stages 1–3 still complete.
 
 ### 7.2 Stage 1 — Memory Consolidation
 
-FCP requests a Closure Payload from the CPE. This is the last Cognitive Cycle of the session — the CPE is invoked once, with a context assembled from the current session record and an explicit consolidation prompt. The CPE emits a `fcp-actions` block addressed to the MIL containing the Closure Payload defined in §3.7.
+The MIL processes the Closure Payload produced in the final Cognitive Cycle of the session (§6). No further CPE invocation occurs during the Sleep Cycle.
 
 The MIL processes each field:
 
@@ -642,7 +650,7 @@ The SIL processes all queued Evolution Proposals. For each proposal:
 3. Apply the structural write atomically: write to a `.tmp` sibling, then `rename(2)` into place.
 4. Recompute SHA-256 hashes for all modified tracked files.
 5. Update `state/integrity.json` atomically.
-6. If the number of Endure commits since the last checkpoint has reached `integrity_chain.checkpoint_interval`, append a cryptographic checkpoint entry to `state/integrity_chain.jsonl`.
+6. If the number of Endure commits since the last checkpoint has reached `integrity_chain.checkpoint_interval`, produce the checkpoint atomically: extend the `state/integrity.json` write in step 5 to include the updated `last_checkpoint` field, and append the checkpoint entry to `state/integrity_chain.jsonl`. Both writes are part of the same Endure commit — the Integrity Document is the verifiable anchor; the chain entry carries the full chain data.
 7. Log an `ENDURE_COMMIT` ACP envelope to `memory/session.jsonl`.
 
 Proposals without a valid `EVOLUTION_AUTH` record are discarded and logged — they are never executed.
@@ -705,6 +713,8 @@ The execution layer is responsible for all skill dispatch and host actuation. Th
 
 `skills/index.json` is the authoritative registry of skills the entity is authorized to use. It is part of the structural baseline, covered by the Integrity Document from the moment of FAP, and cannot be modified outside the Endure Protocol — with one exception: the SIL may remove a skill from the index as a maintenance operation when the skill's manifest is invalid or its executable is absent, without requiring a full Endure cycle, to avoid blocking the system.
 
+When removing a skill as a maintenance operation, the SIL still performs an atomic integrity update: it rewrites `state/integrity.json` with the updated hash for `skills/index.json` and appends a `SEVERANCE_COMMIT` entry to `state/integrity_chain.jsonl`. This entry references the removed skill, the reason for removal, and the new `skills/index.json` hash. No `EVOLUTION_AUTH` record is required. A `SEVERANCE_COMMIT` without a corresponding `EVOLUTION_AUTH` is valid — it is distinguished from a normal Endure commit by its type field.
+
 The Skill Index is established during FAP Step 1: the SIL validates every skill manifest present in `skills/` and writes `skills/index.json` containing only the skills whose manifests are well-formed and whose executables are present. `skills/index.json` is then included in the Integrity Document and referenced in the Imprint Record — the entity's authorized capabilities are sealed into its identity from first activation.
 
 At Phase 3 of the Boot Sequence, `skills/index.json` is verified like any other tracked structural file: the SIL recomputes its hash and compares it against the Integrity Document. Any mismatch aborts the boot. At Phase 4, FCP loads the verified index and makes it available to the EXEC for the session.
@@ -751,7 +761,7 @@ The integrity layer is the SIL's domain. It operates independently of the cognit
 
 Structural verification runs at two points: at every boot (Phase 3) and at every Heartbeat Vital Check during the session.
 
-At boot, the SIL performs a two-step verification. First, it validates the Integrity Chain: reads `state/integrity_chain.jsonl` and verifies the chain from the most recent checkpoint forward — any gap, hash mismatch, or missing authorization reference aborts the boot. Second, it recomputes SHA-256 hashes of all tracked structural files and compares them against `state/integrity.json` — any mismatch aborts the boot.
+At boot, the SIL performs a two-step verification. First, it validates the Integrity Chain: reads `last_checkpoint` from `state/integrity.json` to locate the chain anchor, then reads `state/integrity_chain.jsonl` and verifies the chain from that checkpoint forward — any gap, hash mismatch, or missing authorization reference aborts the boot. If `last_checkpoint` is `null`, the SIL validates from genesis. Second, it recomputes SHA-256 hashes of all tracked structural files and compares them against `state/integrity.json` — any mismatch aborts the boot.
 
 During the session, each Vital Check repeats the structural file hash verification. A mismatch detected mid-session is an Identity Drift violation: the SIL revokes the session token immediately, logs a Critical condition to `state/integrity.log`, writes a notification to `state/operator_notifications/`, and the Sleep Cycle executes.
 
@@ -866,7 +876,7 @@ The loop continues until the Operator closes the session, the CPE emits a `sessi
 
 ### 12.3 Slash Commands
 
-Slash commands allow the Operator to invoke skills directly without involving the CPE. FCP recognizes any input beginning with `/` as a slash command, resolves it against the skill registry in `skills/index.json`, and dispatches directly to EXEC — bypassing the cognitive pipeline entirely.
+Slash commands allow the Operator to invoke skills directly without involving the CPE. FCP recognizes any input beginning with `/` as a slash command, resolves it against the skill registry in `skills/index.json`, and dispatches directly to EXEC — bypassing the cognitive pipeline entirely. Action Ledger protection (§9.3) still applies: FCP writes the write-ahead entry to `memory/session.jsonl` before dispatching any skill that declares irreversible side effects, regardless of dispatch origin.
 
 ```
 /snapshot          — invoke the snapshot_create skill
