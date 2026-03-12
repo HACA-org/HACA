@@ -259,6 +259,11 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
                 dispatcher.dispatch_skill(skill, params)
                 # Results arrive in inbox next cycle
 
+            elif target == "exec" and atype == "skill_info":
+                skill = action.get("skill", "")
+                dispatcher.dispatch_skill_info(skill)
+                # Result arrives in inbox next cycle
+
             elif target == "mil" and atype == "memory_write":
                 content = action.get("content", "")
                 memory_write(root, content, mil_gseq)
