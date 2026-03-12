@@ -261,6 +261,8 @@ def ensure_dirs(entity_root: str | Path) -> None:
         root / "persona",
         root / "skills",
         root / "hooks",
+        root / "workspace",
+        root / "stage",
         root / "io" / "inbox" / "presession",
         root / "io" / "spool",
         root / "memory" / "episodic",
@@ -268,6 +270,7 @@ def ensure_dirs(entity_root: str | Path) -> None:
         root / "memory" / "active_context",
         root / "state" / "sentinels",
         root / "state" / "operator_notifications",
+        root / "state" / "snapshots",
     ]
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)
