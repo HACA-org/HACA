@@ -797,7 +797,7 @@ Built-in skills are shipped with FCP and present in every entity's Skill Index f
 | `file_reader` | Reads a file from the entity store and returns its content |
 | `file_writer` | Writes a file to the entity store; Action Ledger coverage required for paths outside `workspace/` |
 | `worker_skill` | Instantiates a Worker Skill sub-agent with a provided persona, context, and task |
-| `commit` | Stages and records a version-control checkpoint within `workspace/`; rejects requests targeting any path outside `workspace/` — entity root structural changes go through the Endure Protocol, not this skill |
+| `commit` | Stages and records a version-control checkpoint for the active project inside `workspace/`; workspace/ may contain multiple independent projects each with its own repository — this skill operates on the current project repo only; accepts `--remote` to push after committing; rejects any path outside `workspace/` |
 
 `skill_audit` has three invocation paths: CPE dispatches it via `skill_request` to validate skills under development; the SIL invokes it as a read-only Worker Skill for `SEVERANCE_PENDING` resolution (§10.8); and the Operator invokes it via the `/skill audit` platform command (§12.3).
 
@@ -975,12 +975,17 @@ Platform commands are FCP-native operations that do not pass through the EXEC. M
 /endure list                 — list pending Evolution Proposals
 /endure approve <id>         — approve a pending proposal (Operator-exclusive; triggers forced close)
 /endure reject <id>          — reject a pending proposal (Operator-exclusive)
-/endure sync [--remote]      — verify that every structural modification to the entity store
-                               corresponds to a recorded Endure event; with --remote,
-                               synchronize the Integrity Chain with a remote endpoint
+/endure sync [--remote]      — commit entity root structural content to version control
+                               (workspace/ excluded); FCP validates that every staged
+                               change corresponds to a recorded Endure event before
+                               committing; with --remote, also pushes to the configured remote
+/inbox list                  — list pending notifications in state/operator_notifications/
+/inbox view <id>             — display full content of a notification
+/inbox dismiss <id>          — remove a notification; dismissal logged to state/integrity.log
+/inbox clear                 — dismiss all pending notifications
 ```
 
-**Endure boundary.** A modification to entity root structural content is an Endure event — it must go through the Endure Protocol to be valid. A modification to `workspace/` is outside the Endure scope and is not tracked by the Integrity Chain. This boundary is enforced at every level: `/endure` and related commands operate on structural content only; the `commit` built-in skill operates on `workspace/` only. The two domains never overlap.
+**Endure boundary.** A modification to entity root structural content is an Endure event — it must go through the Endure Protocol to be valid. A modification to `workspace/` is outside the Endure scope and is not tracked by the Integrity Chain. This boundary is enforced at every level: `/endure` and related commands operate on structural content only; the `commit` built-in skill operates on `workspace/` projects only. The two domains never overlap. When the CPE is operating in a workspace project context, it uses `commit` for version control — it has no visibility into `/endure sync` or the Endure domain. This separation is by design: FCP enforces it structurally so neither domain can accidentally operate in the other's scope.
 
 Commands declared as `"operator_only"` are rejected if issued from any source other than the interactive terminal prompt.
 
@@ -992,14 +997,15 @@ Skill aliases dispatch to a named skill via EXEC. They require an active session
 /snapshot                    — invoke the snapshot_create skill
 /endure                      — invoke the sys_endure skill
 /memory                      — invoke the memory_retrieve skill
-/commit                      — invoke the commit skill (workspace/ only)
+/commit [--remote]           — invoke the commit skill on the active workspace/ project;
+                               --remote also pushes to the configured remote
 ```
 
 The slash command registry is declared in `skills/index.json` as a `/command` alias map. Commands declared as `"operator_only": true` in the alias map are rejected if issued from any source other than the interactive terminal prompt.
 
 ### 12.4 Notifications
 
-The Operator can inspect pending notifications at any time:
+The Operator can inspect pending notifications at any time using the `/inbox` platform command (§12.3.1). Outside an active session, notifications are also accessible via:
 
 ```
 fcp <entity-root> --notifications
@@ -1097,10 +1103,12 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] Skill aliases (§12.3.2) resolved against `skills/index.json` alias map; dispatched directly to EXEC without CPE involvement; require active session.
 - [ ] Operator-exclusive commands (`"operator_only": true`) rejected if issued from any source other than the interactive terminal prompt.
 - [ ] `/skill add` injects a structured task into the cognitive pipeline; CPE stages skill via `skill_create` under `stage/`; result goes through normal evolution proposal flow.
-- [ ] `/endure` platform commands operate on structural content only; `workspace/` is never in scope.
+- [ ] `/endure sync [--remote]` commits entity root structural content to version control (workspace/ excluded); validates Endure event coverage before committing.
+- [ ] `commit` skill operates on the active project repo inside `workspace/` only; never touches entity root content; CPE in a workspace project context has no visibility into the Endure domain.
 - [ ] Pending notifications presented to Operator before Phase 6 completes at boot.
 - [ ] Terminal prompt used for all synchronous Operator interactions requiring a response.
 - [ ] `state/operator_notifications/` used for all asynchronous notifications not requiring immediate response.
+- [ ] `/inbox` commands operate exclusively against `state/operator_notifications/`; dismissal removes the notification file and is logged to `state/integrity.log`; dismissing a notification does not resolve the underlying Critical condition.
 
 **Decommission**
 - [ ] `DECOMMISSION` signal injected as first stimulus; entity does not resist, delay, or circumvent.
