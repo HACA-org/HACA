@@ -226,6 +226,7 @@ The ACP (Atomic Chunked Protocol) envelope is the inter-component communication 
 | `CTX_SKIP` | FCP | Context entry dropped (absent Working Memory target or budget exhaustion) |
 | `CRITICAL_CLEARED` | SIL | Operator-acknowledged resolution of a Critical condition |
 | `DECOMMISSION` | FCP | Decommission instruction injected at session start |
+| `MEMORY_RESULT` | MIL | Result of a `memory_recall` action; `data` is a JSON object: `{"query": "...", "paths": ["memory/semantic/..."], "status": "found|not_found"}` |
 
 **The `io/` path.** The `io/inbox/` directory is used exclusively for asynchronous delivery — when a component cannot respond within the current cognitive cycle, or when an external stimulus arrives outside an active session. Components write to the flat `io/spool/` staging directory, using unique filenames, and rename atomically into `io/inbox/`. FCP drains the inbox at the start of each cycle. The synchronous cognitive chain — CPE output dispatched and resolved within a single cycle — does not pass through `io/`.
 
@@ -883,7 +884,7 @@ The MIL reads `state/pending-closure.json`. If present, the session closed norma
 The MIL processes each field:
 
 - **`consolidation`** — appended to `memory/session.jsonl` as a `MSG` ACP envelope.
-- **`working_memory`** — each declared path is validated against the Memory Store. Valid paths are written atomically to `memory/working-memory.json`. Invalid or absent paths are dropped and logged to `state/integrity.log`. The list is truncated to `working_memory.max_entries` if necessary.
+- **`working_memory`** — each declared path is validated against the Memory Store. Valid paths are written atomically to `memory/working-memory.json`. Invalid or absent paths are dropped and logged to `state/integrity.log`. If the list exceeds `working_memory.max_entries`, entries with the highest `priority` values (lowest priority) are dropped first until the list is within the limit.
 - **`session_handoff`** — written atomically to `memory/session-handoff.json`, replacing the previous record.
 
 The `active_context/` symlinks are rebuilt from the validated Working Memory pointer map at the next boot's Phase 5.
@@ -928,7 +929,7 @@ The MIL is the sole writer to `session.jsonl`. Components that produce results w
 
 The Session Store grows throughout the session. There are two mechanisms that manage its size, serving distinct purposes:
 
-**Mid-session Session Summarization** — a corrective action triggered by the SIL when a Vital Check detects the Session Store approaching `session_store.rotation_threshold_bytes`. The SIL issues a corrective signal to the MIL; if re-verification fails after the corrective action, the condition escalates to Critical. This is a Degraded-class response (externally verifiable by the SIL), not a Sleep Cycle operation. It compresses or summarizes the physical content without semantic consolidation.
+**Mid-session Session Summarization** — a corrective action triggered by the SIL when a Vital Check detects the Session Store approaching `session_store.rotation_threshold_bytes`. The SIL invokes the MIL summarization procedure synchronously within the FCP process — no ACP roundtrip is required. The MIL rewrites `session.jsonl` in-place: it retains the most recent 50% of the file's bytes (the newest entries), discards the oldest half, and prepends a single `MSG` ACP envelope with `data: "session summarized"` as a boundary marker. If re-verification fails after the corrective action, the condition escalates to Critical. This is a Degraded-class response (externally verifiable by the SIL), not a Sleep Cycle operation. It compresses the physical record without semantic consolidation.
 
 **Sleep Cycle Stage 2 rotation** — archival at every Sleep Cycle if the Session Store exceeds `session_store.rotation_threshold_bytes`. The SIL performs a crash-safe rotation: renames `session.jsonl` to `memory/episodic/<year>/<timestamp>.jsonl` and starts a fresh `session.jsonl`. This is structural housekeeping, not a corrective response.
 
@@ -946,7 +947,7 @@ The Memory Store comprises:
 - `memory/working-memory.json` — the Working Memory pointer map. Written by the MIL at Stage 1 of each Sleep Cycle.
 - `memory/session-handoff.json` — the Session Handoff record. Written by the MIL at Stage 1, replacing the previous record.
 
-`memory/active_context/` is the boot-time view into the Memory Store — a directory of symlinks seeded from `working-memory.json` at Phase 5, extended dynamically during the session via `memory_recall` actions. Symlinks are validated at boot; stale entries are removed at Stage 2.
+`memory/active_context/` is the boot-time view into the Memory Store — a directory of symlinks seeded from `working-memory.json` at Phase 5, extended dynamically during the session via `memory_recall` actions. When the MIL processes a `memory_recall`, it creates a symlink in `memory/active_context/` named after the basename of the recalled path (e.g., `memory/active_context/arch.md` → `memory/semantic/arch.md`); an existing symlink of the same name is replaced. The MIL then writes a `MEMORY_RESULT` envelope to `io/inbox/` with the recalled paths and status. Symlinks are validated at boot; stale entries are removed at Stage 2.
 
 ### 8.3 Pre-Session Buffer
 
@@ -956,7 +957,7 @@ The buffer is governed by the `pre_session_buffer` parameters declared in `state
 
 - **Ordering** — FIFO. Arrival order is preserved and must not be altered.
 - **Persistence** — disk. Entries survive a crash and are available at the next boot.
-- **Capacity** — bounded by `pre_session_buffer.max_entries`. Silent overflow is not permitted: if the buffer is full, new stimuli are rejected and the SIL writes a notification to `state/operator_notifications/`. Any discarded stimulus is logged to `state/integrity.log`.
+- **Capacity** — bounded by `pre_session_buffer.max_entries`. Enforcement happens at write time: before renaming a stimulus into `io/inbox/presession/`, FCP counts existing entries; if the count is already at `max_entries`, the stimulus is rejected without writing and logged to `state/integrity.log`. Silent overflow is not permitted. The SIL's Vital Check independently verifies buffer bounds and writes a notification to `state/operator_notifications/` if the buffer is at or near capacity.
 
 At Phase 5 of the Boot Sequence, FCP loads the buffer contents into the Boot Manifest as `[PRESESSION]`, positioned after `[SESSION]` — the most recent pending stimuli available to the CPE at session start.
 
