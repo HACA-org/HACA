@@ -79,16 +79,43 @@ def read_session_tail(
 # Memory Store writes — memory_write action (§6.2)
 # ---------------------------------------------------------------------------
 
+def write_episodic(
+    entity_root: str | Path,
+    content:     str,
+    label:       str = "",
+) -> Path:
+    """Write *content* to a new file in ``memory/episodic/`` and return the path.
+
+    Pure write — no inbox notification.  Used for internal MIL operations
+    (e.g. Sleep Cycle Stage 1 consolidation) where CPE feedback is not needed.
+    """
+    entity_root = Path(entity_root)
+    episodic_dir = entity_root / "memory" / "episodic"
+    episodic_dir.mkdir(parents=True, exist_ok=True)
+
+    ts_compact = utcnow_iso().replace(":", "").replace("-", "")
+    uid = uuid.uuid4().hex[:8]
+    filename = f"{ts_compact}-{uid}"
+    if label:
+        safe_label = "".join(c if c.isalnum() or c in "-_" else "_" for c in label)[:40]
+        filename += f"-{safe_label}"
+    filename += ".md"
+
+    mem_path = episodic_dir / filename
+    mem_path.write_text(content, encoding="utf-8")
+    return mem_path
+
+
 def memory_write(
     entity_root:  str | Path,
     content:      str,
     gseq_counter: GseqCounter,
     label:        str = "",
 ) -> list[dict[str, Any]]:
-    """Write *content* to a new file in ``memory/episodic/``.
+    """Write *content* to a new file in ``memory/episodic/`` and notify CPE via inbox.
 
     Steps:
-      1. Create a unique .md file in memory/episodic/ with the content.
+      1. Create a unique .md file in memory/episodic/ via write_episodic.
       2. Write a MEMO_RESULT envelope to io/inbox/ so the CPE learns
          the write succeeded.
 
@@ -101,24 +128,10 @@ def memory_write(
     Returns:
         List of ACP envelope dicts written to io/inbox/.
     """
+    mem_path    = write_episodic(entity_root, content, label)
     entity_root = Path(entity_root)
-    episodic_dir = entity_root / "memory" / "episodic"
-    episodic_dir.mkdir(parents=True, exist_ok=True)
 
-    # Choose file name: <ts>-<uuid>[-<label>].md
-    ts_compact = utcnow_iso().replace(":", "").replace("-", "")
-    uid = uuid.uuid4().hex[:8]
-    filename = f"{ts_compact}-{uid}"
-    if label:
-        safe_label = "".join(c if c.isalnum() or c in "-_" else "_" for c in label)[:40]
-        filename += f"-{safe_label}"
-    filename += ".md"
-
-    mem_path = episodic_dir / filename
-    mem_path.write_text(content, encoding="utf-8")
-
-    # Notify CPE via inbox
-    rel_path = str(mem_path.relative_to(entity_root))
+    rel_path    = str(mem_path.relative_to(entity_root))
     result_data = json.dumps({"status": "ok", "path": rel_path, "ts": utcnow_iso()})
 
     envelopes = chunk_payload(

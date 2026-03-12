@@ -34,7 +34,7 @@ from .boot import BootContext
 from .fs import drain_inbox, spool_msg, utcnow_iso
 from .mil import (
     consolidate_inbox, memory_write, memory_recall, append_session_event,
-    write_working_memory, write_session_handoff,
+    write_working_memory, write_session_handoff, write_episodic,
 )
 from .sil import (
     append_integrity_log,
@@ -546,7 +546,7 @@ def _handle_closure_payload(
     # consolidation → episodic write + append to session.jsonl as MSG (§7.2)
     consolidation = action.get("consolidation", "")
     if consolidation:
-        memory_write(root, consolidation, mil_gseq, label="consolidation")
+        write_episodic(root, consolidation, label="consolidation")
         cenv = build_envelope(
             actor=ACTOR_CPE,
             type_=TYPE_MSG,
