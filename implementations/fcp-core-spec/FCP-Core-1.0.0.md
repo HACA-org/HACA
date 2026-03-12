@@ -119,7 +119,7 @@ An FCP entity is a single directory. Its location on the host filesystem is the 
 ├── io/
 │   ├── inbox/                  — async stimuli queue for CPE
 │   │   └── presession/         — stimuli received without active session
-│   └── spool/                  — staging area for atomic writes
+│   └── spool/                  — flat staging area; components write unique-named files here before atomic rename into io/inbox/
 ├── memory/                     — MIL exclusive write territory
 │   ├── imprint.json            — imprint record (written once at FAP, never modified)
 │   ├── episodic/               — archived session fragments
@@ -185,15 +185,15 @@ The ACP (Atomic Chunked Protocol) envelope is the inter-component communication 
 
 | Field | Type | Description |
 |---|---|---|
-| `actor` | string | Component that produced this envelope: `fcp`, `sil`, `mil`, `cpe`, `exec` |
-| `gseq` | integer | Monotonically increasing counter, per actor, per session |
+| `actor` | string | Component that produced this envelope: `fcp`, `sil`, `mil`, `cpe`, `exec`, `operator` |
+| `gseq` | integer | Monotonically increasing counter, per actor, per session; starts at 1 and increments with each envelope produced |
 | `tx` | string | Transaction UUID; ties multi-chunk envelopes together |
 | `seq` | integer | Position within the transaction (1-indexed) |
 | `eof` | boolean | `true` if this is the last envelope in the transaction |
 | `type` | string | Envelope type (see table below) |
 | `ts` | string | ISO 8601 UTC timestamp |
 | `data` | string | UTF-8 payload; structured payloads are JSON-serialized into this field |
-| `crc` | string | CRC-32 of `data`, 8-character lowercase hex |
+| `crc` | string | CRC-32/ISO-HDLC of `data` (polynomial 0xEDB88320, init 0xFFFFFFFF, final XOR 0xFFFFFFFF), 8-character lowercase hex |
 
 **Size limit.** No single ACP envelope may exceed 4000 bytes. Larger payloads must be chunked across multiple envelopes sharing the same `tx`, with incrementing `seq` and `eof: true` on the final chunk.
 
@@ -223,10 +223,9 @@ The ACP (Atomic Chunked Protocol) envelope is the inter-component communication 
 | `SIL_UNRESPONSIVE` | EXEC, MIL | Watchdog escalation bypassing SIL |
 | `CTX_SKIP` | FCP | Context entry dropped (absent Working Memory target or budget exhaustion) |
 | `CRITICAL_CLEARED` | SIL | Operator-acknowledged resolution of a Critical condition |
-| `CRON_WAKE` | FCP | Scheduled trigger injected at session start |
 | `DECOMMISSION` | FCP | Decommission instruction injected at session start |
 
-**The `io/` path.** The `io/inbox/` directory is used exclusively for asynchronous delivery — when a component cannot respond within the current cognitive cycle, or when an external stimulus arrives outside an active session. Components write to their private spool under `io/spool/` and rename atomically into `io/inbox/`. FCP drains the inbox at the start of each cycle. The synchronous cognitive chain — CPE output dispatched and resolved within a single cycle — does not pass through `io/`.
+**The `io/` path.** The `io/inbox/` directory is used exclusively for asynchronous delivery — when a component cannot respond within the current cognitive cycle, or when an external stimulus arrives outside an active session. Components write to the flat `io/spool/` staging directory, using unique filenames, and rename atomically into `io/inbox/`. FCP drains the inbox at the start of each cycle. The synchronous cognitive chain — CPE output dispatched and resolved within a single cycle — does not pass through `io/`.
 
 ### 3.2 Structural Baseline
 
