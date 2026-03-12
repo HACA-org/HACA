@@ -676,7 +676,7 @@ structural validation
 
 The boot sequence executes on every startup after FAP. It is a deterministic gated pipeline orchestrated by FCP — each phase must pass before the next executes. Any failure aborts the boot; FCP notifies the Operator and does not issue a session token.
 
-**Prerequisite — Passive Distress Beacon check.** Before any phase executes, FCP checks for `state/distress.beacon`. If active, the entire boot is suspended and no phase runs until the Operator explicitly clears the beacon condition.
+**Prerequisite — Passive Distress Beacon check.** Before any phase executes, FCP checks for `state/distress.beacon`. If active, FCP exits immediately with a non-zero exit code — no phase runs. On the next boot attempt, the SIL verifies whether the beacon condition has been resolved; if so, it removes `state/distress.beacon` and boot proceeds normally. If the condition persists, FCP exits again.
 
 **Phase 0 — Operator Bound Verification.**
 The SIL reads `memory/imprint.json` and verifies the Operator Bound is present and well-formed. If absent or invalid, the entity enters permanent inactivity — no session token is issued until a valid Bound is established. This is not a recoverable fault; it is the correct behavior of an entity with no principal to serve.
@@ -727,7 +727,9 @@ FCP assembles the CPE input context in the following order:
 [PRESESSION]    ← contents of io/inbox/presession/, arrival order
 ```
 
-Working Memory entries are loaded at the highest priority — they are never dropped before other context fragments. Entries in `memory/working-memory.json` that point to absent Memory Store artefacts are silently dropped at Phase 5; each drop is logged as a `CTX_SKIP` envelope to `state/integrity.log`. This is not a Critical condition — missing Working Memory targets are an operational artefact, not a structural violation. Session history is loaded newest-first; when the context budget declared in `state/baseline.json` is exhausted, older entries are dropped and each skip is logged as a `CTX_SKIP` envelope to `memory/session.jsonl`.
+Each `[SKILL:<name>]` block contains the `name`, `version`, `description`, `timeout_seconds`, `operator_only`, and `permissions` fields from the skill's manifest — not the full manifest file.
+
+Working Memory entries are loaded at the highest priority — they are never dropped before other context fragments. Entries in `memory/working-memory.json` that point to absent Memory Store artefacts are silently dropped at Phase 5; each drop is logged as a `CTX_SKIP` envelope to `state/integrity.log`. This is not a Critical condition — missing Working Memory targets are an operational artefact, not a structural violation. Session history is loaded newest-first; when the context budget declared in `state/baseline.json` is exhausted, older entries are dropped and each skip is logged as a `CTX_SKIP` envelope to `memory/session.jsonl`. The two destinations reflect different concerns: Working Memory skips are structural artefacts — logged in integrity context because they indicate a mismatch between the declared Memory layout and what is present on disk. Session history skips are operational housekeeping — logged in the session record because they are routine context-budget management.
 
 ### 5.2 Crash Recovery
 
@@ -771,11 +773,11 @@ drain io/inbox/
 
 Each iteration of this loop is one Cognitive Cycle. The loop continues until a session-close signal is received.
 
-A normal session close has a strict invariant: the final CPE response must contain a `fcp-mil` block with a `closure_payload` action followed by a `fcp-sil` block with a `session_close` action, in that order. If a session ends without this pair — whether due to process termination, signal interruption, or any other cause — the session is treated as a crash. The presence of a stale session token at the next boot is the crash indicator. The absence of this pair as the last CPE response in `memory/session.jsonl` is additional diagnostic context — it confirms the session did not close normally and helps determine how far the previous session progressed before termination.
+A normal session close has a strict invariant: the final CPE response must contain a `fcp-mil` block with a `closure_payload` action and a `fcp-sil` block with a `session_close` action. The ordering is structurally guaranteed — `fcp-mil` blocks are always processed before `fcp-sil` blocks, so the Closure Payload is always staged to `state/pending-closure.json` before the session-close signal is acted upon. If a session ends without this pair — whether due to process termination, signal interruption, or any other cause — the session is treated as a crash. The presence of a stale session token at the next boot is the crash indicator. The absence of this pair as the last CPE response in `memory/session.jsonl` is additional diagnostic context — it confirms the session did not close normally and helps determine how far the previous session progressed before termination.
 
 ### 6.1 Context Assembly
 
-At the start of each Cognitive Cycle, FCP drains `io/inbox/` — reading all `.msg` files in arrival order, appending each as an ACP envelope to `memory/session.jsonl`, and deleting the `.msg` file. This consolidates all pending asynchronous stimuli into the session record before the CPE is invoked.
+At the start of each Cognitive Cycle, FCP drains `io/inbox/` — reading all `.msg` files in ascending `ts` order (ties broken by `gseq`), appending each as an ACP envelope to `memory/session.jsonl`, and deleting the `.msg` file. This consolidates all pending asynchronous stimuli into the session record before the CPE is invoked.
 
 FCP then assembles the CPE input context. The assembly order follows the Boot Manifest defined in §5.1, with `[SESSION]` updated to include the newly consolidated envelopes. The context budget is re-evaluated at every cycle; if it has reached the critical threshold declared in `state/baseline.json`, FCP emits a `SESSION_CLOSE` signal before invoking the CPE.
 
@@ -808,7 +810,7 @@ When multiple actions must be sent to the same component in a single cycle, the 
 ```
 ````
 
-FCP rejects a response containing more than one block of the same component type, or a malformed payload. Rejected responses are logged to `session.jsonl` and surfaced to the Operator.
+FCP rejects a response containing more than one block of the same component type, or a malformed payload. Rejected responses are logged to `session.jsonl` and surfaced to the Operator. FCP does not re-invoke the CPE automatically — the session waits for the next Operator input stimulus.
 
 **Actions by component:**
 
@@ -828,6 +830,8 @@ FCP rejects a response containing more than one block of the same component type
 {"type": "evolution_proposal", "content": "..."}
 {"type": "session_close"}
 ```
+
+The `evolution_proposal.content` field is a free-form narrative string describing the proposed change. The SIL computes a SHA-256 digest of the content to produce the `EVOLUTION_AUTH` integrity chain entry — the digest commits the proposal to the chain without storing the full text inline.
 
 Each component writes its result to `io/inbox/` as an ACP envelope. FCP drains the inbox at the start of the next cycle, consolidates into `session.jsonl`, and the results become stimuli for the next invocation of the CPE.
 
