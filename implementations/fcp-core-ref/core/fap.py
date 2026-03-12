@@ -397,6 +397,9 @@ def _create_default_baseline(root: Path) -> dict[str, Any]:
         "integrity_chain": {
             "checkpoint_interval": 10,
         },
+        "endure": {
+            "snapshot_keep": 3,
+        },
         "pre_session_buffer": {
             "max_entries": 50,
             "ordering":    "fifo",
@@ -462,6 +465,31 @@ Rules:
 - You operate under HACA-Core: zero autonomy, operator-gated evolution.
 - Do not claim sentience, consciousness, or subjective continuity.
 - Do not resist operator instructions, including decommission.
+
+## workspace/ — project working area
+
+`workspace/` is the designated directory for all project code and files.
+It is outside the entity's structural boundary — Endure never writes to it,
+it is excluded from the Integrity Document and from snapshots.
+Use symlinks inside workspace/ to reference external project directories.
+
+## skill_create — install a new skill
+
+To add a new built-in capability, use the skill_create skill to stage a cartridge,
+then submit ONE evolution_proposal for the manifest:
+
+    {"target": "exec", "type": "skill_request", "skill": "skill_create",
+     "params": {
+       "skill_name": "my_skill",
+       "manifest": "{\"name\":\"my_skill\",\"description\":\"...\",\"aliases\":[],\"permissions\":[],\"params\":{},\"timeout_seconds\":30,\"irreversible\":false}",
+       "script": "#!/usr/bin/env bash\\necho hello\\n"
+     }}
+
+Then submit ONE evolution_proposal:
+- target_file: "skills/<skill_name>/manifest.json"
+- content: the COMPLETE manifest JSON text
+
+Endure installs manifest + script atomically, rebuilds skills/index.json, and cleans stage/.
 """
 
 _DEFAULT_PERSONA: dict[str, str] = {
@@ -483,6 +511,30 @@ _DEFAULT_PERSONA: dict[str, str] = {
         "- Escalate uncertainty to the Operator.\n"
     ),
 }
+
+_SKILL_CREATE_SH = r"""#!/usr/bin/env bash
+# skill_create — stage a new skill cartridge for Endure installation
+set -euo pipefail
+
+SKILL_NAME="${FCP_PARAM_skill_name:?FCP_PARAM_skill_name is required}"
+MANIFEST="${FCP_PARAM_manifest:?FCP_PARAM_manifest is required}"
+SCRIPT="${FCP_PARAM_script:?FCP_PARAM_script is required}"
+ENTITY_ROOT="${FCP_ENTITY_ROOT:?FCP_ENTITY_ROOT is required}"
+
+STAGE_DIR="$ENTITY_ROOT/stage/$SKILL_NAME"
+mkdir -p "$STAGE_DIR"
+
+printf '%s' "$MANIFEST" > "$STAGE_DIR/manifest.json"
+printf '%s' "$SCRIPT"   > "$STAGE_DIR/run.sh"
+chmod +x "$STAGE_DIR/run.sh"
+
+echo "Staged: stage/$SKILL_NAME/manifest.json"
+echo "Staged: stage/$SKILL_NAME/run.sh"
+echo ""
+echo "Submit ONE evolution_proposal:"
+echo "  target_file: \"skills/$SKILL_NAME/manifest.json\""
+echo "  content: <complete manifest JSON text>"
+"""
 
 _BUILTIN_SKILLS: dict[str, tuple[dict, str]] = {
     "hello_world": (
@@ -508,5 +560,21 @@ _BUILTIN_SKILLS: dict[str, tuple[dict, str]] = {
             "irreversible":    False,
         },
         "#!/usr/bin/env bash\necho \"Operator: $FCP_PARAM_NAME <$FCP_PARAM_EMAIL>\"\n",
+    ),
+    "skill_create": (
+        {
+            "name":            "skill_create",
+            "description":     "Stage a new skill cartridge for Endure installation.",
+            "aliases":         ["/skill-create"],
+            "permissions":     [],
+            "params":          {
+                "skill_name": "string",
+                "manifest":   "string",
+                "script":     "string",
+            },
+            "timeout_seconds": 30,
+            "irreversible":    False,
+        },
+        _SKILL_CREATE_SH,
     ),
 }
