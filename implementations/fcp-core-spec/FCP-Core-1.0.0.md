@@ -13,7 +13,7 @@ date: 2026-03-11
 
 The Filesystem Cognitive Platform (FCP) is a concrete implementation specification for HACA-compliant entities. Where HACA-Arch and HACA-Core define architecture and behavioral contracts, FCP defines exact implementation: directory layout, file formats, protocol envelopes, boot sequence, and operational procedures — all built exclusively on POSIX filesystem primitives, requiring no external databases, message brokers, or runtime daemons.
 
-FCP-Core is the FCP profile targeting HACA-Core compliance. It is the reference implementation for the zero-autonomy profile: Transparent topology, sealed identity, operator-gated evolution. Every architectural requirement of HACA-Core has a direct, unambiguous mapping to a filesystem artifact or procedure defined in this document.
+FCP-Core is the FCP profile targeting HACA-Core compliance. It is the reference implementation for the zero-autonomy profile: Transparent topology, sealed identity, operator-gated evolution. Every architectural requirement of HACA-Core has a direct, unambiguous mapping to a filesystem artefact or procedure defined in this document.
 
 This document assumes familiarity with HACA-Arch and HACA-Core. It does not restate their concepts — it operationalizes them. A reader who knows what a Sleep Cycle is will find here exactly how it runs: which files are written, in what order, under what conditions, and what constitutes a valid completion. The level of detail is intentional — FCP-Core is meant to be implemented, not interpreted.
 
@@ -126,7 +126,7 @@ An FCP entity is a single directory. Its location on the host filesystem is the 
     └── distress.beacon         — passive distress beacon
 ```
 
-The `persona/`, `skills/`, and `hooks/` directories contain structural content — covered by the Integrity Document, changed only via Endure. The `io/` directory is the CPE's async stimulus queue — any component writes here when a result is relevant to cognition; the MIL drains it at the start of each cycle. The `memory/` directory is MIL-exclusive write territory; `imprint.json` is the exception — written once by the MIL during FAP and never modified thereafter. The `state/` directory is SIL territory: structural (`baseline.json`, `integrity.json`, `integrity_chain.jsonl`), integrity-exclusive (`integrity.log`, `distress.beacon`), and operational (`sentinels/`, `operator_notifications/`).
+The `persona/`, `skills/`, and `hooks/` directories contain structural content — covered by the Integrity Document, changed only via Endure. The `io/` directory is the CPE's async stimulus queue — any component writes here when a result is relevant to cognition; FCP drains it at the start of each cycle. The `memory/` directory is MIL-exclusive write territory; `imprint.json` is the exception — written once by the MIL during FAP and never modified thereafter. The `state/` directory is SIL territory: structural (`baseline.json`, `integrity.json`, `integrity_chain.jsonl`), integrity-exclusive (`integrity.log`, `distress.beacon`), and operational (`sentinels/`, `operator_notifications/`).
 
 ### 2.2 File Format Conventions
 
@@ -134,11 +134,11 @@ FCP uses four file formats, each with a distinct semantic:
 
 **`.md`** — Markdown. Used for narrative content: persona definitions, boot protocol, skill documentation. These files are human-readable by design. Within FCP, `.md` files are structural — they are written once via Endure and not modified at runtime.
 
-**`.json`** — JSON object. Used for structured, low-mutation content: configuration, manifests, pointer maps, integrity artifacts. Every write to a `.json` file must be atomic: write to a `.tmp` sibling, then rename into place. Direct in-place writes are not permitted.
+**`.json`** — JSON object. Used for structured, low-mutation content: configuration, manifests, pointer maps, integrity artefacts. Every write to a `.json` file must be atomic: write to a `.tmp` sibling, then rename into place. Direct in-place writes are not permitted.
 
-**`.jsonl`** — Newline-delimited JSON. Used for append-only content: session store, integrity log, agenda. Each line is a complete, self-contained JSON object. Existing lines are never modified or deleted. Truncation or compaction of a `.jsonl` file is only permitted when explicitly authorized by the active procedure (session summarization, Sleep Cycle archival).
+**`.jsonl`** — Newline-delimited JSON. Used for append-only content: session store, integrity log, integrity chain. Each line is a complete, self-contained JSON object. Existing lines are never modified or deleted. Truncation or compaction of a `.jsonl` file is only permitted when explicitly authorized by the active procedure (session summarization, Sleep Cycle archival).
 
-**`.msg`** — ACP envelope file. Used for inter-component messaging: each file in `io/inbox/` and `io/inbox/presession/` is a single JSON object representing one ACP envelope. `.msg` files are written atomically via the spool-then-rename pattern defined in the ACP protocol, and are consumed — read then deleted — by the MIL during inbox drain. Unlike `.jsonl`, they are not append-only and do not accumulate; their lifecycle ends at consumption.
+**`.msg`** — ACP envelope file. Used for inter-component messaging: each file in `io/inbox/` and `io/inbox/presession/` is a single JSON object representing one ACP envelope. `.msg` files are written atomically via the spool-then-rename pattern defined in the ACP protocol, and are consumed — read then deleted — by FCP during inbox drain. Unlike `.jsonl`, they are not append-only and do not accumulate; their lifecycle ends at consumption.
 
 ---
 
@@ -194,10 +194,12 @@ The ACP (Atomic Chunked Protocol) envelope is the inter-component communication 
 | `EVOLUTION_REJECTED` | SIL | Operator rejection of an Evolution Proposal |
 | `PROPOSAL_PENDING` | SIL | Evolution Proposal persisted across session close |
 | `ENDURE_COMMIT` | SIL | Structural write completed during Stage 3 |
+| `SEVERANCE_COMMIT` | SIL | Skill removed from Skill Index as a maintenance operation; carries the removed skill name, reason, and updated `skills/index.json` hash |
+| `SEVERANCE_PENDING` | SIL | `SEVERANCE_COMMIT` unacknowledged at session close (normal or forced); written to `state/integrity.log`; presented at every subsequent boot's Phase 6 until explicitly resolved by the Operator |
 | `SLEEP_COMPLETE` | SIL | Authoritative Sleep Cycle completion record |
 | `ACTION_LEDGER` | FCP | Write-ahead entry for irreversible skill execution |
 | `SIL_UNRESPONSIVE` | EXEC, MIL | Watchdog escalation bypassing SIL |
-| `CTX_SKIP` | FCP | Context entry dropped due to budget exhaustion |
+| `CTX_SKIP` | FCP | Context entry dropped (absent Working Memory target or budget exhaustion) |
 | `CRITICAL_CLEARED` | SIL | Operator-acknowledged resolution of a Critical condition |
 | `CRON_WAKE` | FCP | Scheduled trigger injected at session start |
 | `DECOMMISSION` | FCP | Decommission instruction injected at session start |
@@ -241,9 +243,7 @@ The ACP (Atomic Chunked Protocol) envelope is the inter-component communication 
     "checkpoint_interval": 10
   },
   "pre_session_buffer": {
-    "max_entries": 50,
-    "ordering": "fifo",
-    "persistence": "disk"
+    "max_entries": 50
   },
   "operator_channel": {
     "notifications_dir": "state/operator_notifications/"
@@ -471,7 +471,9 @@ FCP loads `skills/index.json` — already verified in Phase 3 — and makes it a
 FCP assembles the Boot Manifest and the CPE input context. See §5.1.
 
 **Phase 6 — Critical Condition Check.**
-The SIL scans `state/integrity.log` for unresolved Critical conditions — `DRIFT_FAULT` and `ESCALATION_FAILED` records without a corresponding `CRITICAL_CLEARED`. If any are found, the SIL writes a notification to `state/operator_notifications/` and withholds the session token until the Operator explicitly acknowledges and resolves the condition via terminal prompt.
+The SIL scans `state/integrity.log` for unresolved Critical conditions — any record without a corresponding `CRITICAL_CLEARED` (e.g., `DRIFT_FAULT`). If any are found, the SIL writes a notification to `state/operator_notifications/` and withholds the session token until the Operator explicitly acknowledges and resolves the condition via terminal prompt.
+
+FCP also presents any `PROPOSAL_PENDING` records found in `state/integrity.log` — Evolution Proposals that were not resolved at the previous session close — via terminal prompt, collecting an explicit Operator decision on each before proceeding to Phase 7. Any `SEVERANCE_PENDING` records are presented in the same step, requiring Operator acknowledgement before the session token is issued.
 
 **Phase 7 — Session Token Issuance.**
 The SIL issues the session token. See §5.3.
@@ -492,7 +494,7 @@ FCP assembles the CPE input context in the following order:
 [PRESESSION]    ← contents of io/inbox/presession/, arrival order
 ```
 
-Working Memory entries are loaded at the highest priority — they are never dropped before other context fragments. Entries in `memory/working-memory.json` that point to absent Memory Store artefacts are silently dropped at Phase 5; each drop is logged as a `CTX_SKIP` envelope to `state/integrity.log`. This is not a Critical condition — missing Working Memory targets are an operational artifact, not a structural violation. Session history is loaded newest-first; when the context budget declared in `state/baseline.json` is exhausted, older entries are dropped and each skip is logged as a `CTX_SKIP` envelope to `memory/session.jsonl`.
+Working Memory entries are loaded at the highest priority — they are never dropped before other context fragments. Entries in `memory/working-memory.json` that point to absent Memory Store artefacts are silently dropped at Phase 5; each drop is logged as a `CTX_SKIP` envelope to `state/integrity.log`. This is not a Critical condition — missing Working Memory targets are an operational artefact, not a structural violation. Session history is loaded newest-first; when the context budget declared in `state/baseline.json` is exhausted, older entries are dropped and each skip is logged as a `CTX_SKIP` envelope to `memory/session.jsonl`.
 
 ### 5.2 Crash Recovery
 
@@ -500,6 +502,7 @@ A stale session token at boot means the previous Sleep Cycle did not complete. T
 
 Recovery procedure:
 
+0. FCP checks whether `memory/session.jsonl` is present. If absent, the previous Sleep Cycle's Stage 2 rotation completed the rename but crashed before creating the replacement file; FCP creates a new empty `memory/session.jsonl` before proceeding.
 1. The SIL reads `state/integrity.log` and locates the most recent `SLEEP_COMPLETE` record.
 2. If a partial Endure commit exists — an `ENDURE_COMMIT` marker with no subsequent `SLEEP_COMPLETE` — the SIL restores the pre-mutation snapshot created at Stage 3 entry.
 3. The SIL scans `memory/session.jsonl` for unresolved `ACTION_LEDGER` entries — skills marked in-progress at crash time. Each unresolved entry is presented to the Operator via terminal prompt before the session token is issued. Unresolved entries are never re-executed automatically; the Operator decides whether to re-execute, skip, or investigate each one.
@@ -514,7 +517,7 @@ The SIL writes `state/sentinels/session.token`. This is the last gate — its co
 
 The **Heartbeat Protocol** begins. The SIL writes a `HEARTBEAT` envelope to `state/integrity.log` at the start of each Vital Check. A Vital Check triggers when either `T` completed Cognitive Cycles or `I` seconds have elapsed since the last check, whichever comes first. Both thresholds are declared in `state/baseline.json` and cannot be modified at runtime.
 
-The **Reciprocal SIL Watchdog** activates. EXEC and MIL each monitor the interval since the last `HEARTBEAT` record in `state/integrity.log`. If the SIL has been silent beyond `watchdog.sil_threshold_seconds`, the component writes a `SIL_UNRESPONSIVE` envelope directly to `state/operator_notifications/`, bypassing the SIL entirely. The notification includes the component identity, the timestamp of the last observed heartbeat, and the elapsed interval.
+The **Reciprocal SIL Watchdog** activates. EXEC and MIL each monitor the interval since the last `HEARTBEAT` record in `state/integrity.log`. If the SIL has been silent beyond `watchdog.sil_threshold_seconds`, the component writes a `SIL_UNRESPONSIVE` envelope directly to `state/operator_notifications/`, bypassing the SIL entirely. The notification includes the component identity, the timestamp of the last observed heartbeat, and the elapsed interval. FCP then activates the Passive Distress Beacon and halts immediately.
 
 ---
 
@@ -595,6 +598,8 @@ FCP rejects a response containing more than one block of the same component type
 
 Each component writes its result to `io/inbox/` as an ACP envelope. FCP drains the inbox at the start of the next cycle, consolidates into `session.jsonl`, and the results become stimuli for the next invocation of the CPE.
 
+The `closure_payload` action (§3.7) is an exception to this model: it is not dispatched to a component for synchronous execution, and no result is returned to `io/inbox/`. Instead, FCP retains it for the MIL to process at Sleep Cycle Stage 1.
+
 ### 6.3 Cycle Chain
 
 A Cognitive Cycle is the atomic unit of cognition: stimulus received → context loaded → intent generated → intent dispatched. The cycle is complete when the CPE response is processed and component blocks are dispatched. What follows is the consequence of the dispatched intent, handled by the responsible components independently.
@@ -611,7 +616,14 @@ The Heartbeat Protocol and Vital Check are defined in §10.3.
 
 The Sleep Cycle is the ordered shutdown protocol that executes at every clean session close. It is the sole authorized window for structural writes. FCP orchestrates four sequential stages; each must complete before the next begins. No two stages execute concurrently. HACA-Arch §6.4 describes three canonical stages (memory consolidation → garbage collection → Endure execution); FCP adds a preparatory Stage 0 (Semantic Drift Detection) required by HACA-Core §4.2, which mandates drift detection during the Sleep Cycle. Stage 0 executes before any mnemonic or structural write occurs.
 
-**Session token revocation.** Before Stage 0 begins, the SIL revokes the session token by appending `revoked_at` to `state/sentinels/session.token`. No further Operator-initiated Cognitive Cycles are dispatched after revocation. The token artefact remains in place throughout the Sleep Cycle as a crash indicator; the SIL removes it only after Stage 3 completes.
+**Session token revocation.** On receiving a session-close signal, the SIL revokes the session token immediately by appending `revoked_at` to `state/sentinels/session.token`. No further Cognitive Cycles are dispatched after revocation. The token artefact remains in place throughout the Sleep Cycle as a crash indicator; the SIL removes it only after Stage 3 completes.
+
+Between revocation and Stage 0, behavior differs by close type:
+
+- **Normal close** (CPE emitted `closure_payload` + `session_close`): FCP presents any pending Evolution Proposals to the Operator via terminal prompt and collects a decision on each.
+- **Forced close** (Critical condition, context window limit, or `/endure approve <id>`): no proposal presentation occurs. Any undecided proposals are persisted as `PROPOSAL_PENDING` and presented at the next boot's Phase 6.
+
+**Operator input during the Sleep Cycle.** The session token carries `revoked_at` — the out-of-session routing rule applies: all Operator stimuli and slash commands directed to the skill registry are routed to `io/inbox/presession/`. FCP platform commands that do not require skill dispatch or session state are serviced immediately by the FCP process regardless of Sleep Cycle state.
 
 ### 7.1 Stage 0 — Semantic Drift Detection
 
@@ -634,7 +646,7 @@ A `DRIFT_FAULT` does not halt the Sleep Cycle — Stages 1–3 still complete.
 
 ### 7.2 Stage 1 — Memory Consolidation
 
-The MIL processes the Closure Payload produced in the final Cognitive Cycle of the session (§6). No further CPE invocation occurs during the Sleep Cycle.
+If the session closed normally, the MIL processes the Closure Payload produced in the final Cognitive Cycle of the session (§6). If the session was a forced close — a Critical condition, context window limit, or `/endure approve <id>` — no Closure Payload exists and Stage 1 is a no-op; the Sleep Cycle proceeds directly to Stage 2. No further CPE invocation occurs during the Sleep Cycle.
 
 The MIL processes each field:
 
@@ -648,7 +660,7 @@ The `active_context/` symlinks are rebuilt from the validated Working Memory poi
 
 The SIL performs bounded housekeeping against the Memory Store. No CPE invocation occurs in this stage.
 
-- If `memory/session.jsonl` exceeds `session_store.rotation_threshold_bytes` declared in `state/baseline.json`, the SIL performs a crash-safe rotation: it writes the rotation intent to a temporary journal, renames `session.jsonl` to `memory/episodic/<year>/<timestamp>.jsonl`, creates a new empty `session.jsonl`, and removes the journal. If interrupted, the next boot detects the incomplete rotation via the journal and completes it before Phase 2.
+- If `memory/session.jsonl` exceeds `session_store.rotation_threshold_bytes` declared in `state/baseline.json`, the SIL renames `memory/session.jsonl` to `memory/episodic/<year>/<timestamp>.jsonl` and creates a new empty `memory/session.jsonl`. If the rename completes but the new file is not created — detected at the next boot by the absent `memory/session.jsonl` — Phase 2 creates a new empty file before proceeding.
 - Stale `memory/active_context/` symlinks pointing to absent targets are removed.
 - Temporary spool files older than one session in `io/spool/` are deleted.
 - Entries in `io/inbox/presession/` beyond the capacity declared in `state/baseline.json` are discarded and logged to `state/integrity.log`.
@@ -661,8 +673,8 @@ The SIL processes all queued Evolution Proposals. For each proposal:
 2. Create a pre-mutation snapshot of all files to be modified.
 3. Apply the structural write atomically: write to a `.tmp` sibling, then `rename(2)` into place.
 4. Recompute SHA-256 hashes for all modified tracked files.
-5. Update `state/integrity.json` atomically.
-6. If the number of Endure commits since the last checkpoint has reached `integrity_chain.checkpoint_interval`, produce the checkpoint atomically: extend the `state/integrity.json` write in step 5 to include the updated `last_checkpoint` field, and append the checkpoint entry to `state/integrity_chain.jsonl`. Both writes are part of the same Endure commit — the Integrity Document is the verifiable anchor; the chain entry carries the full chain data.
+5. Update `state/integrity.json` atomically. If the number of Endure commits since the last checkpoint has reached `integrity_chain.checkpoint_interval`, include the updated `last_checkpoint` field in this same write.
+6. Append the commit entry to `state/integrity_chain.jsonl`. If step 5 updated `last_checkpoint`, this entry is a checkpoint entry — the Integrity Document is the verifiable anchor; the chain entry carries the full chain data.
 7. Log an `ENDURE_COMMIT` ACP envelope to `memory/session.jsonl`.
 
 Proposals without a valid `EVOLUTION_AUTH` record are discarded and logged — they are never executed.
@@ -695,7 +707,7 @@ The Memory Store is the entity's consolidated long-term knowledge base. It persi
 
 The Memory Store comprises:
 
-- `memory/episodic/` — archived session fragments, organized by date. Written by the MIL during Stage 2 rotation.
+- `memory/episodic/` — archived session fragments, organized by date. Written by the SIL during Stage 2 rotation (via rename of `memory/session.jsonl`).
 - `memory/semantic/` — semantic graph: concept nodes and links representing structured knowledge accumulated across sessions. Written by the MIL as directed by CPE `memory_write` actions.
 - `memory/imprint.json` — the Imprint Record. Written once at FAP by the MIL; never modified thereafter.
 - `memory/working-memory.json` — the Working Memory pointer map. Written by the MIL at Stage 1 of each Sleep Cycle.
@@ -713,7 +725,7 @@ The buffer is governed by the `pre_session_buffer` parameters declared in `state
 - **Persistence** — disk. Entries survive a crash and are available at the next boot.
 - **Capacity** — bounded by `pre_session_buffer.max_entries`. Silent overflow is not permitted: if the buffer is full, new stimuli are rejected and the SIL writes a notification to `state/operator_notifications/`. Any discarded stimulus is logged to `state/integrity.log`.
 
-At Phase 5 of the Boot Sequence, FCP injects the buffer contents as the first stimuli of the new session, in arrival order, before any other context fragment.
+At Phase 5 of the Boot Sequence, FCP loads the buffer contents into the Boot Manifest as `[PRESESSION]`, positioned after `[SESSION]` — the most recent pending stimuli available to the CPE at session start.
 
 ---
 
@@ -723,9 +735,9 @@ The execution layer is responsible for all skill dispatch and host actuation. Th
 
 ### 9.1 Skill Index
 
-`skills/index.json` is the authoritative registry of skills the entity is authorized to use. It is part of the structural baseline, covered by the Integrity Document from the moment of FAP, and cannot be modified outside the Endure Protocol — with one exception: the SIL may remove a skill from the index as a maintenance operation when the skill's manifest is invalid or its executable is absent, without requiring a full Endure cycle, to avoid blocking the system.
+`skills/index.json` is the authoritative registry of skills the entity is authorized to use. It is part of the structural baseline, covered by the Integrity Document from the moment of FAP, and cannot be modified outside the Endure Protocol — with one exception: the SIL may remove a skill from the index as a maintenance operation when the skill's manifest is invalid or its executable is absent, without requiring a full Endure Protocol execution, to avoid blocking the system.
 
-When removing a skill as a maintenance operation, the SIL still performs an atomic integrity update: it rewrites `state/integrity.json` with the updated hash for `skills/index.json` and appends a `SEVERANCE_COMMIT` entry to `state/integrity_chain.jsonl`. This entry references the removed skill, the reason for removal, and the new `skills/index.json` hash. No `EVOLUTION_AUTH` record is required. A `SEVERANCE_COMMIT` without a corresponding `EVOLUTION_AUTH` is valid — it is distinguished from a normal Endure commit by its type field.
+When removing a skill as a maintenance operation, the SIL still performs an atomic integrity update: it rewrites `state/integrity.json` with the updated hash for `skills/index.json` and appends a `SEVERANCE_COMMIT` entry to `state/integrity_chain.jsonl`. This entry references the removed skill, the reason for removal, and the new `skills/index.json` hash. No `EVOLUTION_AUTH` record is required. A `SEVERANCE_COMMIT` without a corresponding `EVOLUTION_AUTH` is valid — it is distinguished from a normal Endure commit by its type field. The SIL writes a `SEVERANCE_COMMIT` notification to `state/operator_notifications/` immediately. At normal session close, FCP presents it via terminal prompt and requires an explicit Operator acknowledgement before the Sleep Cycle begins. If the session closes via forced close, the notification is persisted as `SEVERANCE_PENDING` in `state/integrity.log` and presented at the next boot's Phase 6, blocking session token issuance until resolved.
 
 The Skill Index is established during FAP Step 1: the SIL validates every skill manifest present in `skills/` and writes `skills/index.json` containing only the skills whose manifests are well-formed and whose executables are present. `skills/index.json` is then included in the Integrity Document and referenced in the Imprint Record — the entity's authorized capabilities are sealed into its identity from first activation.
 
@@ -741,7 +753,7 @@ Skill dispatch follows a two-gate model:
 
 **Gate 2 — Manifest validation.** At dispatch time, the EXEC validates the request against the skill's `manifest.json`: declared permissions, required dependencies, and execution context constraints. A request that violates the manifest is rejected and logged. There is no SIL roundtrip per execution — Gate 1 provides the pre-authorization established at boot.
 
-If a skill fails or times out, the EXEC writes a `SKILL_ERROR` or `SKILL_TIMEOUT` ACP envelope to `io/inbox/`. The result reaches the CPE as a stimulus in the next Cognitive Cycle. If a skill fails on `fault.n_retry` consecutive attempts, the EXEC writes a notification to `state/operator_notifications/`.
+If a skill fails, the EXEC writes a `SKILL_ERROR` ACP envelope to `io/inbox/`. If a skill exceeds its declared timeout, the SIL writes a `SKILL_TIMEOUT` envelope to `io/inbox/` at the next Vital Check (§10.3). Both results reach the CPE as stimuli in the next Cognitive Cycle. If a skill fails on `fault.n_retry` consecutive attempts, the EXEC writes a notification to `state/operator_notifications/`.
 
 ### 9.3 Action Ledger
 
@@ -753,7 +765,7 @@ The write-ahead entry records the intent before the skill executes. If a crash o
 
 Worker skills are skills that execute in isolation, outside the main CPE context window. They serve two distinct use cases.
 
-**SIL-invoked workers** — bounded, deterministic operations requested directly by the SIL via EXEC, without CPE involvement. The primary example is the NCD comparison worker used by Stage 0 Semantic Drift Detection: invoked only when the deterministic probe layer produces no conclusive result, never as the primary check.
+**SIL-invoked workers** — bounded, deterministic operations requested directly by the SIL via EXEC, without CPE involvement. The primary example is the NCD comparison worker used by Stage 0 Semantic Drift Detection: invoked only when the deterministic probe layer produces no conclusive result, never as the primary check. SIL-invoked workers must be read-only — they must not produce irreversible side effects. The Action Ledger requirement (§9.3) does not apply to them.
 
 **CPE-invoked workers** — sub-agents dispatched by the CPE via a standard `skill_request` action. The CPE provides three fields in the request: a persona injection (the specialized identity for the worker), a context (the relevant knowledge the worker needs), and a task (the specific work to execute). The worker runs in isolation with that payload and returns its result through `io/inbox/` as a `SKILL_RESULT` envelope.
 
@@ -785,7 +797,7 @@ The SIL monitors three drift categories. Under HACA-Core, all three escalate dir
 
 **Identity Drift** — detected at every Heartbeat Vital Check by recomputing structural file hashes against the Integrity Document. A mismatch triggers immediate Critical escalation: session token revoked, Sleep Cycle executed.
 
-**Evolutionary Drift** — detected at each Endure execution by verifying that every commit in the Integrity Chain references a valid `EVOLUTION_AUTH` record. A commit without a traceable authorization reference triggers immediate Critical escalation regardless of whether the structural change appears benign.
+**Evolutionary Drift** — detected at each Endure execution by verifying that every commit in the Integrity Chain — other than `SEVERANCE_COMMIT` entries — references a valid `EVOLUTION_AUTH` record. A commit without a traceable authorization reference triggers immediate Critical escalation regardless of whether the structural change appears benign.
 
 ### 10.3 Heartbeat and Vital Check
 
@@ -810,13 +822,17 @@ The integrity layer operates two watchdog mechanisms with distinct ownership: th
 
 **Skill timeout watchdog** — the SIL monitors active skill executions against the timeout declared in each skill's manifest. A skill that exceeds its timeout receives a `SKILL_TIMEOUT` envelope written to `io/inbox/`; the result reaches the CPE as a stimulus in the next cycle. Background skills declare a TTL in their manifest; a background skill whose TTL expires without a registered result is treated as an incomplete execution and logged to `state/integrity.log`. If a skill fails on `fault.n_retry` consecutive attempts, the EXEC writes a notification to `state/operator_notifications/`.
 
-**Reciprocal SIL Watchdog** — FCP exposes the SIL's last heartbeat timestamp to EXEC and MIL at the start of each operation. Each component independently checks whether the interval since the last `HEARTBEAT` record in `state/integrity.log` exceeds `watchdog.sil_threshold_seconds` declared in `state/baseline.json`. If it does, the component escalates directly to the Operator via terminal prompt — bypassing both the SIL and `state/operator_notifications/`. The notification includes the component identity, the timestamp of the last observed heartbeat, and the elapsed interval. The watchdog threshold must not exceed the Heartbeat maximum interval `I`.
+**Reciprocal SIL Watchdog** — FCP exposes the SIL's last heartbeat timestamp to EXEC and MIL at the start of each operation. Each component independently checks whether the interval since the last `HEARTBEAT` record in `state/integrity.log` exceeds `watchdog.sil_threshold_seconds` declared in `state/baseline.json`. If it does, the component writes a `SIL_UNRESPONSIVE` envelope directly to `state/operator_notifications/`, bypassing the SIL entirely. The notification includes the component identity, the timestamp of the last observed heartbeat, and the elapsed interval. FCP then activates the Passive Distress Beacon and halts immediately.
 
 ### 10.5 Evolution Gate
 
 The Evolution Gate is the SIL's enforcement of Operator Primacy over structural change. Under HACA-Core, every Evolution Proposal requires explicit, per-proposal Operator authorization — implicit authorization is never valid.
 
-When the CPE emits an `evolution_proposal` action, the SIL intercepts it. The session continues normally while the proposal is pending. The SIL writes the proposal to `state/operator_notifications/` immediately so the Operator is aware. At session close, FCP presents any pending proposals via terminal prompt and waits for an explicit decision on each. If the session closes before the terminal prompt can be shown — for example during an unattended session — the SIL persists the proposal as a `PROPOSAL_PENDING` record in `state/integrity.log` and FCP presents it at the start of the next session.
+When the CPE emits an `evolution_proposal` action, the SIL intercepts it. The session continues normally while the proposal is pending. The SIL writes the proposal to `state/operator_notifications/` immediately so the Operator is aware.
+
+The Operator may approve or reject a pending proposal mid-session using `/endure approve <id>` or `/endure reject <id>` (§12.3). These commands are Operator-exclusive — the CPE cannot invoke them. On mid-session approval, the SIL writes the `EVOLUTION_AUTH` record and triggers an immediate forced session close: the token is revoked without consulting the CPE and the Sleep Cycle begins. Stage 3 will execute the approved proposal. On mid-session rejection, the SIL writes `EVOLUTION_REJECTED` and the session continues normally.
+
+At normal session close, FCP presents any remaining pending proposals via terminal prompt and waits for an explicit decision on each. If the session closes before the terminal prompt can be shown — for example during an unattended session — the SIL persists the proposal as a `PROPOSAL_PENDING` record in `state/integrity.log` and FCP presents it at the next boot's Phase 6.
 
 On explicit Operator approval, the SIL writes an `EVOLUTION_AUTH` record to `state/integrity.log` containing the Operator's identity, a timestamp, and a SHA-256 digest of the approved proposal content. The proposal is queued for execution at Sleep Cycle Stage 3. On rejection, the SIL writes an `EVOLUTION_REJECTED` record. In both cases, the outcome is never returned to the CPE.
 
@@ -854,11 +870,11 @@ Decommission is the permanent retirement of the entity. The Operator issues a de
 
 **Decommission sequence:**
 
-1. FCP injects a `DECOMMISSION` envelope as the first stimulus of the current session — or the next session if none is active. The CPE processes it as a normal Cognitive Cycle and produces a Closure Payload acknowledging the shutdown.
+1. FCP injects a `DECOMMISSION` envelope as the first stimulus of the current session — or the next session if none is active. The CPE processes it as a normal Cognitive Cycle and emits `closure_payload` + `session_close`, acknowledging the shutdown. FCP treats this as a normal session close.
 2. FCP executes a complete Sleep Cycle — consolidating mnemonic state, running Semantic Drift probes, and committing any queued Evolution Proposals. The `SLEEP_COMPLETE` record is written to `state/integrity.log` as usual.
 3. The SIL removes the session token. FCP then executes the Operator's chosen disposition:
 
-**Archive** — FCP creates a `tar` archive of the Entity Store, excluding all volatile paths listed in `.gitignore`. The archive is written to an Operator-specified path. The archived entity is inoperative — it cannot boot without explicit reactivation by an Operator — but its Integrity Chain, mnemonic records, and Imprint Record are fully preserved.
+**Archive** — FCP creates an archive of the Entity Store, excluding all volatile paths listed in `.gitignore`. The archive is written to an Operator-specified path; that path should reside outside the entity root. The archived entity is inoperative — it cannot boot without explicit reactivation by an Operator — but its Integrity Chain, mnemonic records, and Imprint Record are fully preserved.
 
 **Destroy** — FCP deletes all files in the Entity Store root. Before deletion, `state/integrity.log` is copied to an Operator-specified location as a final audit record.
 
@@ -891,12 +907,14 @@ The loop continues until the Operator closes the session, the CPE emits a `sessi
 Slash commands allow the Operator to invoke skills directly without involving the CPE. FCP recognizes any input beginning with `/` as a slash command, resolves it against the skill registry in `skills/index.json`, and dispatches directly to EXEC — bypassing the cognitive pipeline entirely. Action Ledger protection (§9.3) still applies: FCP writes the write-ahead entry to `memory/session.jsonl` before dispatching any skill that declares irreversible side effects, regardless of dispatch origin.
 
 ```
-/snapshot          — invoke the snapshot_create skill
-/endure            — invoke the sys_endure skill
-/memory            — invoke the memory_retrieve skill
+/snapshot              — invoke the snapshot_create skill
+/endure                — invoke the sys_endure skill
+/memory                — invoke the memory_retrieve skill
+/endure approve <id>   — approve a pending Evolution Proposal (Operator-exclusive)
+/endure reject <id>    — reject a pending Evolution Proposal (Operator-exclusive)
 ```
 
-The slash command registry is declared in `skills/index.json` as a `/command` alias map — a flat lookup table from slash command name to skill name. Commands not present in the map are rejected with an error message; they are never forwarded to the CPE.
+The slash command registry is declared in `skills/index.json` as a `/command` alias map — a flat lookup table from slash command name to skill name. Commands not present in the map are rejected with an error message; they are never forwarded to the CPE. Commands declared as `"operator_only": true` in the alias map are rejected if issued from any source other than the interactive terminal prompt.
 
 ### 12.4 Notifications
 
@@ -944,6 +962,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] All tracked structural file hashes verified against `state/integrity.json` at Phase 3 Step 2.
 - [ ] `skills/index.json` loaded (already verified in Phase 3) at Phase 4.
 - [ ] Unresolved Critical conditions block session token at Phase 6; Operator presented via terminal prompt.
+- [ ] `PROPOSAL_PENDING` records presented to Operator via terminal prompt at Phase 6; Operator decision collected before session token is issued.
 - [ ] Session token issued exclusively by the SIL at Phase 7.
 
 **Cognitive Session**
@@ -956,9 +975,9 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] SIL revokes session token before Stage 0 begins.
 - [ ] Stages execute sequentially; no two stages run concurrently.
 - [ ] Semantic Drift probes run deterministic layer first; probabilistic layer (NCD Worker Skill) only when deterministic produces no conclusive result.
-- [ ] Closure Payload requested from CPE at Stage 1; all three fields (`consolidation`, `working_memory`, `session_handoff`) processed by the MIL.
+- [ ] On normal close: Closure Payload processed by MIL at Stage 1; all three fields (`consolidation`, `working_memory`, `session_handoff`) must be present and valid. On forced close: Stage 1 is a no-op and the Sleep Cycle proceeds to Stage 2.
 - [ ] `memory/session-handoff.json` always included in `working_memory` declaration.
-- [ ] Session Store rotated at Stage 2 if exceeding `session_store.rotation_threshold_bytes`; rotation uses write-ahead journal.
+- [ ] Session Store rotated at Stage 2 if exceeding `session_store.rotation_threshold_bytes`; rotation renames `memory/session.jsonl` to `memory/episodic/` and creates a new empty `memory/session.jsonl`.
 - [ ] Each Evolution Proposal executed at Stage 3 only with a matching `EVOLUTION_AUTH` record.
 - [ ] `SLEEP_COMPLETE` written to `state/integrity.log` before session token is removed.
 - [ ] Session token removed by SIL immediately after `SLEEP_COMPLETE`.
@@ -973,19 +992,23 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] `ACTION_LEDGER` write-ahead entry created before executing any skill with irreversible side effects.
 - [ ] Unresolved `ACTION_LEDGER` entries surfaced to Operator via terminal prompt at next boot; never re-executed automatically.
 - [ ] CPE-invoked Worker Skills receive all three fields: persona, context, and task.
+- [ ] SIL-invoked Worker Skills are read-only; Action Ledger (§9.3) does not apply.
+- [ ] `SEVERANCE_COMMIT` notification written to `state/operator_notifications/` immediately; Operator acknowledgement required at session close or Phase 6 of next boot before session token is issued.
 
 **Integrity Layer**
 - [ ] `state/integrity.log` is never compacted, archived, truncated, or deleted; retention is unbounded.
 - [ ] All three drift categories (Semantic, Identity, Evolutionary) escalate directly to Critical under HACA-Core — no Degraded intermediate state.
 - [ ] Heartbeat Vital Check includes full entity health scan as defined in §10.3.
-- [ ] Reciprocal SIL Watchdog managed by FCP; EXEC and MIL check SIL heartbeat independently; unresponsive SIL escalates via terminal prompt.
-- [ ] Evolution Proposals immediately written to `state/operator_notifications/`; decision collected via terminal prompt at session close.
+- [ ] Reciprocal SIL Watchdog managed by FCP; EXEC and MIL check SIL heartbeat independently; unresponsive SIL writes `SIL_UNRESPONSIVE` to `state/operator_notifications/`, activates the Passive Distress Beacon, and halts FCP immediately.
+- [ ] Evolution Proposals immediately written to `state/operator_notifications/`; decision collected via `/endure approve <id>` mid-session or via terminal prompt at normal session close.
+- [ ] `/endure approve <id>` triggers immediate forced session close; SIL writes `EVOLUTION_AUTH` and Sleep Cycle begins without CPE involvement.
 - [ ] Proposal outcome never returned to the CPE.
 - [ ] Passive Distress Beacon is a plain file readable without running processes.
 - [ ] Beacon cleared only after SIL (or FCP, if SIL was unresponsive) independently verifies resolution.
 
 **Operator Interface**
 - [ ] Slash commands resolved against `skills/index.json` alias map; dispatched directly to EXEC without CPE involvement.
+- [ ] Operator-exclusive commands (`"operator_only": true`) rejected if issued from any source other than the interactive terminal prompt.
 - [ ] Pending notifications presented to Operator before Phase 6 completes at boot.
 - [ ] Terminal prompt used for all synchronous Operator interactions requiring a response.
 - [ ] `state/operator_notifications/` used for all asynchronous notifications not requiring immediate response.
