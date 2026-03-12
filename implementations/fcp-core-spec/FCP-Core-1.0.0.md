@@ -38,6 +38,7 @@ This document assumes familiarity with HACA-Arch and HACA-Core. It does not rest
    - 3.10 [Skill Manifest](#310-skill-manifest)
    - 3.11 [Drift Probe](#311-drift-probe)
    - 3.12 [Integrity Chain Entry](#312-integrity-chain-entry)
+   - 3.13 [Imprint Record](#313-imprint-record)
 4. [First Activation Protocol](#4-first-activation-protocol)
 5. [Boot Sequence](#5-boot-sequence)
    - 5.1 [Boot Manifest](#51-boot-manifest)
@@ -277,7 +278,7 @@ The ACP (Atomic Chunked Protocol) envelope is the inter-component communication 
 }
 ```
 
-`cpe.topology` must be `"transparent"` — any other value causes boot abort with no session token issued.
+`cpe.topology` must be `"transparent"` — any other value causes boot abort with no session token issued. `cpe.backend` identifies the model or endpoint used for CPE invocations; its format is implementation-defined.
 
 ### 3.3 Integrity Document
 
@@ -388,10 +389,10 @@ The Closure Payload is the structured output produced by the CPE in the last Cog
 | `type` | string | Must be `"closure_payload"` |
 | `consolidation` | string | Semantic summary of the session: insights, decisions, and knowledge worth carrying forward |
 | `working_memory` | array | Ordered list of Memory Store artefact paths declared relevant to the next session; bounded by `working_memory.max_entries` |
-| `working_memory[].priority` | integer | Load priority — lower value means higher priority |
+| `working_memory[].priority` | integer | Load priority — lower value means higher priority; must be a positive integer (minimum 1) |
 | `working_memory[].path` | string | Path relative to entity root; must resolve to an existing Memory Store artefact |
 | `session_handoff` | object | Prospective record of pending tasks and next steps |
-| `session_handoff.pending_tasks` | array | List of unfinished tasks to surface at the next session |
+| `session_handoff.pending_tasks` | array | List of unfinished tasks to surface at the next session; no separate size constraint — bounded by the CPE response context window |
 | `session_handoff.next_steps` | string | Narrative description of recommended next actions |
 
 The `memory/session-handoff.json` path must always be included in `working_memory` — it is never absent from the next session's active context. How the MIL processes each field is defined in §7.2.
@@ -513,7 +514,7 @@ Each line in `state/drift-probes.jsonl` is a probe record. Probes are structural
 | `deterministic.value` | string | The hash, string, or pattern to check against |
 | `reference` | string or null | Reference text used by the probabilistic NCD layer; if present and `deterministic` is absent, the probabilistic layer executes; if both are absent, the probe is malformed |
 
-A probe with both `deterministic` and `reference` absent is malformed; the SIL logs the malformation at Stage 0 without executing it.
+A probe with both `deterministic` and `reference` absent is malformed; the SIL appends a `DRIFT_FAULT` ACP envelope to `state/integrity.log` identifying the `probe_id` and the reason (`"malformed: both deterministic and reference absent"`), then skips the probe. No `DRIFT_FAULT` is sent to `io/inbox/` and no Critical condition is raised — the entry is informational.
 
 If the probe's `target` file is absent from the Memory Store, the SIL logs the absence to `state/integrity.log` and skips the probe without triggering a `DRIFT_FAULT`. Missing probe targets are an operational artefact, not a structural violation.
 
@@ -580,6 +581,40 @@ Each line in `state/integrity_chain.jsonl` is a chain entry. Three entry types e
 | `prev_hash` | string or null | all | SHA-256 of the previous entry's complete JSON line as stored in the file (excluding the trailing newline); `null` for genesis |
 
 **Chain validation.** Each entry's `prev_hash` must equal the SHA-256 of the previous entry line as written. Phase 3 Step 1 reads `last_checkpoint` from `state/integrity.json`, locates the entry at that `seq`, verifies its SHA-256 matches the recorded digest, then validates `prev_hash` continuity forward. If `last_checkpoint` is `null`, validation starts from seq 0. Evolutionary Drift detection (§10.2) additionally verifies that every `ENDURE_COMMIT` — but not `SEVERANCE_COMMIT` — carries a valid `evolution_auth_digest`.
+
+### 3.13 Imprint Record
+
+`memory/imprint.json` is the entity's birth certificate — written atomically by the MIL at FAP Step 6 and never modified thereafter. Genesis Omega, the entity's permanent identity anchor, is the SHA-256 digest of this file.
+
+```json
+{
+  "version": "1.0",
+  "activated_at": "2026-03-11T14:00:00Z",
+  "haca_arch_version": "1.0.0",
+  "haca_profile": "HACA-Core-1.0.0",
+  "operator_bound": {
+    "operator_name": "...",
+    "operator_email": "...",
+    "operator_hash": "sha256:..."
+  },
+  "structural_baseline": "sha256:...",
+  "integrity_document": "sha256:...",
+  "skills_index": "sha256:..."
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `version` | string | Schema version; always `"1.0"` |
+| `activated_at` | string | ISO 8601 UTC timestamp of FAP completion |
+| `haca_arch_version` | string | HACA-Arch version under which the entity was initialized |
+| `haca_profile` | string | HACA profile under which the entity was initialized (e.g., `"HACA-Core-1.0.0"`) |
+| `operator_bound` | object | Operator Bound sub-object as defined in §3.4 |
+| `structural_baseline` | string | SHA-256 of `state/baseline.json` at activation |
+| `integrity_document` | string | SHA-256 of `state/integrity.json` at activation |
+| `skills_index` | string | SHA-256 of `skills/index.json` at activation |
+
+The `structural_baseline`, `integrity_document`, and `skills_index` fields capture the entity's authorized configuration at birth. They are not updated as the entity evolves — they record the initial state from which Genesis Omega is derived.
 
 ---
 
@@ -944,6 +979,18 @@ If a skill fails, the EXEC writes a `SKILL_ERROR` ACP envelope to `io/inbox/`. I
 
 Skills that produce irreversible side effects — writes to external systems, physical actuations, payments — must be covered by a write-ahead `ACTION_LEDGER` entry in `memory/session.jsonl` before execution begins. FCP writes the entry before dispatching to the EXEC; the EXEC resolves it — marking it complete or failed — after the skill returns.
 
+The `data` field of both envelopes is a JSON object:
+
+```json
+// write-ahead entry (written by FCP before dispatch)
+{"ledger_id": "uuid", "skill": "send_email", "params": {...}, "status": "pending"}
+
+// resolution entry (written by EXEC after the skill returns)
+{"ledger_id": "uuid", "skill": "send_email", "status": "complete|failed"}
+```
+
+Phase 2 crash recovery scans `memory/session.jsonl` for `ledger_id` values that have a `"pending"` entry with no corresponding `"complete"` or `"failed"` entry — these are the unresolved records surfaced to the Operator.
+
 The write-ahead entry records the intent before the skill executes. If a crash occurs between execution and Sleep Cycle consolidation, the unresolved entry is detected at the next boot's Phase 2 (Crash Recovery) and surfaced to the Operator. Unresolved entries are never re-executed automatically.
 
 ### 9.4 Worker Skills
@@ -952,7 +999,19 @@ Worker skills are skills that execute in isolation, outside the main CPE context
 
 **SIL-invoked workers** — bounded, deterministic operations requested directly by the SIL via EXEC, without CPE involvement. The primary example is the NCD comparison worker used by Stage 0 Semantic Drift Detection: invoked only when the deterministic probe layer produces no conclusive result, never as the primary check. SIL-invoked workers must be read-only — they must not produce irreversible side effects. The Action Ledger requirement (§9.3) does not apply to them.
 
-**CPE-invoked workers** — sub-agents dispatched by the CPE via a standard `skill_request` action. The CPE provides three fields in the request: a persona injection (the specialized identity for the worker), a context (the relevant knowledge the worker needs), and a task (the specific work to execute). The worker runs in isolation with that payload and returns its result through `io/inbox/` as a `SKILL_RESULT` envelope.
+**CPE-invoked workers** — sub-agents dispatched by the CPE via a standard `skill_request` action. The CPE provides three fields in the `params` object: `persona` (the specialized identity for the worker), `context` (the relevant knowledge the worker needs), and `task` (the specific work to execute). The worker runs in isolation with that payload and returns its result through `io/inbox/` as a `SKILL_RESULT` envelope.
+
+```json
+{
+  "type": "skill_request",
+  "skill": "worker_skill",
+  "params": {
+    "persona": "...",
+    "context": "...",
+    "task": "..."
+  }
+}
+```
 
 Worker Skills are for isolated, single-agent specialized execution. When the CPE requires coordinated work across multiple agents, the correct mechanism is the Cognitive Mesh Interface — Worker Skills must not be used as a substitute for collective coordination.
 
@@ -1055,7 +1114,11 @@ Every use of either mechanism is logged to `state/integrity.log` as an ACP envel
 
 `state/distress.beacon` is a passive, persistent signal written by the SIL when autonomous recovery is no longer possible. It is activated in two conditions: `fault.n_boot` consecutive boot failures, or `fault.n_channel` consecutive Operator Channel delivery failures.
 
-The beacon is a plain file — readable from the Entity Store without network connectivity, running processes, or any component active. Its presence at boot suspends the entire boot sequence before any phase executes.
+The beacon is a plain file — readable from the Entity Store without network connectivity, running processes, or any component active. Its presence at boot suspends the entire boot sequence before any phase executes. It contains a JSON object identifying the cause:
+
+```json
+{"cause": "n_boot|n_channel|sil_unresponsive", "ts": "2026-03-11T14:00:00Z", "consecutive_failures": 3}
+```
 
 While the beacon is active, the entity is in suspended halt: no session token is issued, no Cognitive Cycles execute, and no stimuli are processed.
 
