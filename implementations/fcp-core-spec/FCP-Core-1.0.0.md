@@ -496,6 +496,7 @@ Recovery procedure:
 2. If a partial Endure commit exists — an `ENDURE_COMMIT` marker with no subsequent `SLEEP_COMPLETE` — the SIL restores the pre-mutation snapshot created at Stage 3 entry.
 3. The SIL scans `memory/session.jsonl` for unresolved `ACTION_LEDGER` entries — skills marked in-progress at crash time. Each unresolved entry is presented to the Operator via terminal prompt before the session token is issued. Unresolved entries are never re-executed automatically; the Operator decides whether to re-execute, skip, or investigate each one.
 4. The SIL increments the consecutive crash counter in `state/integrity.log`. If the counter reaches `fault.n_boot` declared in the structural baseline, the SIL activates the Passive Distress Beacon and halts.
+5. With the Entity Store in a verified state and all Action Ledger entries resolved, the SIL re-executes the Sleep Cycle from Stage 0. This completes the consolidation of the crashed session. The entity does not proceed to session token issuance until the Sleep Cycle has completed successfully and a `SLEEP_COMPLETE` record has been written to `state/integrity.log`.
 
 On a clean boot (no stale token), the crash counter resets to zero.
 
@@ -525,6 +526,8 @@ drain io/inbox/
 ```
 
 Each iteration of this loop is one Cognitive Cycle. The loop continues until a session-close signal is received.
+
+A normal session close has a strict invariant: the final CPE response must contain exactly one Closure Payload followed by one `SESSION_CLOSE` signal, in that order, within the same `fcp-actions` block. If a session ends without this pair — whether due to process termination, signal interruption, or any other cause — the session is treated as a crash. The presence of a stale session token at the next boot is the crash indicator. The absence of this pair as the last CPE response in `memory/session.jsonl` is additional diagnostic context — it confirms the session did not close normally and helps determine how far the previous session progressed before termination.
 
 ### 6.1 Context Assembly
 
