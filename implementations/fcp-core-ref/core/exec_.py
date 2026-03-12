@@ -117,6 +117,8 @@ def build_skill_index(entity_root: str | Path) -> dict[str, Any]:
     for skill_dir in sorted(skills_dir.iterdir()):
         if not skill_dir.is_dir():
             continue
+        if skill_dir.name == "lib":
+            continue  # system skills — not visible to CPE
         manifest_path = skill_dir / "manifest.json"
         if not manifest_path.exists():
             continue

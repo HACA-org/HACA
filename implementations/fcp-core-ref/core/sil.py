@@ -94,6 +94,17 @@ def _tracked_files(entity_root: Path) -> list[Path]:
                 if narrative.exists():
                     files.append(narrative)
 
+    # skills/lib/<name>/manifest.json  +  skills/lib/<name>/<name>.md
+    lib_dir = entity_root / "skills" / "lib"
+    if lib_dir.exists():
+        for manifest in sorted(lib_dir.glob("*/manifest.json")):
+            files.append(manifest)
+        for skill_dir in sorted(lib_dir.iterdir()):
+            if skill_dir.is_dir():
+                narrative = skill_dir / f"{skill_dir.name}.md"
+                if narrative.exists():
+                    files.append(narrative)
+
     # hooks/ — all files
     hooks_dir = entity_root / "hooks"
     if hooks_dir.exists():

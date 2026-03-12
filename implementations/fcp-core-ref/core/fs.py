@@ -260,6 +260,7 @@ def ensure_dirs(entity_root: str | Path) -> None:
     dirs = [
         root / "persona",
         root / "skills",
+        root / "skills" / "lib",
         root / "hooks",
         root / "workspace",
         root / "stage",

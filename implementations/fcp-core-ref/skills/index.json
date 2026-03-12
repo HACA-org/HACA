@@ -15,19 +15,6 @@
       "_has_narrative": true
     },
     {
-      "name": "owner_bind",
-      "description": "FAP operator binding (cold-start only).",
-      "aliases": [],
-      "permissions": [
-        "memory.write"
-      ],
-      "params": {},
-      "timeout_seconds": 30,
-      "irreversible": false,
-      "_executable": "skills/owner_bind/execute.sh",
-      "_has_narrative": true
-    },
-    {
       "name": "skill_create",
       "description": "Stage a new skill cartridge for Endure installation.",
       "aliases": [

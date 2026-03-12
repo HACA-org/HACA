@@ -142,6 +142,19 @@ def _run_pipeline(root: Path, track) -> str:
             nd.write_text(narrative_md, encoding="utf-8")
             track(nd)
 
+    # System skills — installed under skills/lib/, not listed in index
+    for skill_name, (manifest, narrative_md) in _SYSTEM_SKILLS.items():
+        skill_dir = root / "skills" / "lib" / skill_name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        mf = skill_dir / "manifest.json"
+        nd = skill_dir / f"{skill_name}.md"
+        if not mf.exists():
+            atomic_write_json(mf, manifest)
+            track(mf)
+        if not nd.exists() and narrative_md:
+            nd.write_text(narrative_md, encoding="utf-8")
+            track(nd)
+
     # Build and write skills/index.json
     index_data = build_skill_index(root)
     index_path = root / "skills" / "index.json"
@@ -560,24 +573,6 @@ _BUILTIN_SKILLS: dict[str, tuple[dict, str, str]] = {
             "## Output\n\nPrints: `Hello from FCP-Core entity!`\n"
         ),
     ),
-    "owner_bind": (
-        {
-            "name":            "owner_bind",
-            "description":     "FAP operator binding (cold-start only).",
-            "aliases":         [],
-            "permissions":     ["memory.write"],
-            "params":          {},
-            "timeout_seconds": 30,
-            "irreversible":    False,
-        },
-        "#!/usr/bin/env bash\necho \"Operator: $FCP_PARAM_NAME <$FCP_PARAM_EMAIL>\"\n",
-        (
-            "# owner_bind\n\n"
-            "Used internally during FAP to bind the Operator identity.\n"
-            "Not intended for direct use after activation.\n\n"
-            "## Parameters\n\nNone (invoked by FAP pipeline).\n"
-        ),
-    ),
     "skill_create": (
         {
             "name":            "skill_create",
@@ -609,6 +604,28 @@ _BUILTIN_SKILLS: dict[str, tuple[dict, str, str]] = {
             "3. Endure installs manifest + narrative + execute.sh, rebuilds index, cleans stage/.\n\n"
             "## Output\n\n"
             "Prints staged file paths and the exact evolution_proposal to submit.\n"
+        ),
+    ),
+}
+
+# System skills — installed under skills/lib/, invisible to CPE.
+# 2-tuple: (manifest dict, narrative_md string)
+_SYSTEM_SKILLS: dict[str, tuple[dict, str]] = {
+    "owner_bind": (
+        {
+            "name":            "owner_bind",
+            "description":     "FAP operator binding (cold-start only).",
+            "aliases":         [],
+            "permissions":     ["memory.write"],
+            "params":          {},
+            "timeout_seconds": 30,
+            "irreversible":    False,
+        },
+        (
+            "# owner_bind\n\n"
+            "Used internally during FAP to bind the Operator identity.\n"
+            "Not intended for direct use after activation.\n\n"
+            "## Parameters\n\nNone (invoked by FAP pipeline).\n"
         ),
     ),
 }
