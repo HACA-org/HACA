@@ -34,7 +34,7 @@ from .acp import (
     ACPEnvelope,
     GseqCounter,
     ACTOR_MIL,
-    TYPE_SKILL_RESULT,
+    TYPE_MEMO_RESULT,
     chunk_payload,
 )
 from .fs import (
@@ -89,7 +89,7 @@ def memory_write(
 
     Steps:
       1. Create a unique .md file in memory/episodic/ with the content.
-      2. Write a SKILL_RESULT envelope to io/inbox/ so the CPE learns
+      2. Write a MEMO_RESULT envelope to io/inbox/ so the CPE learns
          the write succeeded.
 
     Args:
@@ -123,7 +123,7 @@ def memory_write(
 
     envelopes = chunk_payload(
         actor=ACTOR_MIL,
-        type_=TYPE_SKILL_RESULT,
+        type_=TYPE_MEMO_RESULT,
         payload_str=result_data,
         gseq_start=gseq_counter.next(),
     )
@@ -193,7 +193,7 @@ def memory_recall(
 
     envelopes = chunk_payload(
         actor=ACTOR_MIL,
-        type_=TYPE_SKILL_RESULT,
+        type_=TYPE_MEMO_RESULT,
         payload_str=result_data,
         gseq_start=gseq_counter.next(),
     )

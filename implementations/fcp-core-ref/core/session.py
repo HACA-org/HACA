@@ -27,6 +27,7 @@ from typing import Any
 from .acp import (
     ACTOR_FCP, ACTOR_CPE, ACTOR_SIL,
     TYPE_MSG, TYPE_SESSION_CLOSE, TYPE_EVOLUTION_PROPOSAL, TYPE_CLOSURE_PAYLOAD,
+    TYPE_MEMO_RESULT,
     GseqCounter, build_envelope, chunk_payload,
 )
 from .boot import BootContext
@@ -366,29 +367,31 @@ def _format_inbox_event(env: dict) -> str:
     if t == "MSG":
         return data   # operator message text — pass through as-is
 
+    if t == "MEMO_RESULT":
+        try:
+            d = json.loads(data)
+        except Exception:
+            return f"[Memory result]\n{data}"
+        # memory_write confirmation: {"status": "ok", "path": ..., "ts": ...}
+        if "path" in d:
+            return f"[Memory saved: {d['path']}]"
+        # memory_recall result: {"query": ..., "count": ..., "results": [...]}
+        if "query" in d:
+            count   = d.get("count", 0)
+            results = d.get("results", [])
+            if not results:
+                return f"[Memory recall: {d['query']!r}] No matching entries found."
+            parts = [f"[Memory recall: {d['query']!r}] {count} result(s):"]
+            for r in results:
+                parts.append(f"\n--- {r['path']} ---\n{r['excerpt'].strip()}")
+            return "\n".join(parts)
+        return f"[Memory result]\n{data}"
+
     if t == "SKILL_RESULT":
         try:
             d = json.loads(data)
         except Exception:
             return f"[Result]\n{data}"
-
-        if actor == "mil":
-            # Memory write confirmation: {"status": "ok", "path": ..., "ts": ...}
-            if "path" in d:
-                return f"[Memory saved: {d['path']}]"
-            # Memory recall result: {"query": ..., "count": ..., "results": [...]}
-            if "query" in d:
-                count   = d.get("count", 0)
-                results = d.get("results", [])
-                if not results:
-                    return f"[Memory recall: {d['query']!r}] No matching entries found."
-                parts = [f"[Memory recall: {d['query']!r}] {count} result(s):"]
-                for r in results:
-                    parts.append(f"\n--- {r['path']} ---\n{r['excerpt'].strip()}")
-                return "\n".join(parts)
-            # Fallback for unknown MIL result
-            return f"[MIL]\n{data}"
-
         # EXEC skill result: {"skill": ..., "output": ..., "exit_code": ...}
         return f"[Skill result: {d.get('skill', '?')}]\n{d.get('output', '').strip()}"
 
