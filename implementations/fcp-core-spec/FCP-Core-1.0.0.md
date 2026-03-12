@@ -65,6 +65,7 @@ This document assumes familiarity with HACA-Arch and HACA-Core. It does not rest
     - 10.5 [Evolution Gate](#105-evolution-gate)
     - 10.6 [Operator Channel](#106-operator-channel)
     - 10.7 [Passive Distress Beacon](#107-passive-distress-beacon)
+    - 10.8 [Critical Condition Resolution](#108-critical-condition-resolution)
 11. [Decommission](#11-decommission)
 12. [Operator Interface](#12-operator-interface)
 13. [Compliance](#13-compliance)
@@ -195,7 +196,7 @@ The ACP (Atomic Chunked Protocol) envelope is the inter-component communication 
 | `PROPOSAL_PENDING` | SIL | Evolution Proposal persisted across session close |
 | `ENDURE_COMMIT` | SIL | Structural write completed during Stage 3 |
 | `SEVERANCE_COMMIT` | SIL | Skill removed from Skill Index as a maintenance operation; carries the removed skill name, reason, and updated `skills/index.json` hash |
-| `SEVERANCE_PENDING` | SIL | `SEVERANCE_COMMIT` unacknowledged at session close (normal or forced); written to `state/integrity.log`; presented at every subsequent boot's Phase 6 until explicitly resolved by the Operator |
+| `SEVERANCE_PENDING` | SIL | `SEVERANCE_COMMIT` unacknowledged at session close (normal or forced); escalates to a Critical condition at session close; written to `state/integrity.log`; presented at Phase 6 of every subsequent boot as a Critical condition until resolved |
 | `SLEEP_COMPLETE` | SIL | Authoritative Sleep Cycle completion record |
 | `ACTION_LEDGER` | FCP | Write-ahead entry for irreversible skill execution |
 | `SIL_UNRESPONSIVE` | EXEC, MIL | Watchdog escalation bypassing SIL |
@@ -471,9 +472,9 @@ FCP loads `skills/index.json` — already verified in Phase 3 — and makes it a
 FCP assembles the Boot Manifest and the CPE input context. See §5.1.
 
 **Phase 6 — Critical Condition Check.**
-The SIL scans `state/integrity.log` for unresolved Critical conditions — any record without a corresponding `CRITICAL_CLEARED` (e.g., `DRIFT_FAULT`). If any are found, the SIL writes a notification to `state/operator_notifications/` and withholds the session token until the Operator explicitly acknowledges and resolves the condition via terminal prompt.
+The SIL scans `state/integrity.log` for unresolved Critical conditions — any record without a corresponding `CRITICAL_CLEARED` (e.g., `DRIFT_FAULT`, `SEVERANCE_PENDING`). If any are found, the SIL writes a notification to `state/operator_notifications/` and withholds the session token until each condition is resolved. Resolution requires Operator declaration and SIL independent re-verification — see §10.8.
 
-FCP also presents any `PROPOSAL_PENDING` records found in `state/integrity.log` — Evolution Proposals that were not resolved at the previous session close — via terminal prompt, collecting an explicit Operator decision on each before proceeding to Phase 7. Any `SEVERANCE_PENDING` records are presented in the same step, requiring Operator acknowledgement before the session token is issued.
+FCP also presents any `PROPOSAL_PENDING` records found in `state/integrity.log` via terminal prompt, collecting an explicit Operator decision on each before proceeding to Phase 7.
 
 **Phase 7 — Session Token Issuance.**
 The SIL issues the session token. See §5.3.
@@ -862,6 +863,23 @@ The beacon is cleared only by the Operator. Clearance requires two steps: the Op
 
 If the beacon was activated due to SIL unresponsiveness — detected by EXEC or MIL via the Reciprocal SIL Watchdog — the resolution verification cannot be delegated to the SIL. In this case, FCP performs the verification directly before lifting the suspended halt, presenting the result to the Operator via terminal prompt.
 
+### 10.8 Critical Condition Resolution
+
+A Critical condition blocks session token issuance at Phase 6. Resolution requires two independent steps: the Operator declares the condition resolved via terminal prompt, and the SIL performs independent re-verification confirming the declared correction. The SIL writes `CRITICAL_CLEARED` to `state/integrity.log` only when both steps pass. An Operator declaration without a passing re-verification does not produce `CRITICAL_CLEARED` — the block persists.
+
+The re-verification method is specific to the condition type:
+
+| Condition | Operator declaration | SIL re-verification |
+|---|---|---|
+| `DRIFT_FAULT` | Declares Memory Store corrected | Re-executes Semantic Probes against Memory Store |
+| Identity Drift | Declares structural files corrected | Recomputes structural file hashes against Integrity Document |
+| `SEVERANCE_PENDING` | Acknowledges skill removal | Invokes `skill_audit` as a read-only Worker Skill; confirms index integrity |
+| `SIL_UNRESPONSIVE` | — | See §10.7 |
+
+`SIL_UNRESPONSIVE` activates the Passive Distress Beacon directly (§10.4) and does not produce a `CRITICAL_CLEARED` entry — resolution follows the beacon clearance procedure in §10.7.
+
+After a passing re-verification, the SIL writes `CRITICAL_CLEARED` to `state/integrity.log` referencing the sequence number of the original Critical record. Unresolved conditions accumulate — each must be individually resolved before Phase 7 proceeds.
+
 ---
 
 ## 11. Decommission
@@ -961,7 +979,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] Integrity Chain validated from last checkpoint forward at Phase 3 Step 1.
 - [ ] All tracked structural file hashes verified against `state/integrity.json` at Phase 3 Step 2.
 - [ ] `skills/index.json` loaded (already verified in Phase 3) at Phase 4.
-- [ ] Unresolved Critical conditions block session token at Phase 6; Operator presented via terminal prompt.
+- [ ] Unresolved Critical conditions block session token at Phase 6; resolution requires Operator declaration and SIL independent re-verification per §10.8; `CRITICAL_CLEARED` written by SIL only after both steps pass.
 - [ ] `PROPOSAL_PENDING` records presented to Operator via terminal prompt at Phase 6; Operator decision collected before session token is issued.
 - [ ] Session token issued exclusively by the SIL at Phase 7.
 
@@ -993,7 +1011,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] Unresolved `ACTION_LEDGER` entries surfaced to Operator via terminal prompt at next boot; never re-executed automatically.
 - [ ] CPE-invoked Worker Skills receive all three fields: persona, context, and task.
 - [ ] SIL-invoked Worker Skills are read-only; Action Ledger (§9.3) does not apply.
-- [ ] `SEVERANCE_COMMIT` notification written to `state/operator_notifications/` immediately; Operator acknowledgement required at session close or Phase 6 of next boot before session token is issued.
+- [ ] `SEVERANCE_COMMIT` notification written to `state/operator_notifications/` immediately; unacknowledged at session close escalates to `SEVERANCE_PENDING` Critical condition; resolved at Phase 6 via dual-gate: Operator acknowledges + SIL invokes `skill_audit` Worker Skill to confirm index integrity.
 
 **Integrity Layer**
 - [ ] `state/integrity.log` is never compacted, archived, truncated, or deleted; retention is unbounded.
