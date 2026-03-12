@@ -140,6 +140,7 @@ An FCP entity is a single directory. Its location on the host filesystem is the 
     ├── pending-closure.json    — closure payload staging (present only between session close and Stage 1 completion)
     ├── sentinels/              — runtime sentinels
     │   └── session.token       — session token (present = active or crashed session)
+    ├── snapshots/              — pre-mutation snapshots for crash recovery (present only during Stage 3 execution)
     ├── operator_notifications/ — operator channel output
     └── distress.beacon         — passive distress beacon
 ```
@@ -582,6 +583,8 @@ Each line in `state/integrity_chain.jsonl` is a chain entry. Three entry types e
 
 **Chain validation.** Each entry's `prev_hash` must equal the SHA-256 of the previous entry line as written. Phase 3 Step 1 reads `last_checkpoint` from `state/integrity.json`, locates the entry at that `seq`, verifies its SHA-256 matches the recorded digest, then validates `prev_hash` continuity forward. If `last_checkpoint` is `null`, validation starts from seq 0. Evolutionary Drift detection (§10.2) additionally verifies that every `ENDURE_COMMIT` — but not `SEVERANCE_COMMIT` — carries a valid `evolution_auth_digest`.
 
+**Checkpoint identification.** Checkpoint entries carry no dedicated field — they are identified solely by their `seq` matching `last_checkpoint.seq` in `state/integrity.json`. The verifiable anchor is `integrity_doc_hash`, not a flag in the chain entry itself.
+
 ### 3.13 Imprint Record
 
 `memory/imprint.json` is the entity's birth certificate — written atomically by the MIL at FAP Step 6 and never modified thereafter. Genesis Omega, the entity's permanent identity anchor, is the SHA-256 digest of this file.
@@ -648,7 +651,7 @@ structural validation
 
 3. **Operator Channel initialization** — FCP verifies that `state/operator_notifications/` is writable and that the terminal prompt is available. The verification result is logged to `state/integrity.log`. If either mechanism is unavailable, FAP aborts.
 
-4. **Operator enrollment** — FCP conducts the interaction with the Operator and collects name and email address. The SIL computes the `operator_hash` as a SHA-256 digest of these fields. The Operator Bound is held in memory — it is not written until Step 6.
+4. **Operator enrollment** — FCP conducts the interaction with the Operator and collects name and email address. The SIL computes the `operator_hash` as the SHA-256 digest of the UTF-8 string `"<operator_name>\n<operator_email>"` — the name, a single newline character, then the email address, with no trailing newline. The Operator Bound is held in memory — it is not written until Step 6.
 
 5. **Integrity Document generated** — The SIL computes SHA-256 hashes of all tracked structural files and writes `state/integrity.json` atomically.
 
@@ -656,7 +659,7 @@ structural validation
 
 7. **Genesis Omega derived** — The SIL computes the SHA-256 digest of the finalized Imprint Record and writes it as the root entry of `state/integrity_chain.jsonl`. This is the entity's permanent identity anchor.
 
-8. **First session token issued** — The SIL writes `state/sentinels/session.token`. FAP is complete; the first session begins following the Boot Sequence from Phase 5 onward (§5).
+8. **First session token issued** — The SIL writes `state/sentinels/session.token`. FAP is complete; the first session begins following the Boot Sequence from Phase 5 onward (§5). Phases 0–4 are bypassed entirely — in particular, Phase 2 (Crash Recovery) does not execute and the fresh token is not treated as a crash indicator. Phase 7, which normally issues the session token, is a no-op on first boot: the token is already present.
 
 **Atomicity.** FCP ensures FAP is atomic with respect to its own outputs. If any step fails, all writes produced by that FAP attempt are reverted and `memory/imprint.json` is not created. The entity cannot enter a partially-initialized state. FAP re-executes on the next boot.
 
@@ -727,7 +730,7 @@ Recovery procedure:
 
 0. FCP checks whether `memory/session.jsonl` is present. If absent, the previous Sleep Cycle's Stage 2 rotation completed the rename but crashed before creating the replacement file; FCP creates a new empty `memory/session.jsonl` before proceeding.
 1. The SIL reads `state/integrity.log` and locates the most recent `SLEEP_COMPLETE` record.
-2. If a partial Endure commit exists — an `ENDURE_COMMIT` marker with no subsequent `SLEEP_COMPLETE` — the SIL restores the pre-mutation snapshot created at Stage 3 entry.
+2. If a partial Endure commit exists — an `ENDURE_COMMIT` marker with no subsequent `SLEEP_COMPLETE` — the SIL restores the pre-mutation snapshot from `state/snapshots/<seq>/` (where `seq` is the sequence number of the partial chain entry) by copying each snapshot file back to its original path, then deletes the snapshot directory.
 3. The SIL scans `memory/session.jsonl` for unresolved `ACTION_LEDGER` entries — skills marked in-progress at crash time. Each unresolved entry is presented to the Operator via terminal prompt before the session token is issued. Unresolved entries are never re-executed automatically; the Operator decides whether to re-execute, skip, or investigate each one.
 4. The SIL increments the consecutive crash counter in `state/integrity.log`. If the counter reaches `fault.n_boot` declared in the structural baseline, the SIL activates the Passive Distress Beacon and halts.
 5. With the Entity Store in a verified state and all Action Ledger entries resolved, the SIL re-executes the Sleep Cycle from Stage 0. This completes the consolidation of the crashed session. The entity does not proceed to session token issuance until the Sleep Cycle has completed successfully and a `SLEEP_COMPLETE` record has been written to `state/integrity.log`.
@@ -893,7 +896,7 @@ The SIL performs bounded housekeeping against the Memory Store. No CPE invocatio
 The SIL processes all queued Evolution Proposals. For each proposal:
 
 1. Verify that a matching `EVOLUTION_AUTH` record exists in `state/integrity.log` — an explicit Operator approval whose content digest matches the proposal exactly.
-2. Create a pre-mutation snapshot of all files to be modified.
+2. Create a pre-mutation snapshot: copy each file to be modified into `state/snapshots/<seq>/`, preserving the path relative to the entity root (e.g., `persona/identity.md` → `state/snapshots/12/persona/identity.md`), where `<seq>` is the sequence number of the chain entry about to be written. The snapshot directory is deleted by the SIL after `SLEEP_COMPLETE` is written successfully.
 3. Apply the structural write atomically: write to a `.tmp` sibling, then `rename(2)` into place.
 4. Recompute SHA-256 hashes for all modified tracked files.
 5. Update `state/integrity.json` atomically. If the number of Endure commits since the last checkpoint has reached `integrity_chain.checkpoint_interval`, include the updated `last_checkpoint` field in this same write.
