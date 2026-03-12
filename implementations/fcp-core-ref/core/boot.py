@@ -19,11 +19,11 @@ from typing import Any
 
 from .acp import (
     GseqCounter, ACTOR_SIL, ACTOR_FCP, build_envelope,
-    TYPE_CTX_SKIP, TYPE_CRITICAL_CLEARED, TYPE_ACTION_LEDGER,
+    TYPE_MSG, TYPE_CTX_SKIP, TYPE_CRITICAL_CLEARED, TYPE_ACTION_LEDGER,
 )
 from .cpe import CPEBackend
 from .exec_ import ExecDispatcher, SkillIndex, load_skill_index
-from .fs import read_json, read_jsonl, utcnow_iso, drain_presession
+from .fs import read_json, read_jsonl, utcnow_iso, drain_presession, spool_msg
 from .mil import (
     read_session_tail,
     load_active_context,
@@ -335,6 +335,15 @@ def run_boot(entity_root: str | Path) -> BootContext:
     # ------------------------------------------------------------------
     session_id = issue_session_token(root)
     write_heartbeat(root, sil_gseq, session_id)
+
+    # Inject SESSION_START stimulus so CPE emits greeting on cycle 1 (§PART1)
+    start_env = build_envelope(
+        actor=ACTOR_FCP,
+        type_=TYPE_MSG,
+        data="[SESSION_START]",
+        gseq=fcp_gseq.next(),
+    )
+    spool_msg(root, start_env.to_dict())
 
     # Initialise EXEC dispatcher
     dispatcher = ExecDispatcher(root, skill_index, exec_gseq)
