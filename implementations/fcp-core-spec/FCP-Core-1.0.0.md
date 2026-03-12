@@ -345,7 +345,7 @@ Entries are sorted ascending by `priority` — lower value means higher priority
 
 ### 3.7 Closure Payload
 
-The Closure Payload is the structured output produced by the CPE in the last Cognitive Cycle of a session. It is emitted as an `fcp-actions` block addressed to the MIL and must conform to the following schema:
+The Closure Payload is the structured output produced by the CPE in the last Cognitive Cycle of a session. It is emitted as an `fcp-mil` block and must conform to the following schema:
 
 ```json
 {
@@ -527,15 +527,15 @@ drain io/inbox/
   → consolidate to session.jsonl
   → assemble context
   → invoke CPE
-  → parse fcp-actions block
-  → dispatch to target component
+  → parse component blocks
+  → dispatch to target components
   → collect result
   → next cycle
 ```
 
 Each iteration of this loop is one Cognitive Cycle. The loop continues until a session-close signal is received.
 
-A normal session close has a strict invariant: the final CPE response must contain exactly one Closure Payload followed by one `SESSION_CLOSE` signal, in that order, within the same `fcp-actions` block. If a session ends without this pair — whether due to process termination, signal interruption, or any other cause — the session is treated as a crash. The presence of a stale session token at the next boot is the crash indicator. The absence of this pair as the last CPE response in `memory/session.jsonl` is additional diagnostic context — it confirms the session did not close normally and helps determine how far the previous session progressed before termination.
+A normal session close has a strict invariant: the final CPE response must contain a `fcp-mil` block with a `closure_payload` action followed by a `fcp-sil` block with a `session_close` action, in that order. If a session ends without this pair — whether due to process termination, signal interruption, or any other cause — the session is treated as a crash. The presence of a stale session token at the next boot is the crash indicator. The absence of this pair as the last CPE response in `memory/session.jsonl` is additional diagnostic context — it confirms the session did not close normally and helps determine how far the previous session progressed before termination.
 
 ### 6.1 Context Assembly
 
@@ -545,47 +545,59 @@ FCP then assembles the CPE input context. The assembly order follows the Boot Ma
 
 ### 6.2 Action Dispatch
 
-A Cognitive Cycle ends when the CPE emits an `fcp-actions` block. What follows — skill execution, memory writes, integrity signals — is handled independently by each responsible component. The cycle does not wait for results; results arrive as stimuli in the next cycle via `io/inbox/`.
+A Cognitive Cycle ends when the CPE emits one or more component blocks. What follows — skill execution, memory writes, integrity signals — is handled independently by each responsible component. The cycle does not wait for results; results arrive as stimuli in the next cycle via `io/inbox/`.
 
-The `fcp-actions` block is a fenced code block with the `fcp-actions` tag, containing a JSON object with an `actions` array. Each entry addresses one component; multiple components may be addressed in a single block:
+A component block is a fenced code block whose tag names the target component. Each block's JSON payload is either a single action object or an array of action objects addressed to that component. A response may contain at most one block per component.
 
 ````
-```fcp-actions
-{
-  "actions": [
-    {"target": "exec", "type": "skill_request", "skill": "<name>", "params": {...}},
-    {"target": "mil", "type": "memory_write", "content": "..."}
-  ]
-}
+```fcp-exec
+{"type": "skill_request", "skill": "<name>", "params": {...}}
+```
+```fcp-mil
+{"type": "memory_write", "content": "..."}
+```
+```fcp-sil
+{"type": "session_close"}
 ```
 ````
 
-FCP rejects any response containing more than one `fcp-actions` block or a malformed payload. Rejected responses are logged to `session.jsonl` and surfaced to the Operator.
+When multiple actions must be sent to the same component in a single cycle, the block's payload is a JSON array:
 
-**Actions by target:**
+````
+```fcp-mil
+[
+  {"type": "memory_write", "content": "first entry"},
+  {"type": "memory_write", "content": "second entry"}
+]
+```
+````
 
-`exec` — skill invocation:
+FCP rejects a response containing more than one block of the same component type, or a malformed payload. Rejected responses are logged to `session.jsonl` and surfaced to the Operator.
+
+**Actions by component:**
+
+`fcp-exec` — skill invocation:
 ```json
-{"target": "exec", "type": "skill_request", "skill": "<name>", "params": {...}}
+{"type": "skill_request", "skill": "<name>", "params": {...}}
 ```
 
-`mil` — memory operations:
+`fcp-mil` — memory operations:
 ```json
-{"target": "mil", "type": "memory_recall", "query": "..."}
-{"target": "mil", "type": "memory_write", "content": "..."}
+{"type": "memory_recall", "query": "..."}
+{"type": "memory_write", "content": "..."}
 ```
 
-`sil` — integrity and control signals:
+`fcp-sil` — integrity and control signals:
 ```json
-{"target": "sil", "type": "evolution_proposal", "content": "..."}
-{"target": "sil", "type": "session_close"}
+{"type": "evolution_proposal", "content": "..."}
+{"type": "session_close"}
 ```
 
 Each component writes its result to `io/inbox/` as an ACP envelope. FCP drains the inbox at the start of the next cycle, consolidates into `session.jsonl`, and the results become stimuli for the next invocation of the CPE.
 
 ### 6.3 Cycle Chain
 
-A Cognitive Cycle is the atomic unit of cognition: stimulus received → context loaded → intent generated → intent dispatched. The cycle is complete when the `fcp-actions` block is emitted. What follows is the consequence of the dispatched intent, handled by the responsible components independently.
+A Cognitive Cycle is the atomic unit of cognition: stimulus received → context loaded → intent generated → intent dispatched. The cycle is complete when the CPE response is processed and component blocks are dispatched. What follows is the consequence of the dispatched intent, handled by the responsible components independently.
 
 Composite operations are expressed as chains of consecutive cycles. Results from the previous cycle arrive in `io/inbox/`, are consolidated into `session.jsonl` at the start of the next cycle, and become part of the assembled context. The CPE reasons over accumulated stimuli and emits the next intent. There is no synchronous result-passing between cycles — all inter-cycle communication flows through the inbox.
 
@@ -870,7 +882,7 @@ FCP executes the full Boot Sequence. If the boot succeeds, the session begins an
 
 ### 12.2 Interactive Loop
 
-During an active session, the Operator types input at the terminal. FCP injects the input as a `MSG` ACP envelope into `io/inbox/`, which is consolidated into `session.jsonl` at the start of the next Cognitive Cycle. The CPE processes it and emits an `fcp-actions` block; FCP dispatches the actions and displays the CPE's narrative response to the Operator.
+During an active session, the Operator types input at the terminal. FCP injects the input as a `MSG` ACP envelope into `io/inbox/`, which is consolidated into `session.jsonl` at the start of the next Cognitive Cycle. The CPE processes it and emits component blocks; FCP dispatches them and displays the CPE's narrative response to the Operator.
 
 The loop continues until the Operator closes the session, the CPE emits a `session_close` action, or the SIL triggers a session close (context window critical threshold reached or Critical condition detected).
 
@@ -936,8 +948,8 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 
 **Cognitive Session**
 - [ ] `io/inbox/` drained and consolidated into `session.jsonl` at the start of each Cognitive Cycle.
-- [ ] CPE output contains exactly one `fcp-actions` block; multiple blocks or malformed payloads are rejected and logged.
-- [ ] Each `fcp-actions` action addresses exactly one target component per action entry.
+- [ ] CPE output uses component blocks (`fcp-exec`, `fcp-mil`, `fcp-sil`); at most one block per component per response; duplicate component blocks or malformed payloads are rejected and logged.
+- [ ] Each component block payload is a single action object or an array of action objects; all actions in a block are addressed to that block's component.
 - [ ] All inter-cycle communication flows through `io/inbox/`; no synchronous result-passing between cycles.
 
 **Sleep Cycle**
