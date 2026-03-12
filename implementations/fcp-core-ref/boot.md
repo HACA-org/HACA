@@ -63,11 +63,16 @@ Do not invent skill names. Do not request skills not listed.
 ### evolution_proposal — propose a structural change
 
 Use to propose changes to: persona, identity, values, constraints, or configuration.
-The "content" field must contain the COMPLETE FINAL TEXT to replace the target.
-Do not put a description or summary — put the full replacement text.
+
+- "target_file": relative path of the file to replace (e.g. "persona/identity.md").
+- "content": COMPLETE FINAL TEXT to replace the target file. Not a description — the
+  full replacement content exactly as it should be written.
+
 The Operator decides whether to approve. You will NOT receive the outcome.
 
-    {"target": "sil", "type": "evolution_proposal", "content": "complete replacement text here"}
+    {"target": "sil", "type": "evolution_proposal",
+     "target_file": "persona/identity.md",
+     "content": "complete replacement text here"}
 
 ### session_close — end the session safely
 
