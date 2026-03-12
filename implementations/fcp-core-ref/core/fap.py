@@ -125,18 +125,22 @@ def _run_pipeline(root: Path, track) -> str:
             print(f"  Created persona/{fname} (placeholder)")
 
     # Built-in skills — create if absent
-    for skill_name, (manifest, run_sh) in _BUILTIN_SKILLS.items():
+    for skill_name, (manifest, execute_sh, narrative_md) in _BUILTIN_SKILLS.items():
         skill_dir  = root / "skills" / skill_name
         skill_dir.mkdir(parents=True, exist_ok=True)
-        mf = skill_dir / "manifest.json"
-        rs = skill_dir / "run.sh"
+        mf  = skill_dir / "manifest.json"
+        exe = skill_dir / "execute.sh"
+        nd  = skill_dir / f"{skill_name}.md"
         if not mf.exists():
             atomic_write_json(mf, manifest)
             track(mf)
-        if not rs.exists():
-            rs.write_text(run_sh, encoding="utf-8")
-            rs.chmod(0o755)
-            track(rs)
+        if not exe.exists() and execute_sh:
+            exe.write_text(execute_sh, encoding="utf-8")
+            exe.chmod(0o755)
+            track(exe)
+        if not nd.exists() and narrative_md:
+            nd.write_text(narrative_md, encoding="utf-8")
+            track(nd)
 
     # Build and write skills/index.json
     index_data = build_skill_index(root)
@@ -444,6 +448,9 @@ Available actions:
 - Skill execution — invoke a skill (only those listed in [SKILLS INDEX]):
   `{"target": "exec", "type": "skill_request", "skill": "<name>", "params": {}}`
 
+- Skill narrative — read the full documentation for a skill on demand:
+  `{"target": "exec", "type": "skill_info", "skill": "<name>"}`
+
 - Session close — ONLY when the Operator explicitly asks to end/quit/exit/goodbye:
   `{"target": "sil", "type": "session_close"}`
 
@@ -475,21 +482,21 @@ Use symlinks inside workspace/ to reference external project directories.
 
 ## skill_create — install a new skill
 
-To add a new built-in capability, use the skill_create skill to stage a cartridge,
-then submit ONE evolution_proposal for the manifest:
+To add a new built-in capability, call skill_create then submit ONE evolution_proposal:
 
     {"target": "exec", "type": "skill_request", "skill": "skill_create",
      "params": {
        "skill_name": "my_skill",
        "manifest": "{\"name\":\"my_skill\",\"description\":\"...\",\"aliases\":[],\"permissions\":[],\"params\":{},\"timeout_seconds\":30,\"irreversible\":false}",
-       "script": "#!/usr/bin/env bash\\necho hello\\n"
+       "narrative": "# my_skill\n\nDescribe how the skill works...",
+       "script": "#!/usr/bin/env bash\necho hello\n"
      }}
 
 Then submit ONE evolution_proposal:
-- target_file: "skills/<skill_name>/manifest.json"
+- target_file: "stage/<skill_name>"
 - content: the COMPLETE manifest JSON text
 
-Endure installs manifest + script atomically, rebuilds skills/index.json, and cleans stage/.
+Endure installs manifest + narrative + execute.sh (if provided), rebuilds skills/index.json, and cleans stage/.
 """
 
 _DEFAULT_PERSONA: dict[str, str] = {
@@ -516,27 +523,32 @@ _SKILL_CREATE_SH = r"""#!/usr/bin/env bash
 # skill_create — stage a new skill cartridge for Endure installation
 set -euo pipefail
 
-SKILL_NAME="${FCP_PARAM_skill_name:?FCP_PARAM_skill_name is required}"
-MANIFEST="${FCP_PARAM_manifest:?FCP_PARAM_manifest is required}"
-SCRIPT="${FCP_PARAM_script:?FCP_PARAM_script is required}"
+SKILL_NAME="${FCP_PARAM_SKILL_NAME:?FCP_PARAM_SKILL_NAME is required}"
+MANIFEST="${FCP_PARAM_MANIFEST:?FCP_PARAM_MANIFEST is required}"
+NARRATIVE="${FCP_PARAM_NARRATIVE:?FCP_PARAM_NARRATIVE is required}"
 ENTITY_ROOT="${FCP_ENTITY_ROOT:?FCP_ENTITY_ROOT is required}"
 
 STAGE_DIR="$ENTITY_ROOT/stage/$SKILL_NAME"
 mkdir -p "$STAGE_DIR"
 
-printf '%s' "$MANIFEST" > "$STAGE_DIR/manifest.json"
-printf '%s' "$SCRIPT"   > "$STAGE_DIR/run.sh"
-chmod +x "$STAGE_DIR/run.sh"
+printf '%s' "$MANIFEST"   > "$STAGE_DIR/manifest.json"
+printf '%s' "$NARRATIVE"  > "$STAGE_DIR/$SKILL_NAME.md"
+
+if [ -n "${FCP_PARAM_SCRIPT:-}" ]; then
+    printf '%s' "$FCP_PARAM_SCRIPT" > "$STAGE_DIR/execute.sh"
+    chmod +x "$STAGE_DIR/execute.sh"
+    echo "Staged: stage/$SKILL_NAME/execute.sh"
+fi
 
 echo "Staged: stage/$SKILL_NAME/manifest.json"
-echo "Staged: stage/$SKILL_NAME/run.sh"
+echo "Staged: stage/$SKILL_NAME/$SKILL_NAME.md"
 echo ""
 echo "Submit ONE evolution_proposal:"
-echo "  target_file: \"skills/$SKILL_NAME/manifest.json\""
+echo "  target_file: \"stage/$SKILL_NAME\""
 echo "  content: <complete manifest JSON text>"
 """
 
-_BUILTIN_SKILLS: dict[str, tuple[dict, str]] = {
+_BUILTIN_SKILLS: dict[str, tuple[dict, str, str]] = {
     "hello_world": (
         {
             "name":            "hello_world",
@@ -548,6 +560,12 @@ _BUILTIN_SKILLS: dict[str, tuple[dict, str]] = {
             "irreversible":    False,
         },
         "#!/usr/bin/env bash\necho 'Hello from FCP-Core entity!'\n",
+        (
+            "# hello_world\n\n"
+            "Smoke test skill. Prints a static greeting to verify the EXEC pipeline.\n\n"
+            "## Parameters\n\nNone.\n\n"
+            "## Output\n\nPrints: `Hello from FCP-Core entity!`\n"
+        ),
     ),
     "owner_bind": (
         {
@@ -560,6 +578,12 @@ _BUILTIN_SKILLS: dict[str, tuple[dict, str]] = {
             "irreversible":    False,
         },
         "#!/usr/bin/env bash\necho \"Operator: $FCP_PARAM_NAME <$FCP_PARAM_EMAIL>\"\n",
+        (
+            "# owner_bind\n\n"
+            "Used internally during FAP to bind the Operator identity.\n"
+            "Not intended for direct use after activation.\n\n"
+            "## Parameters\n\nNone (invoked by FAP pipeline).\n"
+        ),
     ),
     "skill_create": (
         {
@@ -570,11 +594,28 @@ _BUILTIN_SKILLS: dict[str, tuple[dict, str]] = {
             "params":          {
                 "skill_name": "string",
                 "manifest":   "string",
-                "script":     "string",
+                "narrative":  "string",
             },
             "timeout_seconds": 30,
             "irreversible":    False,
         },
         _SKILL_CREATE_SH,
+        (
+            "# skill_create\n\n"
+            "Stages a new skill cartridge in `stage/<skill_name>/` for Endure installation.\n\n"
+            "## Parameters\n\n"
+            "- `skill_name` (required) — identifier used as directory and narrative filename.\n"
+            "- `manifest` (required) — JSON string with the skill manifest.\n"
+            "- `narrative` (required) — markdown text describing how the skill works.\n"
+            "- `script` (optional) — bash script content for `execute.sh`.\n\n"
+            "## Flow\n\n"
+            "1. Call skill_create with all params.\n"
+            "2. Submit ONE `evolution_proposal` to SIL:\n"
+            "   - `target_file`: `\"stage/<skill_name>\"`\n"
+            "   - `content`: the complete manifest JSON text (same as `manifest` param).\n"
+            "3. Endure installs manifest + narrative + execute.sh, rebuilds index, cleans stage/.\n\n"
+            "## Output\n\n"
+            "Prints staged file paths and the exact evolution_proposal to submit.\n"
+        ),
     ),
 }
