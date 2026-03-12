@@ -970,13 +970,13 @@ The Skill Index is established during FAP Step 1: the SIL validates every skill 
 
 At Phase 3 of the Boot Sequence, `skills/index.json` is verified like any other tracked structural file: the SIL recomputes its hash and compares it against the Integrity Document. Any mismatch aborts the boot. At Phase 4, FCP loads the verified index and makes it available to the EXEC for the session.
 
-The EXEC operates exclusively against `skills/index.json`. A skill invocation request for a skill absent from the index is rejected, logged to `state/integrity.log`, and the SIL is notified — an unexpected skill request may indicate a structural anomaly or an adversarial attempt.
+The EXEC operates exclusively against `skills/index.json`. A skill invocation request for a skill absent from the index is rejected and logged to `state/integrity.log`; the SIL is notified synchronously within the same FCP execution context — no ACP roundtrip over `io/` is required. The SIL evaluates the anomaly immediately and escalates to Critical if warranted — an unexpected skill request may indicate a structural anomaly or an adversarial attempt.
 
 ### 9.2 Dispatch
 
 The EXEC dispatches skill requests against `skills/index.json`. A skill present in the index is executed directly — no per-execution re-validation occurs.
 
-If a skill fails, the EXEC writes a `SKILL_ERROR` ACP envelope to `io/inbox/`. If a skill exceeds its declared timeout, the SIL writes a `SKILL_TIMEOUT` envelope to `io/inbox/` at the next Vital Check (§10.3). Both results reach the CPE as stimuli in the next Cognitive Cycle. If a skill fails on `fault.n_retry` consecutive attempts, the EXEC writes a notification to `state/operator_notifications/`.
+If a skill fails, the EXEC writes a `SKILL_ERROR` ACP envelope to `io/inbox/`. If a skill exceeds its declared timeout, the SIL writes a `SKILL_TIMEOUT` envelope to `io/inbox/` at the next Vital Check (§10.3). Both results reach the CPE as stimuli in the next Cognitive Cycle. If a skill fails on `fault.n_retry` consecutive attempts within the current session, the EXEC writes a notification to `state/operator_notifications/`; the consecutive failure counter resets at session start.
 
 ### 9.3 Action Ledger
 
@@ -1027,11 +1027,11 @@ Built-in skills are shipped with FCP and present in every entity's Skill Index f
 | Skill | Description |
 |---|---|
 | `skill_create` | Stages a new skill cartridge under `workspace/stage/<name>/` for Endure installation; accepts an optional `--base <name>` parameter — when provided, EXEC copies the named skill's files from `skills/<name>/` into the staging directory, giving the CPE a pre-populated cartridge to read and modify via `file_reader` and `file_writer`; does not modify `skills/index.json` directly — the staged files become an Evolution Proposal |
-| `skill_audit` | Validates a skill's manifest, executable, and index consistency; accepts an optional `fix` parameter for correctable auto-repair |
-| `file_reader` | Reads a file within `workspace/`; rejects any path outside `workspace/` |
-| `file_writer` | Writes a file within `workspace/`; rejects any path outside `workspace/` |
+| `skill_audit` | Validates a skill's manifest, executable, and index consistency; read-only — does not modify any files |
+| `file_reader` | Reads a file within `workspace/`; rejects any path outside `workspace/`; delivers content as chunked `SKILL_RESULT` envelopes with no file size limit — the practical limit is the CPE's available context budget |
+| `file_writer` | Writes a file within `workspace/`; rejects any path outside `workspace/`; no file size limit beyond host disk capacity |
 | `worker_skill` | Instantiates a Worker Skill sub-agent with a provided persona, context, and task |
-| `commit` | Stages and records a version-control checkpoint; requires an explicit path parameter; validates that the path is within the active workspace_focus declared in `state/workspace_focus.json`; accepts `--remote` to push after committing; rejects execution if workspace_focus is unset or if the path falls outside it |
+| `commit` | Stages and records a version-control checkpoint; requires an explicit path parameter; validates that the path is within the active workspace_focus declared in `state/workspace_focus.json`; accepts `--remote` to push to the remote configured in the workspace repository's git config (conventionally `origin`); rejects execution if workspace_focus is unset or if the path falls outside it |
 
 `skill_audit` has three invocation paths: CPE dispatches it via `skill_request` to validate skills under development; the SIL invokes it as a read-only Worker Skill for `SEVERANCE_PENDING` resolution (§10.8); and the Operator invokes it via the `/skill audit` platform command (§12.3).
 
