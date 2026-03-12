@@ -1,6 +1,6 @@
 """System Integrity Layer (SIL) — FCP-Core §10 MVP subset.
 
-MVP scope (Fase 1):
+MVP scope (Fase 1–3):
   - SHA-256 hash computation and Integrity Document build/verify (§10.1)
   - Integrity Chain validation — full chain traversal with prev_hash (§10.1)
   - Session token lifecycle: issue / revoke / remove (§3.5)
@@ -8,16 +8,13 @@ MVP scope (Fase 1):
   - HEARTBEAT envelope write (§10.3, simplified — no background thread)
   - Distress Beacon check and activation (§10.7)
   - Crash counter tracking in integrity.log
+  - Evolution Gate: Operator decision → EVOLUTION_AUTH / EVOLUTION_REJECTED (§10.5)
+  - Endure Protocol (Stage 3): atomic structural writes, snapshot, skill install (§7.4)
 
-Partial Fase 2 (now included):
-  - Evolution Gate: intercept proposals, Operator decision, EVOLUTION_AUTH /
-    EVOLUTION_REJECTED / PROPOSAL_PENDING records (§10.5)
-
-Deferred to Fase 2:
+Deferred:
   - Background Heartbeat threading loop
   - Reciprocal SIL Watchdog
   - Full drift detection (NCD/gzip)
-  - Endure execution (Stage 3 — structural writes)
 """
 
 from __future__ import annotations
@@ -696,22 +693,105 @@ def write_evolution_rejected(
 # Endure Protocol — Stage 3 (§7.4)
 # ---------------------------------------------------------------------------
 
+def _is_skill_install(target_file: str) -> tuple[bool, str]:
+    """Return (True, skill_name) if target_file is skills/<name>/manifest.json."""
+    parts = Path(target_file).parts
+    if len(parts) == 3 and parts[0] == "skills" and parts[2] == "manifest.json":
+        return True, parts[1]
+    return False, ""
+
+
+def _install_skill_script(entity_root: Path, skill_name: str) -> None:
+    """Copy stage/<skill_name>/run.sh → skills/<skill_name>/run.sh if present."""
+    import shutil
+    src = entity_root / "stage" / skill_name / "run.sh"
+    dst = entity_root / "skills" / skill_name / "run.sh"
+    if src.exists():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        dst.chmod(0o755)
+
+
+def _take_snapshot(
+    entity_root:   Path,
+    gseq_counter:  GseqCounter,
+    snapshot_keep: int,
+) -> str | None:
+    """Compress entity_root/ to state/snapshots/<ts>-<gseq>.tar.gz.
+
+    Excludes workspace/, io/, and state/snapshots/ from the archive.
+    Rotates to keep at most snapshot_keep archives (0 = unlimited).
+    Returns archive name on success, None on failure.
+    """
+    import tarfile as _tarfile
+
+    _EXCLUDE_TOP = {"workspace", "io"}
+
+    snapshots_dir = entity_root / "state" / "snapshots"
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
+
+    ts   = utcnow_iso().replace(":", "").replace("-", "")
+    gseq = gseq_counter.next()
+    name = f"{ts}-{gseq}.tar.gz"
+    dst  = snapshots_dir / name
+    tmp  = snapshots_dir / (name + ".tmp")
+
+    def _filter(info: _tarfile.TarInfo) -> _tarfile.TarInfo | None:
+        parts = Path(info.name).parts
+        if not parts:
+            return info
+        # arcname="." so parts[0] == ".", top-level dir is parts[1]
+        top = parts[1] if parts[0] == "." and len(parts) > 1 else parts[0]
+        if top in _EXCLUDE_TOP:
+            return None
+        # exclude state/snapshots itself
+        if len(parts) >= 3 and parts[1] == "state" and parts[2] == "snapshots":
+            return None
+        return info
+
+    try:
+        with _tarfile.open(tmp, "w:gz") as tar:
+            tar.add(entity_root, arcname=".", filter=_filter)
+        os.rename(tmp, dst)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
+
+    # Rotation
+    if snapshot_keep > 0:
+        existing = sorted(snapshots_dir.glob("*.tar.gz"))
+        for old in existing[:-snapshot_keep]:
+            try:
+                old.unlink()
+            except Exception:
+                pass
+
+    return name
+
+
 def run_endure(
     entity_root:         str | Path,
     gseq_counter:        GseqCounter,
     session_id:          str = "",
     checkpoint_interval: int = 10,
+    snapshot_keep:       int = 3,
 ) -> list[str]:
     """Apply all authorized Evolution Proposals to structural files (§7.4).
 
     Scans integrity.log for EVOLUTION_AUTH records with no matching
     ENDURE_COMMIT, then for each:
-      1. Verifies content_digest against SHA-256 of proposal content.
-      2. Validates target_file is a tracked structural file (security gate).
-      3. Writes content atomically to target_file.
-      4. Rebuilds and writes the Integrity Document.
-      5. Logs ENDURE_COMMIT to integrity.log.
-      6. Checkpoints the Integrity Chain if interval is reached.
+      1. Takes a compressed snapshot of entity_root/ before the first write.
+      2. Verifies content_digest against SHA-256 of proposal content.
+      3. Validates target_file is a tracked structural file (security gate).
+         New skill manifests (skills/<name>/manifest.json) are also allowed.
+      4. Writes content atomically to target_file.
+      5. For skill installs: copies run.sh from stage/, rebuilds index, cleans stage/.
+      6. Rebuilds and writes the Integrity Document.
+      7. Logs ENDURE_COMMIT to integrity.log.
+      8. Checkpoints the Integrity Chain if interval is reached.
 
     Returns a list of error strings (empty = success).
     """
@@ -743,8 +823,23 @@ def run_endure(
                 committed.add(ptx)
 
     allowed = {str(f.relative_to(entity_root)) for f in _tracked_files(entity_root)}
+    # Extend allowed set: new skill manifest installs are permitted even before
+    # the manifest file exists (they will be tracked after the first install).
+    for proposal_tx, auth_data in auths.items():
+        if proposal_tx in committed:
+            continue
+        pd = proposals.get(proposal_tx, {})
+        is_skill, _sn = _is_skill_install(pd.get("target_file", ""))
+        if is_skill:
+            allowed.add(pd["target_file"])
+
     errors: list[str] = []
     commit_count = len(committed)
+
+    # Take snapshot before any structural writes (once per run_endure call)
+    pending = [tx for tx in auths if tx not in committed]
+    if pending:
+        _take_snapshot(entity_root, gseq_counter, snapshot_keep)
 
     for proposal_tx, auth_data in auths.items():
         if proposal_tx in committed:
@@ -786,6 +881,23 @@ def run_endure(
         # Rebuild Integrity Document
         new_doc = build_integrity_document(entity_root)
         write_integrity_document(entity_root, new_doc)
+
+        # Skill install: copy run.sh from stage/, rebuild index, clean stage/
+        is_skill, skill_name = _is_skill_install(target_file)
+        if is_skill:
+            import shutil
+            from .exec_ import build_skill_index
+            from .fs import atomic_write_json as _awj
+            _install_skill_script(entity_root, skill_name)
+            new_index = build_skill_index(entity_root)
+            _awj(entity_root / "skills" / "index.json", new_index)
+            # Rebuild integrity doc again to capture updated index hash
+            new_doc = build_integrity_document(entity_root)
+            write_integrity_document(entity_root, new_doc)
+            # Clean stage/<skill_name>/
+            stage_dir = entity_root / "stage" / skill_name
+            if stage_dir.exists():
+                shutil.rmtree(stage_dir)
 
         # Log ENDURE_COMMIT
         _write_endure_commit(entity_root, gseq_counter, proposal_tx, target_file)
