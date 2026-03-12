@@ -1,6 +1,6 @@
 {
   "name": "hello_world",
-  "description": "Smoke test — prints a greeting.",
+  "description": "Smoke test \u2014 prints a greeting.",
   "aliases": [
     "/hello"
   ],
