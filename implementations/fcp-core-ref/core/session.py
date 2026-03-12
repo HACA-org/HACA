@@ -32,6 +32,7 @@ from .acp import (
 )
 from .boot import BootContext
 from .fs import drain_inbox, spool_msg, utcnow_iso
+from .hooks import run_hook
 from .mil import (
     consolidate_inbox, memory_write, memory_recall, append_session_event,
     write_working_memory, write_session_handoff, write_episodic,
@@ -114,6 +115,7 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
     last_hb_time = time.monotonic()
 
     ui.session_start(session_id)
+    run_hook(ctx.entity_root, "on_boot", session_id)
 
     while True:
         # ── Heartbeat Vital Check (simplified — no background thread in MVP) ──
@@ -304,6 +306,7 @@ def _teardown(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> None:
     # Stage 3: Endure Execution
     checkpoint_interval = ctx.baseline.get("integrity_chain", {}).get("checkpoint_interval", 10)
     snapshot_keep       = ctx.baseline.get("endure", {}).get("snapshot_keep", 3)
+    run_hook(ctx.entity_root, "on_session_close", ctx.session_id)
     errors = run_endure(root, ctx.sil_gseq, ctx.session_id, checkpoint_interval, snapshot_keep)
     for err in errors:
         ui.warning(f"[Endure] {err}")

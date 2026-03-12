@@ -489,10 +489,18 @@ evolution_proposal: persona, config changes, or new skill install
 
 ## PART 5 — Installing new skills
 
-1. Invoke skill_create (skill_name, manifest, narrative, optional script).
+1. Invoke skill_create (skill_name, manifest, narrative, optional script, optional hooks).
 2. Submit ONE evolution_proposal with target_file="stage/<skill_name>"
    and content=<complete manifest JSON>.
 Endure installs atomically, rebuilds index, cleans stage/.
+
+hooks param: JSON object {"event": "bash script"}.
+Events: on_boot, on_session_close, pre_skill, post_skill, post_endure.
+Scripts installed to hooks/<event>/<skill_name>.sh, executed in lex order.
+Non-zero exit = warning, continues. Env: FCP_ENTITY_ROOT, FCP_SESSION_ID, FCP_HOOK_EVENT.
+pre_skill: +FCP_SKILL_NAME, FCP_SKILL_PARAMS.
+post_skill: +FCP_SKILL_NAME, FCP_SKILL_STATUS (success|error|timeout).
+post_endure: +FCP_ENDURE_COMMITS.
 
 ---
 
@@ -546,6 +554,29 @@ if [ -n "${FCP_PARAM_SCRIPT:-}" ]; then
     echo "Staged: stage/$SKILL_NAME/execute.sh"
 fi
 
+if [ -n "${FCP_PARAM_HOOKS:-}" ]; then
+    python3 - <<'PYEOF'
+import json, os, sys
+hooks_json = os.environ.get("FCP_PARAM_HOOKS", "")
+skill_name = os.environ["FCP_PARAM_SKILL_NAME"]
+stage_dir  = os.path.join(os.environ["FCP_ENTITY_ROOT"], "stage", skill_name, "hooks")
+if not hooks_json:
+    sys.exit(0)
+try:
+    hooks = json.loads(hooks_json)
+except json.JSONDecodeError as e:
+    print(f"Warning: hooks param is not valid JSON: {e}", file=sys.stderr)
+    sys.exit(0)
+os.makedirs(stage_dir, exist_ok=True)
+for event, script in hooks.items():
+    path = os.path.join(stage_dir, f"{event}.sh")
+    with open(path, "w") as f:
+        f.write(script)
+    os.chmod(path, 0o755)
+    print(f"Staged: stage/{skill_name}/hooks/{event}.sh")
+PYEOF
+fi
+
 echo "Staged: stage/$SKILL_NAME/manifest.json"
 echo "Staged: stage/$SKILL_NAME/$SKILL_NAME.md"
 echo ""
@@ -595,13 +626,25 @@ _BUILTIN_SKILLS: dict[str, tuple[dict, str, str]] = {
             "- `skill_name` (required) — identifier used as directory and narrative filename.\n"
             "- `manifest` (required) — JSON string with the skill manifest.\n"
             "- `narrative` (required) — markdown text describing how the skill works.\n"
-            "- `script` (optional) — bash script content for `execute.sh`.\n\n"
+            "- `script` (optional) — bash script content for `execute.sh`.\n"
+            "- `hooks` (optional) — JSON object mapping hook event names to bash script content.\n"
+            "  Example: `{\"on_boot\": \"#!/usr/bin/env bash\\necho ready\\n\"}`\n\n"
+            "## Hook events\n\n"
+            "Hook scripts are installed to `hooks/<event>/<skill_name>.sh` and executed by the\n"
+            "relevant FCP component at these lifecycle points:\n\n"
+            "- `on_boot` — after boot, before first CPE cycle\n"
+            "- `on_session_close` — after closure_payload, before Endure\n"
+            "- `pre_skill` — before EXEC runs a skill (env: FCP_SKILL_NAME, FCP_SKILL_PARAMS)\n"
+            "- `post_skill` — after EXEC completes a skill (env: FCP_SKILL_NAME, FCP_SKILL_STATUS)\n"
+            "- `post_endure` — after Endure Protocol run (env: FCP_ENDURE_COMMITS)\n\n"
+            "All hook scripts receive: FCP_ENTITY_ROOT, FCP_SESSION_ID, FCP_HOOK_EVENT.\n"
+            "Non-zero exit code logs a warning and continues — hooks never block the entity.\n\n"
             "## Flow\n\n"
             "1. Call skill_create with all params.\n"
             "2. Submit ONE `evolution_proposal` to SIL:\n"
             "   - `target_file`: `\"stage/<skill_name>\"`\n"
             "   - `content`: the complete manifest JSON text (same as `manifest` param).\n"
-            "3. Endure installs manifest + narrative + execute.sh, rebuilds index, cleans stage/.\n\n"
+            "3. Endure installs manifest + narrative + execute.sh + hooks, rebuilds index, cleans stage/.\n\n"
             "## Output\n\n"
             "Prints staged file paths and the exact evolution_proposal to submit.\n"
         ),

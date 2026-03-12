@@ -19,6 +19,29 @@ if [ -n "${FCP_PARAM_SCRIPT:-}" ]; then
     echo "Staged: stage/$SKILL_NAME/execute.sh"
 fi
 
+if [ -n "${FCP_PARAM_HOOKS:-}" ]; then
+    python3 - <<'PYEOF'
+import json, os, sys
+hooks_json = os.environ.get("FCP_PARAM_HOOKS", "")
+skill_name = os.environ["FCP_PARAM_SKILL_NAME"]
+stage_dir  = os.path.join(os.environ["FCP_ENTITY_ROOT"], "stage", skill_name, "hooks")
+if not hooks_json:
+    sys.exit(0)
+try:
+    hooks = json.loads(hooks_json)
+except json.JSONDecodeError as e:
+    print(f"Warning: hooks param is not valid JSON: {e}", file=sys.stderr)
+    sys.exit(0)
+os.makedirs(stage_dir, exist_ok=True)
+for event, script in hooks.items():
+    path = os.path.join(stage_dir, f"{event}.sh")
+    with open(path, "w") as f:
+        f.write(script)
+    os.chmod(path, 0o755)
+    print(f"Staged: stage/{skill_name}/hooks/{event}.sh")
+PYEOF
+fi
+
 echo "Staged: stage/$SKILL_NAME/manifest.json"
 echo "Staged: stage/$SKILL_NAME/$SKILL_NAME.md"
 echo ""

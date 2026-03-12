@@ -352,7 +352,7 @@ def run_boot(entity_root: str | Path) -> BootContext:
     spool_msg(root, start_env.to_dict())
 
     # Initialise EXEC dispatcher
-    dispatcher = ExecDispatcher(root, skill_index, exec_gseq)
+    dispatcher = ExecDispatcher(root, skill_index, exec_gseq, session_id)
 
     return BootContext(
         session_id=session_id,

@@ -50,6 +50,7 @@ from .fs import (
     read_jsonl,
     utcnow_iso,
 )
+from .hooks import run_hook
 
 
 # ---------------------------------------------------------------------------
@@ -757,6 +758,17 @@ def _install_skill_cartridge(
             dst.chmod(0o755)
             break
 
+    # Install hooks: stage/<name>/hooks/<event>.sh → hooks/<event>/<name>.sh
+    hooks_src = stage_dir / "hooks"
+    if hooks_src.is_dir():
+        for hook_script in sorted(hooks_src.glob("*.sh")):
+            event = hook_script.stem
+            hook_dst_dir = entity_root / "hooks" / event
+            hook_dst_dir.mkdir(parents=True, exist_ok=True)
+            dst = hook_dst_dir / f"{skill_name}.sh"
+            shutil.copy2(hook_script, dst)
+            dst.chmod(0o755)
+
     return []
 
 
@@ -873,6 +885,7 @@ def run_endure(
     allowed = {str(f.relative_to(entity_root)) for f in _tracked_files(entity_root)}
     errors: list[str] = []
     commit_count = len(committed)
+    new_commits  = 0
 
     # Take snapshot before any structural writes (once per run_endure call)
     pending = [tx for tx in auths if tx not in committed]
@@ -943,11 +956,15 @@ def run_endure(
         # Log ENDURE_COMMIT
         _write_endure_commit(entity_root, gseq_counter, proposal_tx, target_file)
         commit_count += 1
+        new_commits  += 1
 
         # Integrity Chain checkpoint
         if checkpoint_interval > 0 and commit_count % checkpoint_interval == 0:
             _write_endure_checkpoint(entity_root, gseq_counter, commit_count)
 
+    run_hook(entity_root, "post_endure", session_id, {
+        "FCP_ENDURE_COMMITS": str(new_commits),
+    })
     return errors
 
 

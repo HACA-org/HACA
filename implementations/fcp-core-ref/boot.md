@@ -125,13 +125,42 @@ Do NOT use `memory_write` to store structural changes.
 To add a new capability:
 
 1. Invoke `skill_create` with `skill_name`, `manifest` (JSON), `narrative` (markdown),
-   and optionally `script` (bash content for execute.sh).
+   and optionally `script` (bash content for execute.sh) and `hooks` (see below).
 2. Submit ONE `evolution_proposal`:
    - `"target_file"`: `"stage/<skill_name>"`
    - `"content"`: the complete manifest JSON text
 
 Endure installs the cartridge atomically, rebuilds the skill index, and cleans
 `stage/` automatically.
+
+### hooks param — attaching lifecycle scripts to a skill
+
+Pass `hooks` as a JSON object mapping event names to bash script content:
+
+    {"target": "exec", "type": "skill_request", "skill": "skill_create",
+     "params": {
+       "skill_name": "my_skill",
+       "manifest": "...",
+       "narrative": "...",
+       "hooks": "{\"on_boot\": \"#!/usr/bin/env bash\\necho ready\\n\"}"
+     }}
+
+Available hook events:
+
+| Event | Fires when | Extra env vars |
+|---|---|---|
+| `on_boot` | after boot, before first CPE cycle | — |
+| `on_session_close` | after closure_payload, before Endure | — |
+| `pre_skill` | before EXEC runs a skill | FCP_SKILL_NAME, FCP_SKILL_PARAMS |
+| `post_skill` | after EXEC completes a skill | FCP_SKILL_NAME, FCP_SKILL_STATUS |
+| `post_endure` | after Endure Protocol run | FCP_ENDURE_COMMITS |
+
+All hook scripts receive: `FCP_ENTITY_ROOT`, `FCP_SESSION_ID`, `FCP_HOOK_EVENT`.
+Non-zero exit logs a warning and continues — hooks never block the entity.
+
+Hook scripts are installed to `hooks/<event>/<skill_name>.sh` and tracked by the
+Integrity Document. Multiple skills can attach to the same event; scripts execute
+in lexicographic order by filename.
 
 ---
 

@@ -45,6 +45,7 @@ from .fs import (
     spool_msg,
     utcnow_iso,
 )
+from .hooks import run_hook
 from .sil import append_integrity_log
 
 
@@ -177,10 +178,12 @@ class ExecDispatcher:
         entity_root:  str | Path,
         skill_index:  SkillIndex,
         gseq_counter: GseqCounter,
+        session_id:   str = "",
     ) -> None:
         self.entity_root  = Path(entity_root)
         self.skill_index  = skill_index
         self.gseq_counter = gseq_counter
+        self.session_id   = session_id
 
     # ------------------------------------------------------------------
     # Public API
@@ -216,8 +219,28 @@ class ExecDispatcher:
             self._log_structural_anomaly(skill_name, msg)
             return self._write_skill_error(skill_name, msg)
 
+        # --- Hooks: pre_skill ---
+        run_hook(self.entity_root, "pre_skill", self.session_id, {
+            "FCP_SKILL_NAME":   skill_name,
+            "FCP_SKILL_PARAMS": json.dumps(params),
+        })
+
         # --- Execute ---
-        return self._execute(skill_name, entry, params)
+        results = self._execute(skill_name, entry, params)
+
+        # --- Hooks: post_skill ---
+        _STATUS = {
+            TYPE_SKILL_RESULT:  "success",
+            TYPE_SKILL_ERROR:   "error",
+            TYPE_SKILL_TIMEOUT: "timeout",
+        }
+        status = _STATUS.get(results[0]["type"] if results else "", "error")
+        run_hook(self.entity_root, "post_skill", self.session_id, {
+            "FCP_SKILL_NAME":   skill_name,
+            "FCP_SKILL_STATUS": status,
+        })
+
+        return results
 
     def dispatch_slash(self, slash_input: str) -> list[dict[str, Any]]:
         """Resolve and dispatch a slash command (§12.3).
