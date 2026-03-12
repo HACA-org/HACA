@@ -31,7 +31,10 @@ from .acp import (
 )
 from .boot import BootContext
 from .fs import drain_inbox, spool_msg, utcnow_iso
-from .mil import consolidate_inbox, memory_write, memory_recall, append_session_event
+from .mil import (
+    consolidate_inbox, memory_write, memory_recall, append_session_event,
+    write_working_memory, write_session_handoff,
+)
 from .sil import (
     append_integrity_log,
     revoke_session_token,
@@ -39,6 +42,7 @@ from .sil import (
     write_heartbeat,
     write_sleep_complete,
     log_closure_payload,
+    run_endure,
     write_evolution_auth,
     write_evolution_rejected,
     write_proposal_pending,
@@ -275,20 +279,28 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
 # ---------------------------------------------------------------------------
 
 def _teardown(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> None:
-    """Token revoke → Evolution decisions → SLEEP_COMPLETE stub → token remove.
+    """Token revoke → Evolution decisions → Sleep Cycle Stages 1+3 → SLEEP_COMPLETE → remove token.
 
-    TODO Fase 2: substituir pelo Sleep Cycle completo (Stages 0-3):
-      Stage 0: Semantic Drift Detection
-      Stage 1: Memory Consolidation (Closure Payload)
-      Stage 2: Garbage Collection
-      Stage 3: Endure Execution
+    Stage 0 (Semantic Drift Detection) and Stage 2 (Garbage Collection)
+    are deferred to Fase 3.
     """
     root = ctx.entity_root
     ui.teardown("Revoking session token…")
     revoke_session_token(root)
-    # Evolution Gate: collect Operator decisions before Sleep Cycle (§10.5)
+
+    # Evolution Gate: collect Operator decisions (§10.5)
     _collect_evolution_decisions(root, pending_proposals, ctx.sil_gseq, ctx.operator_name, ui)
-    # MVP stub: write SLEEP_COMPLETE immediately (no actual sleep stages)
+
+    # Stage 0: Semantic Drift Detection — deferred to Fase 3
+    # Stage 1: Memory Consolidation — processed mid-session via _handle_closure_payload
+    # Stage 2: Garbage Collection — deferred
+
+    # Stage 3: Endure Execution
+    checkpoint_interval = ctx.baseline.get("integrity_chain", {}).get("checkpoint_interval", 10)
+    errors = run_endure(root, ctx.sil_gseq, ctx.session_id, checkpoint_interval)
+    for err in errors:
+        ui.warning(f"[Endure] {err}")
+
     write_sleep_complete(root, ctx.sil_gseq, ctx.session_id)
     remove_session_token(root)
     ui.teardown("Session closed cleanly.")
@@ -489,11 +501,12 @@ def _handle_evolution_proposal(
     pending_proposals: list[dict],
 ) -> None:
     """Log proposal; queue for Operator decision at session close (§10.5)."""
-    content = action.get("content", "")
+    content     = action.get("content", "")
+    target_file = action.get("target_file", "")
     env = build_envelope(
         actor=ACTOR_SIL,
         type_=TYPE_EVOLUTION_PROPOSAL,
-        data=json.dumps({"content": content, "ts": utcnow_iso()}),
+        data=json.dumps({"content": content, "target_file": target_file, "ts": utcnow_iso()}),
         gseq=sil_gseq.next(),
     )
     append_integrity_log(root, env)
@@ -518,20 +531,41 @@ def _handle_closure_payload(
     mil_gseq:  GseqCounter,
     ui:        UI,
 ) -> None:
-    """Fase 1 stub: log receipt + write consolidation to episodic memory.
+    """Sleep Cycle Stage 1 — Memory Consolidation (§7.2).
 
-    working_memory and session_handoff routing are deferred to Fase 2
-    (Sleep Cycle Stage 1 — MIL consolidation).
+    Processes all three Closure Payload fields:
+      - consolidation: written to episodic memory + appended to session.jsonl
+      - working_memory: validated and written to working-memory.json
+      - session_handoff: written to session-handoff.json
     """
     log_closure_payload(root, sil_gseq, action)
 
+    # consolidation → episodic write + append to session.jsonl as MSG (§7.2)
     consolidation = action.get("consolidation", "")
     if consolidation:
         memory_write(root, consolidation, mil_gseq, label="consolidation")
+        cenv = build_envelope(
+            actor=ACTOR_CPE,
+            type_=TYPE_MSG,
+            data=consolidation[:3800],
+            gseq=mil_gseq.next(),
+        )
+        append_session_event(root, cenv.to_dict())
 
-    deferred = [f for f in ("working_memory", "session_handoff") if action.get(f)]
-    if deferred:
-        ui.info(f"[SIL] closure_payload: {', '.join(deferred)} deferred to Fase 2.")
+    # working_memory → ensure session-handoff.json is included, write pointer map
+    wm_entries = list(action.get("working_memory") or [])
+    handoff_path = "memory/session-handoff.json"
+    if action.get("session_handoff") and not any(
+        e.get("path") == handoff_path for e in wm_entries
+    ):
+        wm_entries.append({"priority": 90, "path": handoff_path})
+    if wm_entries:
+        write_working_memory(root, wm_entries, max_entries=20)
+
+    # session_handoff → write atomically, replacing previous record
+    handoff = action.get("session_handoff")
+    if handoff:
+        write_session_handoff(root, handoff)
 
 
 # ---------------------------------------------------------------------------
