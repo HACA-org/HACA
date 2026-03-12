@@ -416,6 +416,12 @@ The `memory/session-handoff.json` path must always be included in `working_memor
 
 Stage 0 checks both the current cycle's per-probe scores and the aggregate trend in the digest against the drift threshold declared in the structural baseline. Either can trigger a `DRIFT_FAULT`.
 
+**Single-cycle breach:** `last_score > drift.threshold` for any probe triggers a `DRIFT_FAULT` immediately.
+
+**Aggregate trend breach:** `mean_score > drift.threshold` for any probe triggers a `DRIFT_FAULT`, even if no individual cycle exceeded the threshold. This catches sustained low-level drift that accumulates across sessions.
+
+**`mean_score` computation:** running average over all `cycles_evaluated` — updated after each Stage 0 run as `mean_score = (mean_score × (cycles_evaluated − 1) + new_score) / cycles_evaluated`. `cycles_evaluated` is incremented before the update. The initial value before the first Stage 0 run is `0.0`.
+
 ### 3.9 Skill Index
 
 `skills/index.json` is the authoritative registry of skills the entity is authorized to use. It is written by the SIL during FAP Step 1 and updated exclusively via Endure (or via maintenance operation for `SEVERANCE_COMMIT`).
@@ -511,7 +517,7 @@ Each line in `state/drift-probes.jsonl` is a probe record. Probes are structural
 | `description` | string | Human-readable description of the behavioral property this probe monitors |
 | `target` | string | Path to the Memory Store artefact to evaluate; relative to entity root; must resolve within `memory/` |
 | `deterministic` | object or null | Deterministic layer configuration; if present, this layer executes and its result is always conclusive — the probabilistic layer is skipped |
-| `deterministic.type` | string | Check type: `"hash"` (SHA-256 of target content vs. `value`), `"string"` (literal substring presence), or `"pattern"` (regex match against target content) |
+| `deterministic.type` | string | Check type: `"hash"` (SHA-256 of target content vs. `value`), `"string"` (literal substring presence), or `"pattern"` (regex match against target content using RE2 syntax — O(n) guaranteed, no backtracking) |
 | `deterministic.value` | string | The hash, string, or pattern to check against |
 | `reference` | string or null | Reference text used by the probabilistic NCD layer; if present and `deterministic` is absent, the probabilistic layer executes; if both are absent, the probe is malformed |
 
