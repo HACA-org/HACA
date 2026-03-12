@@ -298,7 +298,8 @@ def _teardown(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> None:
 
     # Stage 3: Endure Execution
     checkpoint_interval = ctx.baseline.get("integrity_chain", {}).get("checkpoint_interval", 10)
-    errors = run_endure(root, ctx.sil_gseq, ctx.session_id, checkpoint_interval)
+    snapshot_keep       = ctx.baseline.get("endure", {}).get("snapshot_keep", 3)
+    errors = run_endure(root, ctx.sil_gseq, ctx.session_id, checkpoint_interval, snapshot_keep)
     for err in errors:
         ui.warning(f"[Endure] {err}")
 
