@@ -690,6 +690,7 @@ The SIL processes all queued Evolution Proposals. For each proposal:
 5. Update `state/integrity.json` atomically. If the number of Endure commits since the last checkpoint has reached `integrity_chain.checkpoint_interval`, include the updated `last_checkpoint` field in this same write.
 6. Append the commit entry to `state/integrity_chain.jsonl`. If step 5 updated `last_checkpoint`, this entry is a checkpoint entry — the Integrity Document is the verifiable anchor; the chain entry carries the full chain data.
 7. Log an `ENDURE_COMMIT` ACP envelope to `memory/session.jsonl`.
+8. If the proposal originated from a staged cartridge under `workspace/stage/<name>/`, the SIL deletes that staging directory. Staged cartridges are not retained after promotion.
 
 Proposals without a valid `EVOLUTION_AUTH` record are discarded and logged — they are never executed.
 
@@ -793,7 +794,7 @@ Built-in skills are shipped with FCP and present in every entity's Skill Index f
 
 | Skill | Description |
 |---|---|
-| `skill_create` | Stages a new skill cartridge under `workspace/stage/<name>/` for Endure installation; does not modify `skills/index.json` directly — the staged files become an Evolution Proposal |
+| `skill_create` | Stages a new skill cartridge under `workspace/stage/<name>/` for Endure installation; accepts an optional `--base <name>` parameter — when provided, EXEC copies the named skill's files from `skills/<name>/` into the staging directory, giving the CPE a pre-populated cartridge to read and modify via `file_reader` and `file_writer`; does not modify `skills/index.json` directly — the staged files become an Evolution Proposal |
 | `skill_audit` | Validates a skill's manifest, executable, and index consistency; accepts an optional `fix` parameter for correctable auto-repair |
 | `file_reader` | Reads a file within `workspace/`; rejects any path outside `workspace/` |
 | `file_writer` | Writes a file within `workspace/`; rejects any path outside `workspace/` |
@@ -1079,6 +1080,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] Each Evolution Proposal executed at Stage 3 only with a matching `EVOLUTION_AUTH` record.
 - [ ] `SLEEP_COMPLETE` written to `state/integrity.log` before session token is removed.
 - [ ] Session token removed by SIL immediately after `SLEEP_COMPLETE`.
+- [ ] Staged cartridge directories in `workspace/stage/` are deleted by the SIL as step 8 of each promoted proposal's Endure execution.
 
 **Memory Layer**
 - [ ] MIL is the sole writer of mnemonic content to the Session Store and Memory Store.
@@ -1095,6 +1097,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] Built-in skills (`skill_create`, `skill_audit`, `file_reader`, `file_writer`, `worker_skill`, `commit`) present in Skill Index from genesis; executables in `skills/lib/`.
 - [ ] `commit` skill requires an explicit path parameter; validates path is within the workspace_focus declared in `state/workspace_focus.json`; rejects if workspace_focus is unset or if the path falls outside it.
 - [ ] `file_reader` and `file_writer` operate exclusively within `workspace/`; requests targeting any path outside `workspace/` are rejected.
+- [ ] `skill_create` with `--base <name>` clones an existing skill's files from `skills/<name>/` into `workspace/stage/<name>/`; the clone is deleted by the SIL after Endure promotion.
 
 **Integrity Layer**
 - [ ] `state/integrity.log` is never compacted, archived, truncated, or deleted; retention is unbounded.
