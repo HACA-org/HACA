@@ -1,12 +1,19 @@
 """Memory Interface Layer (MIL) — FCP-Core §8 MVP subset.
 
-The MIL is the sole component authorized to write mnemonic content to the
-Session Store (memory/session.jsonl) and Memory Store (memory/semantic/,
-memory/episodic/).
+The MIL has full authority over memory/ — it is the sole component authorized
+to read and write the Memory Store.  Write routing depends on the caller context:
+
+  CPE mid-session (memory_write action):
+    Writes go to memory/episodic/ — free mnemonic writes, no authorization needed.
+
+  SIL during Sleep Cycle Stage 1 (Fase 2 — consolidation):
+    Writes routed by the consolidation logic: consolidated/promoted knowledge
+    goes to memory/semantic/, working memory pointer map to working-memory.json,
+    session handoff to session-handoff.json, etc.
 
 MVP scope (Fase 1):
-  - memory_write: persist content to memory/semantic/ and write result to inbox
-  - memory_recall: search memory/semantic/ by substring and write result to inbox
+  - memory_write: persist CPE mnemonic content to memory/episodic/
+  - memory_recall: search all memory/ .md artifacts by substring
   - append_to_session_store: direct write to session.jsonl (used by FCP orchestrator)
 
 Deferred to Fase 2:
@@ -79,16 +86,16 @@ def memory_write(
     gseq_counter: GseqCounter,
     label:        str = "",
 ) -> list[dict[str, Any]]:
-    """Write *content* to a new file in ``memory/semantic/``.
+    """Write *content* to a new file in ``memory/episodic/``.
 
     Steps:
-      1. Create a unique .md file in memory/semantic/ with the content.
+      1. Create a unique .md file in memory/episodic/ with the content.
       2. Write a SKILL_RESULT envelope to io/inbox/ so the CPE learns
          the write succeeded.
 
     Args:
         entity_root:  Entity root path.
-        content:      Text to persist (typically a semantic insight or note).
+        content:      Text to persist (session note, task context, recalled fact).
         gseq_counter: MIL's gseq counter for this session.
         label:        Optional short label used in the filename.
 
@@ -96,8 +103,8 @@ def memory_write(
         List of ACP envelope dicts written to io/inbox/.
     """
     entity_root = Path(entity_root)
-    semantic_dir = entity_root / "memory" / "semantic"
-    semantic_dir.mkdir(parents=True, exist_ok=True)
+    episodic_dir = entity_root / "memory" / "episodic"
+    episodic_dir.mkdir(parents=True, exist_ok=True)
 
     # Choose file name: <ts>-<uuid>[-<label>].md
     ts_compact = utcnow_iso().replace(":", "").replace("-", "")
@@ -108,7 +115,7 @@ def memory_write(
         filename += f"-{safe_label}"
     filename += ".md"
 
-    mem_path = semantic_dir / filename
+    mem_path = episodic_dir / filename
     mem_path.write_text(content, encoding="utf-8")
 
     # Notify CPE via inbox
@@ -142,10 +149,14 @@ def memory_recall(
     gseq_counter: GseqCounter,
     max_results:  int = 5,
 ) -> list[dict[str, Any]]:
-    """Search ``memory/semantic/`` for *query* (case-insensitive substring).
+    """Search ``memory/`` for *query* (case-insensitive substring).
 
-    MVP implementation: simple substring scan over all .md files under
-    memory/semantic/.  Fase 2 will add proper semantic search.
+    Scans all .md files under memory/ — episodic, semantic, or any other
+    subdirectory.  The CPE may recall any memory artifact mid-session;
+    recall is a read operation and carries no write authorization requirement.
+
+    MVP implementation: simple substring scan.  Fase 2 will add proper
+    semantic search.
 
     Args:
         entity_root:  Entity root path.
@@ -157,11 +168,11 @@ def memory_recall(
         List of ACP envelope dicts written to io/inbox/.
     """
     entity_root = Path(entity_root)
-    semantic_dir = entity_root / "memory" / "semantic"
+    memory_dir  = entity_root / "memory"
 
     matches: list[dict[str, str]] = []
-    if semantic_dir.exists():
-        for fp in sorted(semantic_dir.rglob("*.md")):
+    if memory_dir.exists():
+        for fp in sorted(memory_dir.rglob("*.md")):
             try:
                 text = fp.read_text(encoding="utf-8")
             except OSError:

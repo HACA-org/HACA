@@ -9,11 +9,15 @@ MVP scope (Fase 1):
   - Distress Beacon check and activation (§10.7)
   - Crash counter tracking in integrity.log
 
+Partial Fase 2 (now included):
+  - Evolution Gate: intercept proposals, Operator decision, EVOLUTION_AUTH /
+    EVOLUTION_REJECTED / PROPOSAL_PENDING records (§10.5)
+
 Deferred to Fase 2:
   - Background Heartbeat threading loop
   - Reciprocal SIL Watchdog
   - Full drift detection (NCD/gzip)
-  - Evolution Gate / Endure execution
+  - Endure execution (Stage 3 — structural writes)
 """
 
 from __future__ import annotations
@@ -30,6 +34,9 @@ from .acp import (
     GseqCounter,
     TYPE_CTX_SKIP,
     TYPE_CRASH_RECOVERY,
+    TYPE_EVOLUTION_AUTH,
+    TYPE_EVOLUTION_REJECTED,
+    TYPE_PROPOSAL_PENDING,
     TYPE_HEARTBEAT,
     TYPE_SLEEP_COMPLETE,
     ACTOR_SIL,
@@ -499,3 +506,112 @@ def has_sleep_complete(entity_root: str | Path) -> bool:
             continue
         return False
     return False
+
+
+# ---------------------------------------------------------------------------
+# Evolution Gate (§10.5)
+# ---------------------------------------------------------------------------
+
+def get_pending_proposals(entity_root: str | Path) -> list[dict[str, Any]]:
+    """Return all unresolved PROPOSAL_PENDING entries from integrity.log.
+
+    A PROPOSAL_PENDING entry is resolved when a matching EVOLUTION_AUTH or
+    EVOLUTION_REJECTED record exists with the same ``proposal_tx`` in its
+    data payload.
+    """
+    entries = _read_integrity_log(entity_root)
+    pending: dict[str, dict[str, Any]] = {}   # proposal_tx → entry
+    resolved: set[str] = set()
+
+    for entry in entries:
+        t = entry.get("type", "")
+        try:
+            d = json.loads(entry.get("data", "{}"))
+        except Exception:
+            d = {}
+        if t == TYPE_PROPOSAL_PENDING:
+            proposal_tx = d.get("proposal_tx", "")
+            if proposal_tx:
+                pending[proposal_tx] = entry
+        elif t in (TYPE_EVOLUTION_AUTH, TYPE_EVOLUTION_REJECTED):
+            ref = d.get("proposal_tx", "")
+            if ref:
+                resolved.add(ref)
+
+    return [v for k, v in pending.items() if k not in resolved]
+
+
+def write_proposal_pending(
+    entity_root:  str | Path,
+    gseq_counter: GseqCounter,
+    content:      str,
+    proposal_tx:  str = "",
+) -> ACPEnvelope:
+    """Write a PROPOSAL_PENDING envelope to integrity.log.
+
+    Used when the session closes before a terminal prompt can be shown.
+    The proposal will be re-presented to the Operator at the next session.
+    ``proposal_tx`` is the tx of the original EVOLUTION_PROPOSAL envelope.
+    """
+    data = json.dumps({
+        "content":     content,
+        "proposal_tx": proposal_tx,
+        "ts":          utcnow_iso(),
+    })
+    env = build_envelope(
+        actor=ACTOR_SIL,
+        type_=TYPE_PROPOSAL_PENDING,
+        data=data,
+        gseq=gseq_counter.next(),
+    )
+    append_integrity_log(entity_root, env)
+    return env
+
+
+def write_evolution_auth(
+    entity_root:    str | Path,
+    gseq_counter:   GseqCounter,
+    proposal_tx:    str,
+    content_digest: str,
+    operator_name:  str = "",
+) -> ACPEnvelope:
+    """Write an EVOLUTION_AUTH envelope to integrity.log.
+
+    Records explicit Operator approval.  *content_digest* is a SHA-256
+    digest of the approved proposal content — required for authorization
+    chain integrity (§10.5).
+    """
+    data = json.dumps({
+        "proposal_tx":    proposal_tx,
+        "content_digest": content_digest,
+        "operator":       operator_name,
+        "ts":             utcnow_iso(),
+    })
+    env = build_envelope(
+        actor=ACTOR_SIL,
+        type_=TYPE_EVOLUTION_AUTH,
+        data=data,
+        gseq=gseq_counter.next(),
+    )
+    append_integrity_log(entity_root, env)
+    return env
+
+
+def write_evolution_rejected(
+    entity_root:  str | Path,
+    gseq_counter: GseqCounter,
+    proposal_tx:  str,
+) -> ACPEnvelope:
+    """Write an EVOLUTION_REJECTED envelope to integrity.log.
+
+    Records explicit Operator rejection.  Outcome is never returned to CPE.
+    """
+    data = json.dumps({"proposal_tx": proposal_tx, "ts": utcnow_iso()})
+    env = build_envelope(
+        actor=ACTOR_SIL,
+        type_=TYPE_EVOLUTION_REJECTED,
+        data=data,
+        gseq=gseq_counter.next(),
+    )
+    append_integrity_log(entity_root, env)
+    return env

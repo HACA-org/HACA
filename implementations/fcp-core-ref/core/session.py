@@ -16,6 +16,7 @@ Session close MVP (Fase 1):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -24,7 +25,7 @@ from typing import Any
 
 from .acp import (
     ACTOR_FCP, ACTOR_CPE, ACTOR_SIL,
-    TYPE_MSG, TYPE_SESSION_CLOSE,
+    TYPE_MSG, TYPE_SESSION_CLOSE, TYPE_EVOLUTION_PROPOSAL,
     GseqCounter, build_envelope, chunk_payload,
 )
 from .boot import BootContext
@@ -36,9 +37,15 @@ from .sil import (
     remove_session_token,
     write_heartbeat,
     write_sleep_complete,
+    write_evolution_auth,
+    write_evolution_rejected,
+    write_proposal_pending,
 )
 from .ui import UI, PlainUI
-from .operator import write_notification, SEVERITY_DEGRADED
+from .operator import (
+    assert_terminal_accessible, terminal_prompt,
+    write_notification, SEVERITY_DEGRADED, SEVERITY_INFO,
+)
 
 # ── regex para bloco fcp-actions ──────────────────────────────────────────
 _FCP_ACTIONS_RE = re.compile(
@@ -59,21 +66,22 @@ def run_session(ctx: BootContext, ui: UI | None = None) -> None:
         ui:  Display interface.  Defaults to PlainUI() when None.
 
     Retorna quando a sessão fecha (normalmente ou por erro).
-    Sempre executa o teardown (revoke → SLEEP_COMPLETE stub → remove token).
+    Sempre executa o teardown (revoke → Evolution decisions → SLEEP_COMPLETE stub → remove token).
     """
     if ui is None:
         ui = PlainUI()
+    pending_proposals: list[dict] = []
     try:
-        _session_loop(ctx, ui)
+        _session_loop(ctx, ui, pending_proposals)
     finally:
-        _teardown(ctx, ui)
+        _teardown(ctx, ui, pending_proposals)
 
 
 # ---------------------------------------------------------------------------
 # Session loop
 # ---------------------------------------------------------------------------
 
-def _session_loop(ctx: BootContext, ui: UI) -> None:
+def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> None:
     root             = ctx.entity_root
     cpe              = ctx.cpe
     dispatcher       = ctx.dispatcher
@@ -229,7 +237,7 @@ def _session_loop(ctx: BootContext, ui: UI) -> None:
                 close_requested = True
 
             elif target == "sil" and atype == "evolution_proposal":
-                _handle_evolution_proposal(root, action, sil_gseq, ui)
+                _handle_evolution_proposal(root, action, sil_gseq, ui, pending_proposals)
 
             elif target == "exec" and atype == "skill_request":
                 skill  = action.get("skill", "")
@@ -257,8 +265,8 @@ def _session_loop(ctx: BootContext, ui: UI) -> None:
 # Teardown — MVP Sleep Cycle stub (§7, Fase 2 completo)
 # ---------------------------------------------------------------------------
 
-def _teardown(ctx: BootContext, ui: UI) -> None:
-    """Token revoke → SLEEP_COMPLETE stub → token remove.
+def _teardown(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> None:
+    """Token revoke → Evolution decisions → SLEEP_COMPLETE stub → token remove.
 
     TODO Fase 2: substituir pelo Sleep Cycle completo (Stages 0-3):
       Stage 0: Semantic Drift Detection
@@ -269,10 +277,59 @@ def _teardown(ctx: BootContext, ui: UI) -> None:
     root = ctx.entity_root
     ui.teardown("Revoking session token…")
     revoke_session_token(root)
+    # Evolution Gate: collect Operator decisions before Sleep Cycle (§10.5)
+    _collect_evolution_decisions(root, pending_proposals, ctx.sil_gseq, ctx.operator_name, ui)
     # MVP stub: write SLEEP_COMPLETE immediately (no actual sleep stages)
     write_sleep_complete(root, ctx.sil_gseq, ctx.session_id)
     remove_session_token(root)
     ui.teardown("Session closed cleanly.")
+
+
+# ---------------------------------------------------------------------------
+# Evolution decisions collector (§10.5)
+# ---------------------------------------------------------------------------
+
+def _collect_evolution_decisions(
+    root:              Path,
+    pending_proposals: list[dict],
+    sil_gseq:          GseqCounter,
+    operator_name:     str,
+    ui:                UI,
+) -> None:
+    """Collect Operator decisions on pending Evolution Proposals at session close.
+
+    If terminal is accessible, present each proposal interactively and write
+    EVOLUTION_AUTH or EVOLUTION_REJECTED.  If terminal is inaccessible (e.g.
+    unattended session), write PROPOSAL_PENDING for each — proposals will be
+    re-presented via Phase 6 at the next boot.  Outcome is never returned to CPE.
+    """
+    if not pending_proposals:
+        return
+
+    try:
+        assert_terminal_accessible()
+    except OSError:
+        for p in pending_proposals:
+            write_proposal_pending(root, sil_gseq, p["content"], p["tx"])
+        return
+
+    print(f"\n[SIL] {len(pending_proposals)} Evolution Proposal(s) pending Operator decision:")
+    for i, p in enumerate(pending_proposals, 1):
+        print(f"\n  [{i}] tx={p['tx'][:8]}…")
+        print(f"  {p['content'][:400]}")
+        print()
+        ans = terminal_prompt(
+            "  Approve this Evolution Proposal? [yes/no]",
+            options=["yes", "no"],
+        )
+        if ans == "yes":
+            digest = hashlib.sha256(p["content"].encode()).hexdigest()
+            write_evolution_auth(root, sil_gseq, p["tx"], digest, operator_name)
+            ui.info(f"  Approved (tx={p['tx'][:8]}…).")
+        else:
+            write_evolution_rejected(root, sil_gseq, p["tx"])
+            ui.info(f"  Rejected (tx={p['tx'][:8]}…).")
+    print()
 
 
 # ---------------------------------------------------------------------------
@@ -416,18 +473,17 @@ def _print_help(ctx: BootContext, ui: UI) -> None:
 # ---------------------------------------------------------------------------
 
 def _handle_evolution_proposal(
-    root: Path,
-    action: dict[str, Any],
-    sil_gseq: GseqCounter,
-    ui: UI,
+    root:              Path,
+    action:            dict[str, Any],
+    sil_gseq:          GseqCounter,
+    ui:                UI,
+    pending_proposals: list[dict],
 ) -> None:
-    """Log proposal to integrity.log and write to operator_notifications/."""
-    from .operator import write_notification, SEVERITY_INFO
-
+    """Log proposal; queue for Operator decision at session close (§10.5)."""
     content = action.get("content", "")
     env = build_envelope(
         actor=ACTOR_SIL,
-        type_="EVOLUTION_PROPOSAL",
+        type_=TYPE_EVOLUTION_PROPOSAL,
         data=json.dumps({"content": content, "ts": utcnow_iso()}),
         gseq=sil_gseq.next(),
     )
@@ -437,9 +493,9 @@ def _handle_evolution_proposal(
         "content": content,
         "note":    "Awaiting Operator approval. Will be presented at session close.",
     })
+    pending_proposals.append({"tx": env.tx, "content": content})
     # Per §10.5, outcome is never returned to the CPE.
-    ui.info("[SIL] Evolution Proposal received and logged.")
-    ui.info("Awaiting Operator decision at session close.")
+    ui.info("[SIL] Evolution Proposal received. Decision at session close.")
 
 
 # ---------------------------------------------------------------------------

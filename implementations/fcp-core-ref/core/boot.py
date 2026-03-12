@@ -10,6 +10,7 @@ Retorna um BootContext com tudo o que o session loop precisa.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import io
 import json
 import sys
@@ -37,6 +38,7 @@ from .sil import (
     append_integrity_log,
     check_distress_beacon,
     get_crash_counter,
+    get_pending_proposals,
     get_unresolved_criticals,
     has_sleep_complete,
     has_unresolved_critical,
@@ -48,7 +50,10 @@ from .sil import (
     verify_integrity_chain,
     verify_integrity_document,
     write_ctx_skip,
+    write_evolution_auth,
+    write_evolution_rejected,
     write_heartbeat,
+    write_proposal_pending,
     write_sleep_complete,
 )
 
@@ -70,6 +75,7 @@ class BootContext:
     session_id:       str
     entity_root:      Path
     baseline:         dict[str, Any]
+    operator_name:    str
     cpe:              CPEBackend
     skill_index:      SkillIndex
     dispatcher:       ExecDispatcher
@@ -130,7 +136,8 @@ def run_boot(entity_root: str | Path) -> BootContext:
     # ------------------------------------------------------------------
     # Phase 0 — Operator Bound + Operator Channel
     # ------------------------------------------------------------------
-    imprint = _load_imprint(root)  # raises BootError if invalid
+    imprint       = _load_imprint(root)  # raises BootError if invalid
+    operator_name = imprint.get("operator_bound", {}).get("name", "")
     baseline = _load_baseline(root)
 
     notif_dir = root / "state" / "operator_notifications"
@@ -292,7 +299,7 @@ def run_boot(entity_root: str | Path) -> BootContext:
     assembled_context = "\n\n---\n\n".join(ctx_parts)
 
     # ------------------------------------------------------------------
-    # Phase 6 — Critical Condition Check
+    # Phase 6 — Critical Condition Check + Pending Evolution Proposals
     # ------------------------------------------------------------------
     if has_unresolved_critical(root):
         unresolved = get_unresolved_criticals(root)
@@ -320,6 +327,9 @@ def run_boot(entity_root: str | Path) -> BootContext:
             )
             append_integrity_log(root, env)
 
+    # Pending Evolution Proposals from previous sessions (§10.5)
+    _review_pending_proposals(root, sil_gseq, operator_name)
+
     # ------------------------------------------------------------------
     # Phase 7 — Session Token Issuance
     # ------------------------------------------------------------------
@@ -333,6 +343,7 @@ def run_boot(entity_root: str | Path) -> BootContext:
         session_id=session_id,
         entity_root=root,
         baseline=baseline,
+        operator_name=operator_name,
         cpe=_init_cpe(baseline),
         skill_index=skill_index,
         dispatcher=dispatcher,
@@ -360,6 +371,44 @@ def _load_imprint(root: Path) -> dict[str, Any]:
     if not ob.get("name") or not ob.get("operator_hash"):
         raise BootError("0", "Operator Bound absent or malformed in imprint.json.")
     return data
+
+
+def _review_pending_proposals(
+    root:          Path,
+    sil_gseq:      GseqCounter,
+    operator_name: str,
+) -> None:
+    """Present pending Evolution Proposals from previous sessions (§10.5).
+
+    Called during Phase 6.  Each proposal is shown via terminal prompt;
+    the Operator approves or rejects.  Outcome written to integrity.log;
+    never returned to the CPE.
+    """
+    pending = get_pending_proposals(root)
+    if not pending:
+        return
+
+    print(f"\n[Boot/6] {len(pending)} pending Evolution Proposal(s) from previous session(s):")
+    for i, entry in enumerate(pending, 1):
+        try:
+            d = json.loads(entry.get("data", "{}"))
+        except Exception:
+            d = {}
+        content     = d.get("content", "(no content)")
+        proposal_tx = d.get("proposal_tx", "?")
+        print(f"\n  [{i}] tx={proposal_tx[:8]}…")
+        print(f"  {content[:400]}")
+        print()
+        ans = terminal_prompt(
+            "  Approve this Evolution Proposal? [yes/no]",
+            options=["yes", "no"],
+        )
+        if ans == "yes":
+            digest = hashlib.sha256(content.encode()).hexdigest()
+            write_evolution_auth(root, sil_gseq, proposal_tx, digest, operator_name)
+        else:
+            write_evolution_rejected(root, sil_gseq, proposal_tx)
+    print()
 
 
 def _load_baseline(root: Path) -> dict[str, Any]:
