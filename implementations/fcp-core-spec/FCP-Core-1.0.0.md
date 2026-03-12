@@ -34,6 +34,10 @@ This document assumes familiarity with HACA-Arch and HACA-Core. It does not rest
    - 3.6 [Working Memory](#36-working-memory)
    - 3.7 [Closure Payload](#37-closure-payload)
    - 3.8 [Semantic Digest](#38-semantic-digest)
+   - 3.9 [Skill Index](#39-skill-index)
+   - 3.10 [Skill Manifest](#310-skill-manifest)
+   - 3.11 [Drift Probe](#311-drift-probe)
+   - 3.12 [Integrity Chain Entry](#312-integrity-chain-entry)
 4. [First Activation Protocol](#4-first-activation-protocol)
 5. [Boot Sequence](#5-boot-sequence)
    - 5.1 [Boot Manifest](#51-boot-manifest)
@@ -406,6 +410,173 @@ The `memory/session-handoff.json` path must always be included in `working_memor
 ```
 
 Stage 0 checks both the current cycle's per-probe scores and the aggregate trend in the digest against the drift threshold declared in the structural baseline. Either can trigger a `DRIFT_FAULT`.
+
+### 3.9 Skill Index
+
+`skills/index.json` is the authoritative registry of skills the entity is authorized to use. It is written by the SIL during FAP Step 1 and updated exclusively via Endure (or via maintenance operation for `SEVERANCE_COMMIT`).
+
+```json
+{
+  "version": "1.0",
+  "skills": [
+    {
+      "name": "memory_store",
+      "desc": "Retrieves and stores concepts in the semantic graph",
+      "manifest": "skills/memory_store/manifest.json",
+      "builtin": false
+    },
+    {
+      "name": "file_reader",
+      "desc": "Reads files within the workspace",
+      "manifest": "skills/lib/file_reader/manifest.json",
+      "builtin": true
+    }
+  ],
+  "aliases": {
+    "/snapshot": {"skill": "snapshot_create"},
+    "/commit": {"skill": "commit"}
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `version` | string | Schema version; must be `"1.0"` |
+| `skills[]` | array | All skills the entity is authorized to invoke |
+| `skills[].name` | string | Skill name; must match the directory name under `skills/` and the `name` field in its `manifest.json` |
+| `skills[].desc` | string | Brief human-readable description of the skill's purpose; included in the `[SKILLS INDEX]` context block for non-built-in skills |
+| `skills[].manifest` | string | Path to the skill's `manifest.json`, relative to entity root |
+| `skills[].builtin` | boolean | If `true`, the skill's executables reside in `skills/lib/`; built-in skills are excluded from the `[SKILLS INDEX]` context block in the CPE input |
+| `aliases` | object | Map from slash command string (with leading `/`) to alias record; defines the alias dispatch table used by §12.3.2 |
+| `aliases[key].skill` | string | Target skill name; must reference a name present in `skills[]` |
+| `aliases[key].operator_only` | boolean | If `true`, this alias is rejected when issued from any source other than the interactive terminal prompt; default `false` |
+
+All six built-in skills (§9.5) must be present in `skills[]` at every point after FAP completion.
+
+### 3.10 Skill Manifest
+
+Each skill's `manifest.json`, located at `skills/<name>/manifest.json` (or `skills/lib/<name>/manifest.json` for built-in skills), declares the skill's identity and execution constraints. The EXEC validates this file at Gate 2 before every dispatch.
+
+```json
+{
+  "name": "memory_store",
+  "version": "1.0.0",
+  "description": "...",
+  "timeout_seconds": 30,
+  "background": false,
+  "ttl_seconds": null,
+  "permissions": [],
+  "dependencies": [],
+  "operator_only": false
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Skill name; must match the skill's directory name and its entry in `skills/index.json` |
+| `version` | string | Semver string |
+| `description` | string | Human-readable description of the skill's purpose |
+| `timeout_seconds` | integer | Execution timeout in seconds; monitored by the SIL skill timeout watchdog (§10.4) |
+| `background` | boolean | If `true`, the skill executes asynchronously and declares a TTL; background skills return their result through `io/inbox/` after the dispatching cycle ends |
+| `ttl_seconds` | integer or null | Required when `background: true`; the SIL treats TTL expiry without a registered result as an incomplete execution and logs it to `state/integrity.log`; must be absent or `null` when `background: false` |
+| `permissions` | array | List of permission tokens the skill requires; validated by Gate 2 against the execution context; permission token semantics are implementation-defined |
+| `dependencies` | array | List of skill names or host capabilities required; Gate 2 validates availability before dispatch |
+| `operator_only` | boolean | If `true`, the skill may only be dispatched when the originating request was issued by the Operator from the interactive terminal prompt; default `false` |
+
+### 3.11 Drift Probe
+
+Each line in `state/drift-probes.jsonl` is a probe record. Probes are structural content — written only via Endure. Stage 0 of the Sleep Cycle executes all probes in declaration order.
+
+```json
+{
+  "id": "probe-001",
+  "description": "...",
+  "target": "memory/semantic/architecture-decisions.md",
+  "deterministic": {
+    "type": "hash",
+    "value": "sha256:..."
+  },
+  "reference": "..."
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | Unique probe identifier; referenced in `DRIFT_FAULT` envelopes and per-probe records in `state/semantic-digest.json` |
+| `description` | string | Human-readable description of the behavioral property this probe monitors |
+| `target` | string | Path to the Memory Store artefact to evaluate; relative to entity root; must resolve within `memory/` |
+| `deterministic` | object or null | Deterministic layer configuration; if present, this layer executes and its result is always conclusive — the probabilistic layer is skipped |
+| `deterministic.type` | string | Check type: `"hash"` (SHA-256 of target content vs. `value`), `"string"` (literal substring presence), or `"pattern"` (regex match against target content) |
+| `deterministic.value` | string | The hash, string, or pattern to check against |
+| `reference` | string or null | Reference text used by the probabilistic NCD layer; if present and `deterministic` is absent, the probabilistic layer executes; if both are absent, the probe is malformed |
+
+A probe with both `deterministic` and `reference` absent is malformed; the SIL logs the malformation at Stage 0 without executing it.
+
+If the probe's `target` file is absent from the Memory Store, the SIL logs the absence to `state/integrity.log` and skips the probe without triggering a `DRIFT_FAULT`. Missing probe targets are an operational artefact, not a structural violation.
+
+### 3.12 Integrity Chain Entry
+
+Each line in `state/integrity_chain.jsonl` is a chain entry. Three entry types exist.
+
+**Genesis entry** — written at FAP Step 7; seq 0; the entity's permanent identity anchor:
+
+```json
+{
+  "seq": 0,
+  "type": "genesis",
+  "ts": "2026-03-11T14:00:00Z",
+  "imprint_hash": "sha256:...",
+  "prev_hash": null
+}
+```
+
+**ENDURE_COMMIT** — written at Stage 3 Step 6 for each approved Evolution Proposal:
+
+```json
+{
+  "seq": 12,
+  "type": "ENDURE_COMMIT",
+  "ts": "2026-03-11T16:32:00Z",
+  "evolution_auth_digest": "sha256:...",
+  "files": {
+    "persona/identity.md": "sha256:..."
+  },
+  "integrity_doc_hash": "sha256:...",
+  "prev_hash": "sha256:..."
+}
+```
+
+**SEVERANCE_COMMIT** — written at maintenance skill removal; no `EVOLUTION_AUTH` required:
+
+```json
+{
+  "seq": 5,
+  "type": "SEVERANCE_COMMIT",
+  "ts": "2026-03-11T16:00:00Z",
+  "skill_removed": "old_skill",
+  "reason": "manifest malformed",
+  "files": {
+    "skills/index.json": "sha256:..."
+  },
+  "integrity_doc_hash": "sha256:...",
+  "prev_hash": "sha256:..."
+}
+```
+
+| Field | Type | Applicable | Description |
+|---|---|---|---|
+| `seq` | integer | all | Monotonically increasing; `0` for genesis; `1`-indexed for all subsequent entries |
+| `type` | string | all | Entry type: `"genesis"`, `"ENDURE_COMMIT"`, or `"SEVERANCE_COMMIT"` |
+| `ts` | string | all | ISO 8601 UTC timestamp |
+| `imprint_hash` | string | genesis | SHA-256 of the finalized Imprint Record; the Genesis Omega value |
+| `evolution_auth_digest` | string | ENDURE_COMMIT | SHA-256 of the `EVOLUTION_AUTH` ACP envelope that authorized this commit; used by Evolutionary Drift detection (§10.2) |
+| `skill_removed` | string | SEVERANCE_COMMIT | Name of the removed skill |
+| `reason` | string | SEVERANCE_COMMIT | Human-readable reason for removal |
+| `files` | object | ENDURE_COMMIT, SEVERANCE_COMMIT | Map of modified tracked file paths (relative to entity root) to their SHA-256 hashes after the write |
+| `integrity_doc_hash` | string | ENDURE_COMMIT, SEVERANCE_COMMIT | SHA-256 of `state/integrity.json` as written atomically during this commit; this is the verifiable anchor for checkpoint entries |
+| `prev_hash` | string or null | all | SHA-256 of the previous entry's complete JSON line as stored in the file (excluding the trailing newline); `null` for genesis |
+
+**Chain validation.** Each entry's `prev_hash` must equal the SHA-256 of the previous entry line as written. Phase 3 Step 1 reads `last_checkpoint` from `state/integrity.json`, locates the entry at that `seq`, verifies its SHA-256 matches the recorded digest, then validates `prev_hash` continuity forward. If `last_checkpoint` is `null`, validation starts from seq 0. Evolutionary Drift detection (§10.2) additionally verifies that every `ENDURE_COMMIT` — but not `SEVERANCE_COMMIT` — carries a valid `evolution_auth_digest`.
 
 ---
 
