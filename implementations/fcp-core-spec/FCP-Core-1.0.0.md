@@ -136,13 +136,14 @@ An FCP entity is a single directory. Its location on the host filesystem is the 
     ├── drift-probes.jsonl      — semantic probes
     ├── semantic-digest.json    — semantic digest
     ├── workspace_focus.json    — active workspace project path (operational; not tracked by Integrity Document)
+    ├── pending-closure.json    — closure payload staging (present only between session close and Stage 1 completion)
     ├── sentinels/              — runtime sentinels
     │   └── session.token       — session token (present = active or crashed session)
     ├── operator_notifications/ — operator channel output
     └── distress.beacon         — passive distress beacon
 ```
 
-The `persona/`, `skills/`, and `hooks/` directories contain structural content — covered by the Integrity Document, changed only via Endure. The `io/` directory is the CPE's async stimulus queue — any component writes here when a result is relevant to cognition; FCP drains it at the start of each cycle. The `memory/` directory is MIL-exclusive write territory; `imprint.json` is the exception — written once by the MIL during FAP and never modified thereafter. The `state/` directory is SIL territory: structural (`baseline.json`, `integrity.json`, `integrity_chain.jsonl`), integrity-exclusive (`integrity.log`, `distress.beacon`), and operational (`sentinels/`, `operator_notifications/`, `workspace_focus.json`).
+The `persona/`, `skills/`, and `hooks/` directories contain structural content — covered by the Integrity Document, changed only via Endure. The `io/` directory is the CPE's async stimulus queue — any component writes here when a result is relevant to cognition; FCP drains it at the start of each cycle. The `memory/` directory is MIL-exclusive write territory; `imprint.json` is the exception — written once by the MIL during FAP and never modified thereafter. The `state/` directory is SIL territory: structural (`baseline.json`, `integrity.json`, `integrity_chain.jsonl`), integrity-exclusive (`integrity.log`, `distress.beacon`), and operational (`sentinels/`, `operator_notifications/`, `workspace_focus.json`, `pending-closure.json`).
 
 `workspace/` is the CPE's general work area: files here are not tracked by the Integrity Document and are excluded from the Endure scope. It contains `workspace/stage/`, the skill staging area — skill cartridges assembled by `skill_create` land here before being promoted to `skills/` via Endure.
 
@@ -196,6 +197,8 @@ The ACP (Atomic Chunked Protocol) envelope is the inter-component communication 
 
 **Size limit.** No single ACP envelope may exceed 4000 bytes. Larger payloads must be chunked across multiple envelopes sharing the same `tx`, with incrementing `seq` and `eof: true` on the final chunk.
 
+**Chunk reassembly.** A multi-chunk transaction is complete when an envelope with `eof: true` for that `tx` has been received and all `seq` values from `1` through the final envelope's `seq` are present. The reconstructed payload is the concatenation of `data` fields in ascending `seq` order. Incomplete transactions are held across consecutive inbox drain cycles; if a transaction remains incomplete after `fault.n_retry` consecutive drain cycles, it is discarded and logged to `state/integrity.log`. A single-envelope transaction (`seq: 1`, `eof: true`) requires no reassembly.
+
 **Envelope types:**
 
 | Type | Producer | Description |
@@ -207,6 +210,7 @@ The ACP (Atomic Chunked Protocol) envelope is the inter-component communication 
 | `SKILL_TIMEOUT` | SIL | Skill exceeded watchdog threshold |
 | `HEARTBEAT` | SIL | Vital Check record |
 | `DRIFT_FAULT` | SIL | Semantic Drift Critical condition |
+| `IDENTITY_DRIFT` | SIL | Identity Drift Critical condition detected during Heartbeat Vital Check; a structural file hash does not match the Integrity Document |
 | `EVOLUTION_PROPOSAL` | SIL | Evolution Proposal forwarded to Operator |
 | `EVOLUTION_AUTH` | SIL | Operator approval of an Evolution Proposal |
 | `EVOLUTION_REJECTED` | SIL | Operator rejection of an Evolution Proposal |
@@ -783,7 +787,7 @@ FCP rejects a response containing more than one block of the same component type
 
 Each component writes its result to `io/inbox/` as an ACP envelope. FCP drains the inbox at the start of the next cycle, consolidates into `session.jsonl`, and the results become stimuli for the next invocation of the CPE.
 
-The `closure_payload` action (§3.7) is an exception to this model: it is not dispatched to a component for synchronous execution, and no result is returned to `io/inbox/`. Instead, FCP retains it for the MIL to process at Sleep Cycle Stage 1.
+The `closure_payload` action (§3.7) is an exception to this model: it is not dispatched to a component for synchronous execution, and no result is returned to `io/inbox/`. Instead, FCP writes it atomically to `state/pending-closure.json` before the Sleep Cycle begins. This ensures the Closure Payload survives a crash between session close and Stage 1 processing.
 
 ### 6.3 Cycle Chain
 
@@ -831,7 +835,7 @@ A `DRIFT_FAULT` does not halt the Sleep Cycle — Stages 1–3 still complete.
 
 ### 7.2 Stage 1 — Memory Consolidation
 
-If the session closed normally, the MIL processes the Closure Payload produced in the final Cognitive Cycle of the session (§6). If the session was a forced close — a Critical condition, context window limit, or `/endure approve <id>` — no Closure Payload exists and Stage 1 is a no-op; the Sleep Cycle proceeds directly to Stage 2. No further CPE invocation occurs during the Sleep Cycle.
+The MIL reads `state/pending-closure.json`. If present, the session closed normally and the file contains the Closure Payload produced in the final Cognitive Cycle (§6) — the MIL processes it and deletes the file. If absent, the session was a forced close — a Critical condition, context window limit, or `/endure approve <id>` — and Stage 1 is a no-op; the Sleep Cycle proceeds directly to Stage 2. No further CPE invocation occurs during the Sleep Cycle.
 
 The MIL processes each field:
 
@@ -1213,6 +1217,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] All `.jsonl` lines are complete, self-contained ACP envelopes; existing lines are never modified or deleted.
 - [ ] All `.msg` files are written via spool-then-rename and consumed (read then deleted) by FCP during inbox drain.
 - [ ] No ACP envelope exceeds 4000 bytes; larger payloads are chunked.
+- [ ] Multi-chunk transactions are complete only when `eof: true` has been received and all `seq` values from `1` through the final envelope's `seq` are present; incomplete transactions held across drain cycles are discarded after `fault.n_retry` cycles and logged to `state/integrity.log`.
 
 **First Activation Protocol**
 - [ ] FAP executes if and only if `memory/imprint.json` is absent.
@@ -1245,7 +1250,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] SIL revokes session token before Stage 0 begins.
 - [ ] Stages execute sequentially; no two stages run concurrently.
 - [ ] Semantic Drift probes run deterministic layer first; probabilistic layer (NCD Worker Skill) only when deterministic produces no conclusive result.
-- [ ] On normal close: Closure Payload processed by MIL at Stage 1; all three fields (`consolidation`, `working_memory`, `session_handoff`) must be present and valid. On forced close: Stage 1 is a no-op and the Sleep Cycle proceeds to Stage 2.
+- [ ] FCP writes the Closure Payload atomically to `state/pending-closure.json` before the Sleep Cycle begins. Stage 1 reads and deletes the file. On normal close: all three fields (`consolidation`, `working_memory`, `session_handoff`) must be present and valid. On forced close: `state/pending-closure.json` is absent and Stage 1 is a no-op; the Sleep Cycle proceeds to Stage 2.
 - [ ] `memory/session-handoff.json` always included in `working_memory` declaration.
 - [ ] Session Store rotated at Stage 2 if exceeding `session_store.rotation_threshold_bytes`; rotation renames `memory/session.jsonl` to `memory/episodic/` and creates a new empty `memory/session.jsonl`.
 - [ ] Each Evolution Proposal executed at Stage 3 only with a matching `EVOLUTION_AUTH` record.
@@ -1273,6 +1278,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 **Integrity Layer**
 - [ ] `state/integrity.log` is never compacted, archived, truncated, or deleted; retention is unbounded.
 - [ ] All three drift categories (Semantic, Identity, Evolutionary) escalate directly to Critical under HACA-Core — no Degraded intermediate state.
+- [ ] `IDENTITY_DRIFT` envelope produced by the SIL immediately upon detecting a structural file hash mismatch during the Heartbeat Vital Check; triggers Critical escalation.
 - [ ] Heartbeat Vital Check includes full entity health scan as defined in §10.3.
 - [ ] Reciprocal SIL Watchdog managed by FCP; EXEC and MIL check SIL heartbeat independently; unresponsive SIL writes `SIL_UNRESPONSIVE` to `state/operator_notifications/`, activates the Passive Distress Beacon, and halts FCP immediately.
 - [ ] Evolution Proposals immediately written to `state/operator_notifications/`; decision collected via `/endure approve <id>` mid-session or via terminal prompt at normal session close.
