@@ -529,6 +529,17 @@ def _handle_slash(ctx: BootContext, slash_input: str, ui: UI) -> None:
         _print_help(ctx, ui)
         return
 
+    parts = slash_input.strip().split(None, 1)
+    if parts[0] == "/verbose":
+        arg = (parts[1].lower() if len(parts) > 1 else "")
+        if arg == "off":
+            ui.set_verbose(False)
+        elif arg == "on":
+            ui.set_verbose(True)
+        else:
+            ui.set_verbose(not ui.verbose)  # toggle
+        return
+
     ui.info(f"→ dispatching {slash_input.split()[0]}")
     ctx.dispatcher.dispatch_slash(slash_input)
     # Results will arrive in io/inbox/ — drain and show immediately
@@ -550,6 +561,7 @@ def _handle_slash(ctx: BootContext, slash_input: str, ui: UI) -> None:
 
 def _print_help(ctx: BootContext, ui: UI) -> None:
     ui.help_start()
+    ui.help_item("/verbose [on|off]", "toggle verbose output (default: toggle)")
     for alias in sorted(ctx.skill_index.all_aliases()):
         sname = ctx.skill_index.resolve_alias(alias)
         entry = ctx.skill_index.get(sname or "")

@@ -115,6 +115,10 @@ class _StatusBar:
         self._active = True
         # Reserve last row: scrolling region = rows 1..(N-1).
         sys.stdout.write(f"\033[1;{self._rows - 1}r")
+        # Setting DECSTBM moves the cursor to home (1,1) on most terminals.
+        # Reposition to the bottom of the scroll area so subsequent prints
+        # appear at the bottom as expected.
+        sys.stdout.write(f"\033[{self._rows - 1};1H")
         sys.stdout.write("\033[s")
         self._draw(0, 0, 0)
         sys.stdout.write("\033[u")
@@ -128,6 +132,7 @@ class _StatusBar:
             if rows != self._rows:
                 self._rows = rows
                 sys.stdout.write(f"\033[1;{self._rows - 1}r")
+                sys.stdout.write(f"\033[{self._rows - 1};1H")
         except OSError:
             pass
         sys.stdout.write("\033[s")
@@ -184,6 +189,7 @@ class UI:
     def verbose_cycle(self, cycle: int, turns: int, tokens: int) -> None: ...
     def verbose_text(self, label: str, text: str) -> None: ...
     def refresh_status(self, cycle: int, tokens: int, budget: int) -> None: ...
+    def set_verbose(self, verbose: bool) -> None: ...
     def skill_ok(self, skill: str, output: str) -> None: ...
     def skill_err(self, skill: str, error: str) -> None: ...
     def help_start(self) -> None: ...
@@ -208,9 +214,10 @@ class PlainUI(UI):
     """Plain terminal UI: ANSI markdown rendering, no external dependencies."""
 
     def __init__(self, verbose: bool = False, model_label: str = "") -> None:
-        self.verbose      = verbose
-        self._model_label = model_label
+        self.verbose        = verbose
+        self._model_label   = model_label
         self._status: _StatusBar | None = None
+        self._last_status: tuple[int, int, int] = (0, 0, 0)
 
     def session_start(self, session_id: str) -> None:
         self._status = _StatusBar(session_id, self._model_label, self.verbose)
@@ -249,8 +256,17 @@ class PlainUI(UI):
             print(f"  {_DIM}[VRB] {label}:{_RST}\n{_DIM}{indented}{_RST}\n")
 
     def refresh_status(self, cycle: int, tokens: int, budget: int) -> None:
+        self._last_status = (cycle, tokens, budget)
         if self._status:
             self._status.update(cycle, tokens, budget)
+
+    def set_verbose(self, verbose: bool) -> None:
+        self.verbose = verbose
+        if self._status:
+            self._status._verbose = verbose
+            self._status.update(*self._last_status)
+        state = "on" if verbose else "off"
+        print(f"  {_DIM}verbose {state}{_RST}")
 
     def skill_ok(self, skill: str, output: str) -> None:
         print(f"\n  {_GRN}✓{_RST} {_BOLD}{skill}{_RST}  {output}\n")
