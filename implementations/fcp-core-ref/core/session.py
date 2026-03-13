@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -111,7 +112,9 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
 
     ui.session_start(session_id)
     run_hook(ctx.entity_root, "on_boot", session_id)
-    _setup_readline(ctx)
+
+    _BUILTIN_CMDS = ["/help", "/?", "/verbose", "/verbose on", "/verbose off"]
+    slash_cmds = _BUILTIN_CMDS + list(ctx.skill_index.all_aliases())
 
     while True:
         # ── Heartbeat Vital Check (simplified — no background thread in MVP) ──
@@ -129,7 +132,7 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
         # ── Get Operator input (if inbox is empty) ─────────────────────────
         if not inbox_envs:
             try:
-                line = input(ui.input_prompt())
+                line = _operator_input(ui.input_prompt(), slash_cmds)
             except KeyboardInterrupt:
                 print()
                 continue
@@ -523,32 +526,146 @@ def _log_cpe_text(root: Path, text: str, gseq: GseqCounter) -> None:
 # Readline tab completion (TTY only, best-effort)
 # ---------------------------------------------------------------------------
 
-def _setup_readline(ctx: BootContext) -> None:
-    """Register Tab completion for / commands.  No-op if readline unavailable."""
-    if not sys.stdin.isatty():
-        return
+# ---------------------------------------------------------------------------
+# Operator input — slash mode with floating list, readline for regular text
+# ---------------------------------------------------------------------------
+
+_RL_ESC_RE = re.compile(r"\x01[^\x02]*\x02")   # strip readline RL_IGNORE markers
+
+
+def _slash_input(plain_prompt: str, all_cmds: list[str]) -> str:
+    """Raw-mode slash command reader with inline floating completion list.
+
+    Called after '/' is already visible on screen.  Returns the full command
+    string (including the leading '/').
+    """
+    import termios
+    import tty
+
+    buf: list[str] = ["/"]
+
+    def _redraw() -> None:
+        text = "".join(buf)
+        matches = sorted(c for c in all_cmds if c.startswith(text))[:10]
+        hint = "  ".join(matches)
+        col = len(plain_prompt) + len(text) + 1   # 1-indexed terminal column
+        sys.stdout.write(
+            f"\r\033[2K{plain_prompt}{text}"       # redraw input line
+            f"\r\n\033[2K"                          # move to hint line + clear
+            + (f"  \033[2m{hint}\033[0m" if hint else "")
+            + f"\033[1A\033[{col}G"                # back to input line at cursor
+        )
+        sys.stdout.flush()
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
     try:
-        import readline  # stdlib; absent on some minimal Pythons
+        tty.setraw(fd)
+        _redraw()
+        while True:
+            ch = sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                # Clear hint line then submit.
+                sys.stdout.write("\r\n\033[2K\033[1A\r\n")
+                sys.stdout.flush()
+                return "".join(buf)
+            if ch in ("\x7f", "\x08"):          # Backspace
+                if len(buf) > 1:
+                    buf.pop()
+                    _redraw()
+            elif ch == "\x1b":                  # Escape / arrow key — consume
+                import select
+                while select.select([sys.stdin], [], [], 0.05)[0]:
+                    sys.stdin.read(1)
+            elif ch == "\x03":                  # Ctrl+C
+                sys.stdout.write("\r\n\033[2K\r\n")
+                sys.stdout.flush()
+                raise KeyboardInterrupt
+            elif ch == "\x04":                  # Ctrl+D
+                sys.stdout.write("\r\n\033[2K\r\n")
+                sys.stdout.flush()
+                raise EOFError
+            elif ch.isprintable():
+                buf.append(ch)
+                _redraw()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _operator_input(prompt_str: str, slash_cmds: list[str]) -> str:
+    """Read one operator line.
+
+    Peeks at the first character in raw mode:
+    - '/'       → _slash_input: floating completion list
+    - printable → pre-insert into readline; call input() normally
+    - '\\x1b'   → consume escape sequence; call input() fresh (arrow keys etc.)
+    - '\\r'/'\\n'→ empty line
+    - '\\x03'   → KeyboardInterrupt
+    - '\\x04'   → EOFError
+
+    Falls back to plain `input()` if termios is unavailable (Windows / pipe).
+    """
+    try:
+        import termios
+        import tty
     except ImportError:
-        return
+        return input(prompt_str)
 
-    _BUILTIN_CMDS = ["/help", "/?", "/verbose", "/verbose on", "/verbose off"]
-    all_cmds = _BUILTIN_CMDS + list(ctx.skill_index.all_aliases())
+    plain = _RL_ESC_RE.sub("", prompt_str)   # strip \x01…\x02 for display
 
-    # Keep '/' as part of the completion token so '/ski' → ['/skill_create', …]
-    readline.set_completer_delims(" \t\n")
-
-    def _completer(text: str, state: int) -> str | None:
-        if not readline.get_line_buffer().lstrip().startswith("/"):
-            return None
-        matches = [c for c in all_cmds if c.startswith(text)]
-        return matches[state] if state < len(matches) else None
-
-    readline.set_completer(_completer)
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
     try:
-        readline.parse_and_bind("tab: complete")
-    except Exception:
-        readline.parse_and_bind("bind ^I rl_complete")  # libedit (macOS)
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    if ch == "\x03":
+        raise KeyboardInterrupt
+    if ch in ("", "\x04"):
+        raise EOFError
+    if ch in ("\r", "\n"):
+        print()
+        return ""
+
+    if ch == "/":
+        sys.stdout.write(plain + "/")
+        sys.stdout.flush()
+        return _slash_input(plain, slash_cmds)
+
+    if ch == "\x1b":
+        # Consume the rest of the escape sequence (arrow key, Fn, etc.)
+        # then let readline handle the next input fresh.
+        try:
+            import select
+            import termios as _t
+            import tty as _tty
+            fd2 = sys.stdin.fileno()
+            old2 = _t.tcgetattr(fd2)
+            _tty.setraw(fd2)
+            while select.select([sys.stdin], [], [], 0.05)[0]:
+                sys.stdin.read(1)
+            _t.tcsetattr(fd2, _t.TCSADRAIN, old2)
+        except Exception:
+            pass
+        return input(prompt_str)
+
+    # Regular character: pre-insert via readline startup hook.
+    try:
+        import readline
+        readline.set_startup_hook(lambda: readline.insert_text(ch))
+        return input(prompt_str)
+    except ImportError:
+        sys.stdout.write(ch)
+        sys.stdout.flush()
+        return ch + sys.stdin.readline().rstrip("\n")
+    finally:
+        try:
+            import readline as _rl
+            _rl.set_startup_hook(None)
+        except ImportError:
+            pass
 
 
 # ---------------------------------------------------------------------------
