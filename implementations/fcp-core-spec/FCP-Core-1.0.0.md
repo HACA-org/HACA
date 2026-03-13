@@ -1254,7 +1254,18 @@ Platform commands are FCP-native operations that do not pass through the EXEC. M
 
 ```
 /help                        — display available commands and their status
-/status                      — show entity state, session counters, and last heartbeat
+/status                      — display the entity monitoring panel; five fixed sections:
+                               ENTITY (entity_id, active model, HACA profile version);
+                               SESSION (status active/inactive, cycle count, tool_use calls
+                               in current session, context budget as percentage of configured
+                               limit, elapsed time since session start);
+                               INTEGRITY (last integrity chain entry seq and type, last
+                               heartbeat result and elapsed time, pending notification count,
+                               pending Evolution Proposal count);
+                               HEALTH (consecutive crash count, last crash timestamp,
+                               consecutive skill failure count);
+                               WORKSPACE (active workspace_focus path, or unset if not
+                               configured); layout is implementation-defined
 /verbose [on|off]            — toggle verbose output; when on, FCP displays tool_use calls,
                                component dispatch details, and tool_results in the terminal;
                                session-scoped, not persisted; if omitted, displays current state
