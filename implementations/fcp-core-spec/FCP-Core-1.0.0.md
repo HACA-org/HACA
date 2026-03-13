@@ -228,7 +228,7 @@ The ACP (Atomic Chunked Protocol) envelope is the inter-component communication 
 | `CTX_SKIP` | FCP | Context entry dropped (absent Working Memory target or budget exhaustion) |
 | `CRITICAL_CLEARED` | SIL | Operator-acknowledged resolution of a Critical condition |
 | `DECOMMISSION` | FCP | Decommission instruction injected at session start |
-| `MEMORY_RESULT` | MIL | Result of a `memory_recall` action; `data` is a JSON object: `{"query": "...", "paths": ["memory/semantic/..."], "status": "found|not_found"}` |
+| `MEMORY_RESULT` | MIL | Result of a `memory_recall` action; `data` is a JSON object: `{"query": "...", "paths": ["memory/semantic/...", "memory/episodic/..."], "status": "found|not_found"}` |
 
 **The `io/` path.** The `io/inbox/` directory is used exclusively for asynchronous delivery — when a component cannot respond within the current cognitive cycle, or when an external stimulus arrives outside an active session. Components write to the flat `io/spool/` staging directory, using unique filenames, and rename atomically into `io/inbox/`. FCP drains the inbox at the start of each cycle. The synchronous cognitive chain — CPE output dispatched and resolved within a single cycle — does not pass through `io/`.
 
@@ -377,6 +377,10 @@ The Closure Payload is the structured output produced by the CPE in the last Cog
 {
   "type": "closure_payload",
   "consolidation": "...",
+  "promotion": [
+    "regras-de-react",
+    "preferencia-cores"
+  ],
   "working_memory": [
     {"priority": 10, "path": "memory/episodic/2026-01/session-1234.jsonl"},
     {"priority": 90, "path": "memory/session-handoff.json"}
@@ -392,6 +396,7 @@ The Closure Payload is the structured output produced by the CPE in the last Cog
 |---|---|---|
 | `type` | string | Must be `"closure_payload"` |
 | `consolidation` | string | Semantic summary of the session: insights, decisions, and knowledge worth carrying forward |
+| `promotion` | array | List of episodic memory slugs to be promoted to the semantic knowledge base. FCP queues these as an Evolution Proposal for Stage 3 processing |
 | `working_memory` | array | Ordered list of Memory Store artefact paths declared relevant to the next session; bounded by `working_memory.max_entries` |
 | `working_memory[].priority` | integer | Load priority — lower value means higher priority; must be a positive integer (minimum 1) |
 | `working_memory[].path` | string | Path relative to entity root; must resolve to an existing Memory Store artefact |
@@ -533,6 +538,8 @@ Each line in `state/drift-probes.jsonl` is a probe record. Probes are structural
 A probe with both `deterministic` and `reference` absent is malformed; the SIL appends a `DRIFT_FAULT` ACP envelope to `state/integrity.log` identifying the `probe_id` and the reason (`"malformed: both deterministic and reference absent"`), then skips the probe. No `DRIFT_FAULT` is sent to `io/inbox/` and no Critical condition is raised — the entry is informational.
 
 If the probe's `target` file is absent from the Memory Store, the SIL logs the absence to `state/integrity.log` and skips the probe without triggering a `DRIFT_FAULT`. Missing probe targets are an operational artefact, not a structural violation.
+
+**Implementation Note:** The SIL operates exclusively on absolute or relative physical paths in the Entity Store. Though the CPE references knowledge in `memory/semantic/` abstractly via topic slugs, the Operator must configure the probe's `target` to point to the exact structural artefact mapping to that slug within the active profile's MIL implementation (e.g., `memory/semantic/<slug>.md`).
 
 ### 3.12 Integrity Chain Entry
 
@@ -826,7 +833,7 @@ The CPE emits at most one tool_use call per tool per response. When multiple act
 `fcp_mil` — memory operations:
 ```json
 {"type": "memory_recall", "query": "..."}
-{"type": "memory_write", "content": "..."}
+{"type": "memory_write", "slug": "...", "content": "..."}
 ```
 
 `fcp_sil` — integrity and control signals:
@@ -863,7 +870,7 @@ The Sleep Cycle is the ordered shutdown protocol that executes at every clean se
 
 Between revocation and Stage 0, behavior differs by close type:
 
-- **Normal close** (CPE emitted `closure_payload` + `session_close`): FCP presents any pending Evolution Proposals to the Operator via terminal prompt and collects a decision on each.
+- **Normal close** (CPE emitted `closure_payload` + `session_close`): FCP intercepts the `promotion` array (if present and not empty) from the Closure Payload and queues it as a pending Evolution Proposal. FCP then presents any pending Evolution Proposals to the Operator via terminal prompt and collects a decision on each.
 - **Forced close** (Critical condition, context window limit, or `/endure approve <id>`): no proposal presentation occurs. Any undecided proposals are persisted as `PROPOSAL_PENDING` and presented at the next boot's Phase 6.
 
 **Operator input during the Sleep Cycle.** The session token carries `revoked_at` — the out-of-session routing rule applies: all Operator stimuli and slash commands directed to the skill registry are routed to `io/inbox/presession/`. FCP platform commands that do not require skill dispatch or session state are serviced immediately by the FCP process regardless of Sleep Cycle state.
@@ -914,7 +921,7 @@ The SIL processes all queued Evolution Proposals. For each proposal:
 
 1. Verify that a matching `EVOLUTION_AUTH` record exists in `state/integrity.log` — an explicit Operator approval whose content digest matches the proposal exactly.
 2. Create a pre-mutation snapshot: copy each file to be modified into `state/snapshots/<seq>/`, preserving the path relative to the entity root (e.g., `persona/identity.md` → `state/snapshots/12/persona/identity.md`), where `<seq>` is the sequence number of the chain entry about to be written. The snapshot directory is deleted by the SIL after `SLEEP_COMPLETE` is written successfully.
-3. Apply the structural write atomically: write to a `.tmp` sibling, then `rename(2)` into place.
+3. Apply the structural write atomically: write to a `.tmp` sibling, then `rename(2)` into place. For memory promotion proposals, the SIL triggers the MIL to integrate the authorized slugs from `memory/episodic/` into the `memory/semantic/` graph.
 4. Recompute SHA-256 hashes for all modified tracked files.
 5. Update `state/integrity.json` atomically. If the number of Endure commits since the last checkpoint has reached `integrity_chain.checkpoint_interval`, include the updated `last_checkpoint` field in this same write.
 6. Append the commit entry to `state/integrity_chain.jsonl`. If step 5 updated `last_checkpoint`, this entry is a checkpoint entry — the Integrity Document is the verifiable anchor; the chain entry carries the full chain data.
@@ -951,13 +958,13 @@ The Memory Store is the entity's consolidated long-term knowledge base. It persi
 
 The Memory Store comprises:
 
-- `memory/episodic/` — archived session fragments, organized by date. Written by the SIL during Stage 2 rotation (via rename of `memory/session.jsonl`).
-- `memory/semantic/` — semantic graph: concept nodes and links representing structured knowledge accumulated across sessions. Written by the MIL as directed by CPE `memory_write` actions.
+- `memory/episodic/` — episodic memories recorded during the session. Written by the MIL as directed by CPE `memory_write` actions, which provide a `slug` to identify the topic. The SIL also archives session fragments here during Stage 2 rotation (via rename of `memory/session.jsonl`).
+- `memory/semantic/` — semantic knowledge base structured around topic slugs. The CPE queries it opaquely via `memory_recall`. It is written by the MIL exclusively during Sleep Cycle Stage 3 execution of an authorized memory promotion proposal.
 - `memory/imprint.json` — the Imprint Record. Written once at FAP by the MIL; never modified thereafter.
 - `memory/working-memory.json` — the Working Memory pointer map. Written by the MIL at Stage 1 of each Sleep Cycle.
 - `memory/session-handoff.json` — the Session Handoff record. Written by the MIL at Stage 1, replacing the previous record.
 
-`memory/active_context/` is the boot-time view into the Memory Store — a directory of symlinks seeded from `working-memory.json` at Phase 5, extended dynamically during the session via `memory_recall` actions. When the MIL processes a `memory_recall`, it creates a symlink in `memory/active_context/` named after the basename of the recalled path (e.g., `memory/active_context/arch.md` → `memory/semantic/arch.md`); an existing symlink of the same name is replaced. The MIL then writes a `MEMORY_RESULT` envelope to `io/inbox/` with the recalled paths and status. Symlinks are validated at boot; stale entries are removed at Stage 2.
+`memory/active_context/` is the boot-time view into the Memory Store — a directory of symlinks seeded from `working-memory.json` at Phase 5, extended dynamically during the session via `memory_recall` actions. When the MIL processes a `memory_recall`, it creates a symlink in `memory/active_context/` named after the basename of the recalled path (e.g., `memory/active_context/arch.md` → `memory/semantic/arch.md` or `memory/active_context/note.md` → `memory/episodic/2026-03/note.md`); an existing symlink of the same name is replaced. The MIL then writes a `MEMORY_RESULT` envelope to `io/inbox/` with the recalled paths and status. Symlinks are validated at boot; stale entries are removed at Stage 2.
 
 ### 8.3 Pre-Session Buffer
 
@@ -1411,7 +1418,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] SIL revokes session token before Stage 0 begins.
 - [ ] Stages execute sequentially; no two stages run concurrently.
 - [ ] Semantic Drift probes run deterministic layer first; probabilistic layer (NCD Worker Skill) only when deterministic produces no conclusive result.
-- [ ] FCP writes the Closure Payload atomically to `state/pending-closure.json` before the Sleep Cycle begins. Stage 1 reads and deletes the file. On normal close: all three fields (`consolidation`, `working_memory`, `session_handoff`) must be present and valid. On forced close: `state/pending-closure.json` is absent and Stage 1 is a no-op; the Sleep Cycle proceeds to Stage 2.
+- [ ] FCP writes the Closure Payload atomically to `state/pending-closure.json` before the Sleep Cycle begins. Stage 1 reads and deletes the file. On normal close: all four fields (`consolidation`, `promotion`, `working_memory`, `session_handoff`) must be present and valid. On forced close: `state/pending-closure.json` is absent and Stage 1 is a no-op; the Sleep Cycle proceeds to Stage 2.
 - [ ] `memory/session-handoff.json` always included in `working_memory` declaration.
 - [ ] Session Store rotated at Stage 2 if exceeding `session_store.rotation_threshold_bytes`; rotation renames `memory/session.jsonl` to `memory/episodic/` and creates a new empty `memory/session.jsonl`.
 - [ ] Each Evolution Proposal executed at Stage 3 only with a matching `EVOLUTION_AUTH` record.
