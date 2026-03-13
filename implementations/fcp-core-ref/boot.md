@@ -139,7 +139,8 @@ To add a new capability:
 
 1. Invoke `skill_create` with `skill_name`, `manifest` (JSON), `narrative` (markdown),
    and optionally `script` (bash content for execute.sh) and `hooks` (see below).
-2. Submit ONE `evolution_proposal` describing the new skill and its purpose.
+2. Submit ONE `evolution_proposal` with `target_file` set to `"stage/<skill_name>"`
+   and `content` set to the manifest JSON (same JSON passed to `skill_create`).
 
 Endure installs the cartridge atomically, rebuilds the skill index, and cleans
 `stage/` automatically.
@@ -185,14 +186,19 @@ Built-in skills appear in [SKILLS INDEX]. Extended usage notes below.
 
 ### skill_create — stage a new skill cartridge
 
-Stages files in `stage/<skill_name>/`. Submit one `evolution_proposal` afterwards
-(Endure installs and rebuilds the index automatically).
+Stages files in `stage/<skill_name>/`. Then submit an `evolution_proposal` with
+`target_file` and `content` (manifest JSON) so Endure can install and rebuild
+the index automatically.
 
     fcp-exec → {"type": "skill_request", "skill": "skill_create",
                  "params": {"skill_name": "name", "manifest": "<json>",
                              "narrative": "<markdown>",
                              "script": "<bash>",     ← optional
                              "hooks": "<json>"}}      ← optional
+
+    fcp-sil → {"type": "evolution_proposal",
+                "target_file": "stage/<skill_name>",
+                "content": "<manifest JSON>"}
 
 ### file_reader — read a workspace file
 
