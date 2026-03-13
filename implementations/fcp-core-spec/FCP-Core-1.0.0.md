@@ -1269,11 +1269,19 @@ Platform commands are FCP-native operations that do not pass through the EXEC. M
 /verbose [on|off]            — toggle verbose output; when on, FCP displays tool_use calls,
                                component dispatch details, and tool_results in the terminal;
                                session-scoped, not persisted; if omitted, displays current state
-/doctor [--fix]              — run entity health diagnostics; --fix attempts correctable repairs:
-                               recreates absent volatile state directories, clears temp spool
-                               files in io/spool/, rebuilds active_context/ symlinks from
-                               memory/working-memory.json, and resets the consecutive crash
-                               counter if the current boot passed Phase 2 cleanly
+/doctor [--fix]              — run entity health diagnostics; checks: presence of required
+                               volatile directories (io/inbox/, io/spool/,
+                               state/operator_notifications/, workspace/stage/), stale files
+                               in io/spool/, session token state (stale token indicates
+                               unreported crash), consecutive crash and skill failure counters,
+                               and skill index consistency (all indexed skills have manifest
+                               and executable present); --fix attempts correctable repairs:
+                               recreates absent volatile directories, clears stale spool files
+                               from io/spool/, resets consecutive crash counter if the current
+                               boot passed Phase 2 cleanly, resets consecutive skill failure
+                               counter if no failures are active; items that cannot be
+                               auto-repaired (structural integrity violations, stale session
+                               token) are reported with the required resolution action
 /model list                  — list available CPE inference endpoints and display the active one
 /model <name>                — switch the active CPE inference endpoint; Operator-exclusive;
                                updates cpe.backend in state/baseline.json, records a MODEL_CHANGE
