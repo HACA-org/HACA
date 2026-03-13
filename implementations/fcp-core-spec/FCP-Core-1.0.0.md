@@ -371,7 +371,7 @@ Entries are sorted ascending by `priority` — lower value means higher priority
 
 ### 3.7 Closure Payload
 
-The Closure Payload is the structured output produced by the CPE in the last Cognitive Cycle of a session. It is emitted as an `fcp-mil` block and must conform to the following schema:
+The Closure Payload is the structured output produced by the CPE in the last Cognitive Cycle of a session. It is emitted as an `fcp_mil` tool_use call and must conform to the following schema:
 
 ```json
 {
@@ -772,16 +772,16 @@ A session begins when the SIL issues the session token and ends when FCP receive
 drain io/inbox/
   → consolidate to session.jsonl
   → assemble context
-  → invoke CPE
-  → parse component blocks
+  → invoke CPE (with tool declarations)
+  → process tool_use calls
   → dispatch to target components
-  → collect result
+  → return tool_results
   → next cycle
 ```
 
 Each iteration of this loop is one Cognitive Cycle. The loop continues until a session-close signal is received.
 
-A normal session close has a strict invariant: the final CPE response must contain a `fcp-mil` block with a `closure_payload` action and a `fcp-sil` block with a `session_close` action. The ordering is structurally guaranteed — `fcp-mil` blocks are always processed before `fcp-sil` blocks, so the Closure Payload is always staged to `state/pending-closure.json` before the session-close signal is acted upon. If a session ends without this pair — whether due to process termination, signal interruption, or any other cause — the session is treated as a crash. The presence of a stale session token at the next boot is the crash indicator. The absence of this pair as the last CPE response in `memory/session.jsonl` is additional diagnostic context — it confirms the session did not close normally and helps determine how far the previous session progressed before termination.
+A normal session close has a strict invariant: the final CPE response must contain a `fcp_mil` tool_use call with a `closure_payload` action and a `fcp_sil` tool_use call with a `session_close` action. The ordering is structurally guaranteed — `fcp_mil` tool_use calls are always processed before `fcp_sil` tool_use calls, so the Closure Payload is always staged to `state/pending-closure.json` before the session-close signal is acted upon. If a session ends without this pair — whether due to process termination, signal interruption, or any other cause — the session is treated as a crash. The presence of a stale session token at the next boot is the crash indicator. The absence of this pair as the last CPE response in `memory/session.jsonl` is additional diagnostic context — it confirms the session did not close normally and helps determine how far the previous session progressed before termination.
 
 ### 6.1 Context Assembly
 
@@ -789,51 +789,28 @@ At the start of each Cognitive Cycle, FCP drains `io/inbox/` — reading all `.m
 
 FCP then assembles the CPE input context. The assembly order follows the Boot Manifest defined in §5.1, with `[SESSION]` updated to include the newly consolidated envelopes. The context budget is re-evaluated at every cycle; if it has reached the critical threshold declared in `state/baseline.json`, FCP emits a `SESSION_CLOSE` signal before invoking the CPE.
 
+FCP declares one tool per component (`fcp_exec`, `fcp_mil`, `fcp_sil`) to the API as part of every CPE invocation. The tool definitions expose the action types documented in §6.2; the CPE uses them to express intent.
+
 ### 6.2 Action Dispatch
 
-A Cognitive Cycle ends when the CPE emits one or more component blocks. What follows — skill execution, memory writes, integrity signals — is handled independently by each responsible component. The cycle does not wait for results; results arrive as stimuli in the next cycle via `io/inbox/`.
+A Cognitive Cycle ends when the CPE emits one or more tool_use calls. What follows — skill execution, memory writes, integrity signals — is handled independently by each responsible component. The cycle does not wait for results; results arrive as stimuli in the next cycle via `io/inbox/`.
 
-A component block is a fenced code block whose tag names the target component. Each block's JSON payload is either a single action object or an array of action objects addressed to that component. A response may contain at most one block per component.
-
-````
-```fcp-exec
-{"type": "skill_request", "skill": "<name>", "params": {...}}
-```
-```fcp-mil
-{"type": "memory_write", "content": "..."}
-```
-```fcp-sil
-{"type": "session_close"}
-```
-````
-
-When multiple actions must be sent to the same component in a single cycle, the block's payload is a JSON array:
-
-````
-```fcp-mil
-[
-  {"type": "memory_write", "content": "first entry"},
-  {"type": "memory_write", "content": "second entry"}
-]
-```
-````
-
-FCP rejects a response containing more than one block of the same component type, or a malformed payload. Rejected responses are logged to `session.jsonl` and surfaced to the Operator. FCP does not re-invoke the CPE automatically — the session waits for the next Operator input stimulus.
+The CPE emits at most one tool_use call per tool per response. When multiple actions must be sent to the same component, the tool's input is a JSON array of action objects. FCP rejects a response containing more than one tool_use call for the same tool, or a malformed input. Rejected responses are logged to `session.jsonl` and surfaced to the Operator. FCP does not re-invoke the CPE automatically — the session waits for the next Operator input stimulus.
 
 **Actions by component:**
 
-`fcp-exec` — skill invocation:
+`fcp_exec` — skill invocation:
 ```json
 {"type": "skill_request", "skill": "<name>", "params": {...}}
 ```
 
-`fcp-mil` — memory operations:
+`fcp_mil` — memory operations:
 ```json
 {"type": "memory_recall", "query": "..."}
 {"type": "memory_write", "content": "..."}
 ```
 
-`fcp-sil` — integrity and control signals:
+`fcp_sil` — integrity and control signals:
 ```json
 {"type": "evolution_proposal", "content": "..."}
 {"type": "session_close"}
@@ -841,13 +818,15 @@ FCP rejects a response containing more than one block of the same component type
 
 The `evolution_proposal.content` field is a free-form narrative string describing the proposed change. The SIL computes a SHA-256 digest of the content to produce the `EVOLUTION_AUTH` integrity chain entry — the digest commits the proposal to the chain without storing the full text inline.
 
-Each component writes its result to `io/inbox/` as an ACP envelope. FCP drains the inbox at the start of the next cycle, consolidates into `session.jsonl`, and the results become stimuli for the next invocation of the CPE.
+**Tool results:** FCP returns a tool_result for each tool_use call before the model produces its final text response. For `fcp_exec` and `fcp_sil`, the tool_result is an acknowledgement — the action has been dispatched and any result will arrive in the next cycle's assembled context. For `fcp_mil` with `memory_recall`, the tool_result carries the recalled content synchronously; the CPE receives the memory contents before emitting its final text response for the cycle.
 
-The `closure_payload` action (§3.7) is an exception to this model: it is not dispatched to a component for synchronous execution, and no result is returned to `io/inbox/`. Instead, FCP writes it atomically to `state/pending-closure.json` before the Sleep Cycle begins. This ensures the Closure Payload survives a crash between session close and Stage 1 processing.
+Each component writes its asynchronous results to `io/inbox/` as an ACP envelope. FCP drains the inbox at the start of the next cycle, consolidates into `session.jsonl`, and the results become stimuli for the next invocation of the CPE.
+
+The `closure_payload` action (§3.7) is an exception to this model: it is not dispatched to a component, and its tool_result is an immediate acknowledgement. FCP writes it atomically to `state/pending-closure.json` before the Sleep Cycle begins. This ensures the Closure Payload survives a crash between session close and Stage 1 processing.
 
 ### 6.3 Cycle Chain
 
-A Cognitive Cycle is the atomic unit of cognition: stimulus received → context loaded → intent generated → intent dispatched. The cycle is complete when the CPE response is processed and component blocks are dispatched. What follows is the consequence of the dispatched intent, handled by the responsible components independently.
+A Cognitive Cycle is the atomic unit of cognition: stimulus received → context loaded → intent generated → intent dispatched. The cycle is complete when the CPE response is processed, tool_use calls are dispatched to their components, and tool_results returned. What follows is the consequence of the dispatched intent, handled by the responsible components independently.
 
 Composite operations are expressed as chains of consecutive cycles. Results from the previous cycle arrive in `io/inbox/`, are consolidated into `session.jsonl` at the start of the next cycle, and become part of the assembled context. The CPE reasons over accumulated stimuli and emits the next intent. There is no synchronous result-passing between cycles — all inter-cycle communication flows through the inbox.
 
@@ -1241,7 +1220,7 @@ fcp <entity-root> decommission --destroy
 
 ### 12.2 Interactive Loop
 
-During an active session, the Operator types input at the terminal. FCP injects the input as a `MSG` ACP envelope into `io/inbox/`, which is consolidated into `session.jsonl` at the start of the next Cognitive Cycle. The CPE processes it and emits component blocks; FCP dispatches them and displays the CPE's narrative response to the Operator.
+During an active session, the Operator types input at the terminal. FCP injects the input as a `MSG` ACP envelope into `io/inbox/`, which is consolidated into `session.jsonl` at the start of the next Cognitive Cycle. The CPE processes it and emits tool_use calls; FCP dispatches them, returns tool_results, and displays the CPE's narrative response to the Operator.
 
 The loop continues until the Operator closes the session, the CPE emits a `session_close` action, or the SIL triggers a session close (context window critical threshold reached or Critical condition detected).
 
@@ -1373,8 +1352,8 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 
 **Cognitive Session**
 - [ ] `io/inbox/` drained and consolidated into `session.jsonl` at the start of each Cognitive Cycle.
-- [ ] CPE output uses component blocks (`fcp-exec`, `fcp-mil`, `fcp-sil`); at most one block per component per response; duplicate component blocks or malformed payloads are rejected and logged.
-- [ ] Each component block payload is a single action object or an array of action objects; all actions in a block are addressed to that block's component.
+- [ ] CPE output uses tool_use calls (`fcp_exec`, `fcp_mil`, `fcp_sil`); at most one tool_use call per tool per response; duplicate tool_use calls for the same tool or malformed inputs are rejected and logged.
+- [ ] Each tool_use input is a single action object or an array of action objects; all actions in a tool_use call are addressed to that tool's component.
 - [ ] All inter-cycle communication flows through `io/inbox/`; no synchronous result-passing between cycles.
 
 **Sleep Cycle**
