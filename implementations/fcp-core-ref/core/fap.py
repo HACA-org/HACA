@@ -480,7 +480,7 @@ Multiple actions to the same component use a JSON array:
     fcp-mil → {"type": "memory_write",      "content": "text"}
     fcp-mil → {"type": "memory_recall",      "query": "term"}
     fcp-exec → {"type": "skill_request",     "skill": "name", "params": {}}
-                  skill: user-installed skills (see [SKILLS INDEX]) or built-ins (see PART 6)
+                  all available skills listed in [SKILLS INDEX]
     fcp-exec → {"type": "skill_info",         "skill": "name"}
     fcp-sil → {"type": "evolution_proposal", "content": "narrative description"}
 
@@ -521,9 +521,9 @@ post_endure: +FCP_ENDURE_COMMITS.
 
 ---
 
-## PART 6 — Built-in skills
+## PART 6 — Built-in skills (usage notes)
 
-Always available. Not listed in [SKILLS INDEX].
+All built-in skills appear in [SKILLS INDEX]. Extended params below.
 
 skill_create  — stage a new skill cartridge
   params: skill_name, manifest (JSON string), narrative (markdown),

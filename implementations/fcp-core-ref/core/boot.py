@@ -227,11 +227,11 @@ def run_boot(entity_root: str | Path) -> BootContext:
     if boot_md.exists():
         ctx_parts.append(f"[BOOT PROTOCOL]\n{boot_md.read_text(encoding='utf-8')}")
 
-    # [SKILLS INDEX] — non-builtin skills only; built-ins excluded from CPE context (§9.5)
+    # [SKILLS INDEX] — all skills except operator_only (§9.5)
     skills_index_path = root / "skills" / "index.json"
     if skills_index_path.exists():
         index_data = json.loads(skills_index_path.read_text(encoding="utf-8"))
-        visible = [s for s in index_data.get("skills", []) if not s.get("builtin")]
+        visible = [s for s in index_data.get("skills", []) if not s.get("operator_only")]
         if visible:
             filtered_index = {"version": index_data.get("version", "1.0"), "skills": visible}
             ctx_parts.append(f"[SKILLS INDEX]\n{json.dumps(filtered_index, indent=2)}")

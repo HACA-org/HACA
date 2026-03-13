@@ -71,10 +71,7 @@ Retrieve previously saved notes or knowledge by keyword or phrase.
 
 ### skill_request — run a skill
 
-Invoke a skill by name. Skills available to you are:
-- User-installed skills listed in [SKILLS INDEX].
-- Built-in skills documented in PART 6 below.
-
+Invoke a skill by name. All available skills are listed in [SKILLS INDEX].
 Do not invent skill names.
 
     fcp-exec → {"type": "skill_request", "skill": "skill_name", "params": {}}
@@ -182,9 +179,9 @@ in lexicographic order by filename.
 
 ---
 
-## PART 6 — Built-in skills
+## PART 6 — Built-in skills (usage notes)
 
-Built-in skills are always available. They do not appear in [SKILLS INDEX].
+Built-in skills appear in [SKILLS INDEX]. Extended usage notes below.
 
 ### skill_create — stage a new skill cartridge
 

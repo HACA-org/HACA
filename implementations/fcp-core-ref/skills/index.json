@@ -77,6 +77,7 @@
       "params": {},
       "timeout_seconds": 30,
       "irreversible": false,
+      "operator_only": true,
       "_executable": "",
       "_has_narrative": true,
       "builtin": true
