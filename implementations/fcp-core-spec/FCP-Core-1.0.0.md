@@ -1134,7 +1134,7 @@ The Operator Channel is not a component — it is a pair of platform primitives 
 
 **Terminal prompt** — synchronous interaction. Used when a response is required before the platform can proceed: FAP enrollment, Evolution Proposal approval at session close, explicit Operator acknowledgement of a Critical condition. FCP opens the prompt, presents the content, and waits for the Operator's input. The response is returned to the requesting component.
 
-**`state/operator_notifications/`** — asynchronous delivery. Used for notifications that do not require an immediate response: SIL escalations, `DRIFT_FAULT` reports, `SIL_UNRESPONSIVE` alerts, schedule anomalies. Components write notification files directly to this directory, each named with a UTC timestamp and a severity label. The Operator reads them at their own pace.
+**`state/operator_notifications/`** — asynchronous delivery. Used for notifications that do not require an immediate response: SIL escalations, `DRIFT_FAULT` reports, `SIL_UNRESPONSIVE` alerts, schedule anomalies. Components write notification files directly to this directory, each named in the format `<utc-timestamp>.<severity>.json` — where `<utc-timestamp>` is an ISO 8601 UTC timestamp with colons replaced by hyphens (e.g. `2026-03-12T14-00-00Z`) and `<severity>` is one of `critical`, `warning`, or `info`. The Operator reads them at their own pace.
 
 The `state/operator_notifications/` directory is declared in `state/baseline.json` and verified at every boot (Phase 0). If it is absent or not writable, no session token is issued. The terminal prompt is a platform primitive — always available when FCP is running.
 
@@ -1219,16 +1219,27 @@ FCP recognizes any terminal input beginning with `/` as a slash command. Two cat
 
 #### 12.3.1 Platform Commands
 
-Platform commands are FCP-native operations that do not pass through the EXEC. Most are available at any time — including outside an active session and during the Sleep Cycle. Exceptions are noted per command.
+Platform commands are FCP-native operations that do not pass through the EXEC. Most are available at any time — including outside an active session and during the Sleep Cycle. Commands annotated *(requires active session)* are unavailable outside a live session and during the Sleep Cycle.
 
 ```
 /help                        — display available commands and their status
 /status                      — show entity state, session counters, and last heartbeat
-/doctor [--fix]              — run entity health diagnostics; --fix attempts correctable repairs
+/doctor [--fix]              — run entity health diagnostics; --fix attempts correctable repairs:
+                               recreates absent volatile state directories, clears temp spool
+                               files in io/spool/, rebuilds active_context/ symlinks from
+                               memory/working-memory.json, and resets the consecutive crash
+                               counter if the current boot passed Phase 2 cleanly
 /models                      — list available CPE inference endpoints
-/exit | /bye | /close        — close the active session (normal close)
-/new | /clear | /reset       — start a new cognitive session
-/compact                     — compact the current session context
+/exit | /bye | /close        — requires active session; triggers normal close (CPE emits
+                               closure_payload + session_close)
+/new | /clear | /reset       — requires active session; triggers a forced close (session token
+                               revoked immediately, Sleep Cycle executes, Stage 1 no-op); FCP
+                               starts a new boot sequence immediately after SLEEP_COMPLETE
+/compact                     — requires active session; triggers MIL summarization (§8.1) on
+                               demand — session.jsonl is condensed to its last 50%, then FCP
+                               immediately re-assembles the CPE input context from the condensed
+                               record and invokes the CPE; the session does not close and the
+                               operation is transparent to the Operator
 /skill list                  — list all skills in the Skill Index
 /skill add <name> [params]   — requires active session; FCP injects a structured task into
                                the cognitive pipeline; CPE uses skill_create to stage the
@@ -1237,7 +1248,7 @@ Platform commands are FCP-native operations that do not pass through the EXEC. M
                                via /endure approve <id> or at session close
 /skill remove <name>         — remove a skill from the Skill Index (Operator-exclusive;
                                triggers Endure)
-/skill audit [--fix] <name>  — invoke skill_audit against the named skill
+/skill audit <name>          — invoke skill_audit against the named skill
 /endure list                 — list pending Evolution Proposals
 /endure approve <id>         — approve a pending proposal (Operator-exclusive; triggers forced close)
 /endure reject <id>          — reject a pending proposal (Operator-exclusive)
