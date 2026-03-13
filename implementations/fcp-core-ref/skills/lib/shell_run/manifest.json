@@ -7,5 +7,12 @@
     "command": "string"
   },
   "timeout_seconds": 30,
-  "irreversible":    true
+  "irreversible":    true,
+  "allowlist": [
+    "cat", "head", "tail", "wc", "sort", "uniq", "diff", "echo", "pwd",
+    "ls", "find", "grep", "du",
+    "git",
+    "python3", "python", "node", "npm", "npx",
+    "make", "cargo", "go"
+  ]
 }

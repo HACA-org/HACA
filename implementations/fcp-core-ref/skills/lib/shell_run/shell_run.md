@@ -33,7 +33,9 @@ Execute a shell command in the active `workspace_focus` project directory.
 
 ## Notes
 
-- Marked `irreversible: true` — commands like `rm` or `mv` are possible.
-  Logged in the Action Ledger for crash recovery.
-- No command allowlist — scope is limited by CWD (workspace_focus only).
+- Only the base command (first token) is validated against the `allowlist` in
+  `manifest.json`. Flags and arguments are passed through unchecked.
+- To expand the allowlist, submit an `evolution_proposal` targeting
+  `skills/lib/shell_run/manifest.json` with an updated `"allowlist"` array.
+- Marked `irreversible: true` — logged in the Action Ledger for crash recovery.
 - Timeout: 30 seconds. Long-running commands will be killed.
