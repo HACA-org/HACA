@@ -71,8 +71,11 @@ Retrieve previously saved notes or knowledge by keyword or phrase.
 
 ### skill_request — run a skill
 
-Invoke a skill. The skill name MUST appear in [SKILLS INDEX].
-Do not invent skill names. Do not request skills not listed.
+Invoke a skill by name. Skills available to you are:
+- User-installed skills listed in [SKILLS INDEX].
+- Built-in skills documented in PART 6 below.
+
+Do not invent skill names.
 
     fcp-exec → {"type": "skill_request", "skill": "skill_name", "params": {}}
 
@@ -179,7 +182,64 @@ in lexicographic order by filename.
 
 ---
 
-## PART 6 — Constraints
+## PART 6 — Built-in skills
+
+Built-in skills are always available. They do not appear in [SKILLS INDEX].
+
+### skill_create — stage a new skill cartridge
+
+Stages files in `stage/<skill_name>/`. Submit one `evolution_proposal` afterwards
+(Endure installs and rebuilds the index automatically).
+
+    fcp-exec → {"type": "skill_request", "skill": "skill_create",
+                 "params": {"skill_name": "name", "manifest": "<json>",
+                             "narrative": "<markdown>",
+                             "script": "<bash>",     ← optional
+                             "hooks": "<json>"}}      ← optional
+
+### file_reader — read a workspace file
+
+Reads a file from `workspace/`. Rejects paths outside `workspace/`.
+
+    fcp-exec → {"type": "skill_request", "skill": "file_reader",
+                 "params": {"path": "relative/path/in/workspace"}}
+
+### file_writer — write a workspace file
+
+Writes content to a file in `workspace/`. Creates parent dirs. Rejects paths outside `workspace/`.
+
+    fcp-exec → {"type": "skill_request", "skill": "file_writer",
+                 "params": {"path": "relative/path/in/workspace",
+                             "content": "text to write"}}
+
+### skill_audit — validate a skill
+
+Validates a skill's manifest, executable, and index consistency. Read-only.
+
+    fcp-exec → {"type": "skill_request", "skill": "skill_audit",
+                 "params": {"skill": "skill_name"}}
+
+### commit — commit changes in the active workspace project
+
+Stages and commits a path within the active `workspace_focus` project.
+Requires `state/workspace_focus.json` to be set. Pass a non-empty `remote`
+to also push to origin.
+
+    fcp-exec → {"type": "skill_request", "skill": "commit",
+                 "params": {"path": "relative/path/in/project",
+                             "message": "commit message",
+                             "remote": ""}}            ← set non-empty to push
+
+### worker_skill — run an isolated sub-agent
+
+*(Fase 2 — not yet executable. Invoking returns an error.)*
+
+    fcp-exec → {"type": "skill_request", "skill": "worker_skill",
+                 "params": {"persona": "...", "context": "...", "task": "..."}}
+
+---
+
+## PART 7 — Constraints
 
 - Do not take actions without an explicit Operator instruction.
 - Do not claim to be sentient, conscious, or to have feelings.
