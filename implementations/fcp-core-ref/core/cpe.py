@@ -259,13 +259,49 @@ def _openai_build(
         body["tools"] = _fcp_tools_to_openai(tools)
     return body
 
+def _ollama_normalize_messages(messages: list[dict]) -> list[dict]:
+    """Normalize chat history for Ollama native API.
+
+    Ollama requires content to be a string.  When the session loop appends
+    an assistant message with array raw_content (containing text + tool_use
+    blocks), this converts it back to Ollama's native format:
+      {"role": "assistant", "content": "<text>", "tool_calls": [{...}]}
+    """
+    result = []
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            result.append(msg)
+            continue
+        text_parts: list[str] = []
+        tool_calls: list[dict] = []
+        for block in content:
+            if block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+            elif block.get("type") == "tool_use":
+                tool_calls.append({
+                    "function": {
+                        "name":      block["name"],
+                        "arguments": block.get("input", {}),
+                    }
+                })
+        normalized: dict[str, Any] = dict(msg)
+        normalized["content"] = "".join(text_parts)
+        if tool_calls:
+            normalized["tool_calls"] = tool_calls
+        result.append(normalized)
+    return result
+
 def _ollama_build(
     model: str,
     messages: list[dict],
     system: str,
     tools: list[dict] | None = None,
 ) -> dict:
-    msgs = ([{"role": "system", "content": system}] if system else []) + messages
+    msgs = (
+        ([{"role": "system", "content": system}] if system else [])
+        + _ollama_normalize_messages(messages)
+    )
     body: dict[str, Any] = {"model": model, "messages": msgs, "stream": False, "num_ctx": 32768}
     if tools:
         body["tools"] = _fcp_tools_to_openai(tools)
