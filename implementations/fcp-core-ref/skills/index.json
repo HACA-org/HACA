@@ -10,9 +10,80 @@
       "permissions": [],
       "params": {},
       "timeout_seconds": 10,
+      "irreversible": false
+    },
+    {
+      "name": "commit",
+      "description": "Stage and commit changes in the active workspace_focus project.",
+      "aliases": [
+        "/commit"
+      ],
+      "permissions": [
+        "workspace.write"
+      ],
+      "params": {
+        "path": "string",
+        "message": "string",
+        "remote": "string"
+      },
+      "timeout_seconds": 60,
+      "irreversible": true,
+      "builtin": true
+    },
+    {
+      "name": "file_reader",
+      "description": "Read a file within workspace/.",
+      "aliases": [],
+      "permissions": [
+        "workspace.read"
+      ],
+      "params": {
+        "path": "string"
+      },
+      "timeout_seconds": 30,
       "irreversible": false,
-      "_executable": "skills/hello_world/execute.sh",
-      "_has_narrative": true
+      "builtin": true
+    },
+    {
+      "name": "file_writer",
+      "description": "Write a file within workspace/.",
+      "aliases": [],
+      "permissions": [
+        "workspace.write"
+      ],
+      "params": {
+        "path": "string",
+        "content": "string"
+      },
+      "timeout_seconds": 30,
+      "irreversible": false,
+      "builtin": true
+    },
+    {
+      "name": "owner_bind",
+      "description": "FAP operator binding (cold-start only).",
+      "aliases": [],
+      "permissions": [
+        "memory.write"
+      ],
+      "params": {},
+      "timeout_seconds": 30,
+      "irreversible": false,
+      "builtin": true
+    },
+    {
+      "name": "skill_audit",
+      "description": "Validate a skill's manifest, executable, and index consistency; read-only.",
+      "aliases": [
+        "/skill-audit"
+      ],
+      "permissions": [],
+      "params": {
+        "skill": "string"
+      },
+      "timeout_seconds": 30,
+      "irreversible": false,
+      "builtin": true
     },
     {
       "name": "skill_create",
@@ -28,8 +99,21 @@
       },
       "timeout_seconds": 30,
       "irreversible": false,
-      "_executable": "skills/skill_create/execute.sh",
-      "_has_narrative": true
+      "builtin": true
+    },
+    {
+      "name": "worker_skill",
+      "description": "Instantiate an isolated sub-agent with a given persona, context, and task.",
+      "aliases": [],
+      "permissions": [],
+      "params": {
+        "persona": "string",
+        "context": "string",
+        "task": "string"
+      },
+      "timeout_seconds": 300,
+      "irreversible": false,
+      "builtin": true
     }
   ]
 }

@@ -1,0 +1,11 @@
+{
+  "name": "file_reader",
+  "description": "Read a file within workspace/.",
+  "aliases": [],
+  "permissions": ["workspace.read"],
+  "params": {
+    "path": "string"
+  },
+  "timeout_seconds": 30,
+  "irreversible": false
+}

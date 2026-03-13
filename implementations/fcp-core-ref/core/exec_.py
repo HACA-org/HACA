@@ -104,7 +104,12 @@ def load_skill_index(entity_root: str | Path) -> SkillIndex:
 
 
 def build_skill_index(entity_root: str | Path) -> dict[str, Any]:
-    """Scan ``skills/`` and produce the skills/index.json content.
+    """Scan ``skills/`` and ``skills/lib/`` and produce the skills/index.json content.
+
+    Regular skills (``skills/<name>/``) are user-installed cartridges visible in
+    the CPE context block.  Built-in skills (``skills/lib/<name>/``) are always
+    present and marked ``builtin: true``; they are excluded from the
+    ``[SKILLS INDEX]`` CPE context block (§9.5) but fully dispatched by EXEC.
 
     Only skills with a valid manifest.json are included (§9.1 / §4 step 1).
     execute.* is optional; skills without one are included but not executable.
@@ -116,20 +121,16 @@ def build_skill_index(entity_root: str | Path) -> dict[str, Any]:
     if not skills_dir.exists():
         return {"version": "1.0", "skills": []}
 
-    for skill_dir in sorted(skills_dir.iterdir()):
-        if not skill_dir.is_dir():
-            continue
-        if skill_dir.name == "lib":
-            continue  # system skills — not visible to CPE
+    def _scan_skill_dir(skill_dir: Path, builtin: bool) -> None:
         manifest_path = skill_dir / "manifest.json"
         if not manifest_path.exists():
-            continue
+            return
         try:
             manifest = read_json(manifest_path)
         except Exception:
-            continue
+            return
         if "name" not in manifest:
-            continue
+            return
         # Locate executable (optional)
         exe: Path | None = None
         for exe_name in ("execute.sh", "execute.py"):
@@ -141,7 +142,22 @@ def build_skill_index(entity_root: str | Path) -> dict[str, Any]:
         # Narrative presence flag
         narrative = skill_dir / f"{skill_dir.name}.md"
         manifest["_has_narrative"] = narrative.exists()
+        if builtin:
+            manifest["builtin"] = True
         skills.append(manifest)
+
+    # Regular user-installed skills
+    for skill_dir in sorted(skills_dir.iterdir()):
+        if not skill_dir.is_dir() or skill_dir.name == "lib":
+            continue
+        _scan_skill_dir(skill_dir, builtin=False)
+
+    # Built-in skills in lib/ (§9.5)
+    lib_dir = skills_dir / "lib"
+    if lib_dir.exists():
+        for skill_dir in sorted(lib_dir.iterdir()):
+            if skill_dir.is_dir():
+                _scan_skill_dir(skill_dir, builtin=True)
 
     return {"version": "1.0", "skills": skills}
 
