@@ -6,9 +6,7 @@ Requires the `rich` package:
 
 from __future__ import annotations
 
-import json
 import sys
-from typing import Any
 
 try:
     from rich.console import Console
@@ -85,12 +83,6 @@ class RichUI(UI):
                 border_style="dim",
                 expand=False,
             ))
-
-    def verbose_actions(self, actions: list[dict[str, Any]]) -> None:
-        if self.verbose and actions:
-            _console.print(
-                f"  [dim]actions: {json.dumps(actions, ensure_ascii=False)}[/dim]\n"
-            )
 
     def skill_ok(self, skill: str, output: str) -> None:
         _console.print(

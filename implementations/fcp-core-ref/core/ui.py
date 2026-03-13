@@ -6,10 +6,8 @@ RichUI:  full Rich rendering, imported lazily from core.tui (used by ./fcp tui).
 
 from __future__ import annotations
 
-import json
 import re
 import sys
-from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +108,6 @@ class UI:
     def error(self, text: str) -> None: ...
     def verbose_cycle(self, cycle: int, turns: int, tokens: int) -> None: ...
     def verbose_text(self, label: str, text: str) -> None: ...
-    def verbose_actions(self, actions: list[dict[str, Any]]) -> None: ...
     def skill_ok(self, skill: str, output: str) -> None: ...
     def skill_err(self, skill: str, error: str) -> None: ...
     def help_start(self) -> None: ...
@@ -171,11 +168,6 @@ class PlainUI(UI):
         if self.verbose:
             indented = "\n".join("    " + ln for ln in text.splitlines())
             print(f"  {_DIM}[VRB] {label}:{_RST}\n{_DIM}{indented}{_RST}\n")
-
-    def verbose_actions(self, actions: list[dict[str, Any]]) -> None:
-        if self.verbose and actions:
-            print(f"  {_DIM}[VRB] actions: "
-                  f"{json.dumps(actions, ensure_ascii=False)}{_RST}\n")
 
     def skill_ok(self, skill: str, output: str) -> None:
         print(f"\n  {_GRN}✓{_RST} {_BOLD}{skill}{_RST}  {output}\n")
