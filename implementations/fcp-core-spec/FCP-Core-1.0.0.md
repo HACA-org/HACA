@@ -1098,10 +1098,9 @@ At each Vital Check, the SIL writes a `HEARTBEAT` envelope to `state/integrity.l
 |---|---|---|
 | Structural file hashes | Mismatch against Integrity Document | Critical → revoke token, Sleep Cycle |
 | Background skill TTLs | TTL expired without registered result | `SKILL_TIMEOUT` to `io/inbox/`; surface to CPE |
-| Session Store size | Approaching `session_store.rotation_threshold_bytes` | Degraded → corrective signal to MIL |
+| Session Store size | ≥ 80% of `session_store.rotation_threshold_bytes` | Degraded → corrective signal to MIL |
 | Pre-session buffer | At or near `pre_session_buffer.max_entries` | Write to `operator_notifications/`; if `n_channel` failures → Beacon + halt |
-| `io/inbox/` health | Stuck or malformed `.msg` files | Corrective signal to MIL |
-| Pending schedules | Trigger overdue without execution | Write to `operator_notifications/`; if `n_channel` failures → Beacon + halt |
+| `io/inbox/` health | `.msg` file present at previous Vital Check still present (stuck), or payload fails ACP parse (malformed) | Corrective signal to MIL |
 | `workspace_focus` path | Present but pointing outside `workspace/` | Critical → revoke token, Sleep Cycle |
 
 For Degraded conditions — those the SIL can verify independently by observing the component externally — the SIL issues a corrective signal and re-verifies after the component acts. If re-verification fails, the condition escalates to Critical. Conditions not externally verifiable escalate to Critical directly.
@@ -1120,7 +1119,7 @@ The Evolution Gate is the SIL's enforcement of Operator Primacy over structural 
 
 When the CPE emits an `evolution_proposal` action, the SIL intercepts it. The session continues normally while the proposal is pending. The SIL writes the proposal to `state/operator_notifications/` immediately so the Operator is aware.
 
-The Operator may approve or reject a pending proposal mid-session using `/endure approve <id>` or `/endure reject <id>` (§12.3). These commands are Operator-exclusive — the CPE cannot invoke them. On mid-session approval, the SIL writes the `EVOLUTION_AUTH` record and triggers an immediate forced session close: the token is revoked without consulting the CPE and the Sleep Cycle begins. Stage 3 will execute the approved proposal. On mid-session rejection, the SIL writes `EVOLUTION_REJECTED` and the session continues normally.
+The Operator may approve or reject a pending proposal mid-session using `/endure approve <id>` or `/endure reject <id>` (§12.3). A pending proposal is identified by the `seq` field of its `PROPOSAL_PENDING` record in `state/integrity.log`; `/endure list` displays the `seq` for each pending proposal. These commands are Operator-exclusive — the CPE cannot invoke them. On mid-session approval, the SIL writes the `EVOLUTION_AUTH` record and triggers an immediate forced session close: the token is revoked without consulting the CPE and the Sleep Cycle begins. Stage 3 will execute the approved proposal. On mid-session rejection, the SIL writes `EVOLUTION_REJECTED` and the session continues normally.
 
 At normal session close, FCP presents any remaining pending proposals via terminal prompt and waits for an explicit decision on each. If the session closes before the terminal prompt can be shown — for example during an unattended session — the SIL persists the proposal as a `PROPOSAL_PENDING` record in `state/integrity.log` and FCP presents it at the next boot's Phase 6.
 
@@ -1154,7 +1153,7 @@ While the beacon is active, the entity is in suspended halt: no session token is
 
 The beacon is cleared only by the Operator. Clearance requires two steps: the Operator acknowledges the condition, and the SIL independently verifies that the underlying cause is resolved. Acknowledgement without resolution does not clear the beacon — the SIL must confirm the cause is addressed before lifting the suspended halt.
 
-If the beacon was activated due to SIL unresponsiveness — detected by EXEC or MIL via the Reciprocal SIL Watchdog — the resolution verification cannot be delegated to the SIL. In this case, FCP performs the verification directly before lifting the suspended halt, presenting the result to the Operator via terminal prompt.
+If the beacon was activated due to SIL unresponsiveness — detected by EXEC or MIL via the Reciprocal SIL Watchdog — the resolution verification cannot be delegated to the SIL. In this case, FCP performs the verification directly: after the Operator acknowledges the condition, FCP starts the boot sequence and observes whether a `HEARTBEAT` record appears in `state/integrity.log` within `watchdog.sil_threshold_seconds` of Phase 0. If a `HEARTBEAT` is written within that window, the SIL is confirmed responsive; FCP presents the result to the Operator via terminal prompt and, on Operator confirmation, removes `state/distress.beacon` and continues boot. If no `HEARTBEAT` appears within the window, FCP reports SIL still unresponsive, exits, and leaves the beacon active.
 
 ### 10.8 Critical Condition Resolution
 
