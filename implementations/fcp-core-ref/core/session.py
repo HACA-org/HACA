@@ -620,7 +620,14 @@ def _handle_closure_payload(
         append_session_event(root, cenv.to_dict())
 
     # working_memory → ensure session-handoff.json is included, write pointer map
-    wm_entries = list(action.get("working_memory") or [])
+    # Normalize: model may send plain strings (paths) instead of {priority, path} dicts.
+    wm_raw = list(action.get("working_memory") or [])
+    wm_entries = []
+    for e in wm_raw:
+        if isinstance(e, str):
+            wm_entries.append({"priority": 50, "path": e})
+        elif isinstance(e, dict) and "path" in e:
+            wm_entries.append(e)
     handoff_path = "memory/session-handoff.json"
     if action.get("session_handoff") and not any(
         e.get("path") == handoff_path for e in wm_entries
