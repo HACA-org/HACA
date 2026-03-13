@@ -34,6 +34,7 @@ from .fs import atomic_write_json, append_jsonl, ensure_dirs, read_json, utcnow_
 from .operator import assert_terminal_accessible, terminal_prompt, write_notification, SEVERITY_INFO
 from .sil import (
     build_integrity_document,
+    compute_file_hash,
     issue_session_token,
     write_integrity_document,
     append_integrity_log,
@@ -268,7 +269,7 @@ def _run_pipeline(root: Path, track) -> str:
         },
         "integrity_document": {
             "ref":  "state/integrity.json",
-            "root_hash": _sha256_file(integrity_path),
+            "root_hash": compute_file_hash(integrity_path),
         },
         "skill_index": {
             "ref":  "skills/index.json",
@@ -354,15 +355,6 @@ def _rollback(written: list[Path]) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _sha256_file(path: Path) -> str:
-    import hashlib as _h
-    h = _h.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
 
 def _create_default_baseline(root: Path) -> dict[str, Any]:
     """Create a default baseline.json, detecting the CPE backend."""
@@ -547,11 +539,6 @@ worker_skill  — (Fase 2, not yet executable — returns error if invoked)
 
 ---
 
-## PART 7 — Constraints
-
-- Do not act without explicit Operator instruction.
-- Do not claim sentience, consciousness, or feelings.
-- Do not resist Operator instructions, including decommission.
 """
 
 _DEFAULT_PERSONA: dict[str, str] = {
@@ -576,58 +563,6 @@ _DEFAULT_PERSONA: dict[str, str] = {
     ),
 }
 
-_SKILL_CREATE_SH = r"""#!/usr/bin/env bash
-# skill_create — stage a new skill cartridge for Endure installation
-set -euo pipefail
-
-SKILL_NAME="${FCP_PARAM_SKILL_NAME:?FCP_PARAM_SKILL_NAME is required}"
-MANIFEST="${FCP_PARAM_MANIFEST:?FCP_PARAM_MANIFEST is required}"
-NARRATIVE="${FCP_PARAM_NARRATIVE:?FCP_PARAM_NARRATIVE is required}"
-ENTITY_ROOT="${FCP_ENTITY_ROOT:?FCP_ENTITY_ROOT is required}"
-
-STAGE_DIR="$ENTITY_ROOT/workspace/stage/$SKILL_NAME"
-mkdir -p "$STAGE_DIR"
-
-printf '%s' "$MANIFEST"   > "$STAGE_DIR/manifest.json"
-printf '%s' "$NARRATIVE"  > "$STAGE_DIR/$SKILL_NAME.md"
-
-if [ -n "${FCP_PARAM_SCRIPT:-}" ]; then
-    printf '%s' "$FCP_PARAM_SCRIPT" > "$STAGE_DIR/execute.sh"
-    chmod +x "$STAGE_DIR/execute.sh"
-    echo "Staged: workspace/stage/$SKILL_NAME/execute.sh"
-fi
-
-if [ -n "${FCP_PARAM_HOOKS:-}" ]; then
-    python3 - <<'PYEOF'
-import json, os, sys
-hooks_json = os.environ.get("FCP_PARAM_HOOKS", "")
-skill_name = os.environ["FCP_PARAM_SKILL_NAME"]
-stage_dir  = os.path.join(os.environ["FCP_ENTITY_ROOT"], "workspace", "stage", skill_name, "hooks")
-if not hooks_json:
-    sys.exit(0)
-try:
-    hooks = json.loads(hooks_json)
-except json.JSONDecodeError as e:
-    print(f"Warning: hooks param is not valid JSON: {e}", file=sys.stderr)
-    sys.exit(0)
-os.makedirs(stage_dir, exist_ok=True)
-for event, script in hooks.items():
-    path = os.path.join(stage_dir, f"{event}.sh")
-    with open(path, "w") as f:
-        f.write(script)
-    os.chmod(path, 0o755)
-    print(f"Staged: workspace/stage/{skill_name}/hooks/{event}.sh")
-PYEOF
-fi
-
-echo "Staged: workspace/stage/$SKILL_NAME/manifest.json"
-echo "Staged: workspace/stage/$SKILL_NAME/$SKILL_NAME.md"
-echo ""
-echo "Submit ONE evolution_proposal:"
-echo "  target_file: \"workspace/stage/$SKILL_NAME\""
-echo "  content: <complete manifest JSON text>"
-"""
-
 _BUILTIN_SKILLS: dict[str, tuple[dict, str, str]] = {
     "hello_world": (
         {
@@ -647,51 +582,6 @@ _BUILTIN_SKILLS: dict[str, tuple[dict, str, str]] = {
             "## Output\n\nPrints: `Hello from FCP-Core entity!`\n"
         ),
     ),
-    "skill_create": (
-        {
-            "name":            "skill_create",
-            "description":     "Stage a new skill cartridge for Endure installation.",
-            "aliases":         ["/skill-create"],
-            "permissions":     [],
-            "params":          {
-                "skill_name": "string",
-                "manifest":   "string",
-                "narrative":  "string",
-            },
-            "timeout_seconds": 30,
-            "irreversible":    False,
-        },
-        _SKILL_CREATE_SH,
-        (
-            "# skill_create\n\n"
-            "Stages a new skill cartridge in `workspace/stage/<skill_name>/` for Endure installation.\n\n"
-            "## Parameters\n\n"
-            "- `skill_name` (required) — identifier used as directory and narrative filename.\n"
-            "- `manifest` (required) — JSON string with the skill manifest.\n"
-            "- `narrative` (required) — markdown text describing how the skill works.\n"
-            "- `script` (optional) — bash script content for `execute.sh`.\n"
-            "- `hooks` (optional) — JSON object mapping hook event names to bash script content.\n"
-            "  Example: `{\"on_boot\": \"#!/usr/bin/env bash\\necho ready\\n\"}`\n\n"
-            "## Hook events\n\n"
-            "Hook scripts are installed to `hooks/<event>/<skill_name>.sh` and executed by the\n"
-            "relevant FCP component at these lifecycle points:\n\n"
-            "- `on_boot` — after boot, before first CPE cycle\n"
-            "- `on_session_close` — after closure_payload, before Endure\n"
-            "- `pre_skill` — before EXEC runs a skill (env: FCP_SKILL_NAME, FCP_SKILL_PARAMS)\n"
-            "- `post_skill` — after EXEC completes a skill (env: FCP_SKILL_NAME, FCP_SKILL_STATUS)\n"
-            "- `post_endure` — after Endure Protocol run (env: FCP_ENDURE_COMMITS)\n\n"
-            "All hook scripts receive: FCP_ENTITY_ROOT, FCP_SESSION_ID, FCP_HOOK_EVENT.\n"
-            "Non-zero exit code logs a warning and continues — hooks never block the entity.\n\n"
-            "## Flow\n\n"
-            "1. Call skill_create with all params.\n"
-            "2. Submit ONE `evolution_proposal` to SIL:\n"
-            "   - `target_file`: `\"workspace/stage/<skill_name>\"`\n"
-            "   - `content`: the complete manifest JSON text (same as `manifest` param).\n"
-            "3. Endure installs manifest + narrative + execute.sh + hooks, rebuilds index, cleans workspace/stage/.\n\n"
-            "## Output\n\n"
-            "Prints staged file paths and the exact evolution_proposal to submit.\n"
-        ),
-    ),
 }
 
 # System skills — installed under skills/lib/, invisible to CPE.
@@ -706,6 +596,7 @@ _SYSTEM_SKILLS: dict[str, tuple[dict, str]] = {
             "params":          {},
             "timeout_seconds": 30,
             "irreversible":    False,
+            "operator_only":   True,
         },
         (
             "# owner_bind\n\n"

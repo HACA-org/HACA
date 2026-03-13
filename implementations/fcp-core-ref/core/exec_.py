@@ -278,7 +278,13 @@ class ExecDispatcher:
                 skill_name,
                 f"No narrative ({skill_name}.md) for skill {skill_name!r}.",
             )
-        narrative_path = self.entity_root / "skills" / skill_name / f"{skill_name}.md"
+        exe_rel = entry.get("_executable", "")
+        if exe_rel:
+            narrative_path = (self.entity_root / exe_rel).parent / f"{skill_name}.md"
+        elif entry.get("builtin"):
+            narrative_path = self.entity_root / "skills" / "lib" / skill_name / f"{skill_name}.md"
+        else:
+            narrative_path = self.entity_root / "skills" / skill_name / f"{skill_name}.md"
         try:
             content = narrative_path.read_text(encoding="utf-8")
         except OSError as exc:
