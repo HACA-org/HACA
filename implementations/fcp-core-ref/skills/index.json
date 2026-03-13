@@ -83,6 +83,24 @@
       "builtin": true
     },
     {
+      "name": "shell_run",
+      "description": "Execute a shell command in the active workspace_focus directory.",
+      "aliases": [
+        "/run"
+      ],
+      "permissions": [
+        "shell.exec"
+      ],
+      "params": {
+        "command": "string"
+      },
+      "timeout_seconds": 30,
+      "irreversible": true,
+      "_executable": "skills/lib/shell_run/execute.sh",
+      "_has_narrative": true,
+      "builtin": true
+    },
+    {
       "name": "skill_audit",
       "description": "Validate a skill's manifest, executable, and index consistency; read-only.",
       "aliases": [
