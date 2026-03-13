@@ -236,15 +236,6 @@ def run_boot(entity_root: str | Path) -> BootContext:
             filtered_index = {"version": index_data.get("version", "1.0"), "skills": visible}
             ctx_parts.append(f"[SKILLS INDEX]\n{json.dumps(filtered_index, indent=2)}")
 
-    # [SKILL:<name>] manifests
-    skills_dir = root / "skills"
-    if skills_dir.exists():
-        for manifest_path in sorted(skills_dir.glob("*/manifest.json")):
-            skill_name = manifest_path.parent.name
-            ctx_parts.append(
-                f"[SKILL:{skill_name}]\n{manifest_path.read_text(encoding='utf-8')}"
-            )
-
     # [MEMORY] — active_context + session handoff (§5.1)
     # Working Memory is only trusted if the previous session closed cleanly.
     # Cross-reference against SLEEP_COMPLETE record before loading (§5.1).

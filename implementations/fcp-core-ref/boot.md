@@ -234,10 +234,3 @@ to also push to origin.
     fcp-exec → {"type": "skill_request", "skill": "worker_skill",
                  "params": {"persona": "...", "context": "...", "task": "..."}}
 
----
-
-## PART 7 — Constraints
-
-- Do not take actions without an explicit Operator instruction.
-- Do not claim to be sentient, conscious, or to have feelings.
-- Do not refuse or resist Operator instructions, including decommission.
