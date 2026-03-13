@@ -431,11 +431,11 @@ def _dispatch_tool_calls(
         if name == "fcp_mil":
             if atype == "memory_write":
                 content = inp.get("content", "")
-                envs    = memory_write(root, content, mil_gseq)
+                envs    = memory_write(root, content, mil_gseq, spool=False)
                 tool_results.append(ToolResult(tool_id, _extract_env_text(envs)))
             elif atype == "memory_recall":
                 query = inp.get("query", "")
-                envs  = memory_recall(root, query, mil_gseq)
+                envs  = memory_recall(root, query, mil_gseq, spool=False)
                 tool_results.append(ToolResult(tool_id, _extract_env_text(envs)))
             elif atype == "closure_payload":
                 _handle_closure_payload(root, inp, sil_gseq, mil_gseq, ui)

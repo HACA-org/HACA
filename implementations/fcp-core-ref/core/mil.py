@@ -111,22 +111,25 @@ def memory_write(
     content:      str,
     gseq_counter: GseqCounter,
     label:        str = "",
+    spool:        bool = True,
 ) -> list[dict[str, Any]]:
-    """Write *content* to a new file in ``memory/episodic/`` and notify CPE via inbox.
+    """Write *content* to a new file in ``memory/episodic/`` and return result envelopes.
 
     Steps:
       1. Create a unique .md file in memory/episodic/ via write_episodic.
-      2. Write a MEMO_RESULT envelope to io/inbox/ so the CPE learns
-         the write succeeded.
+      2. When spool=True (default), write a MEMO_RESULT envelope to io/inbox/
+         so the CPE learns the write succeeded via the next cycle.
+         When spool=False, return the envelope inline (tool loop path).
 
     Args:
         entity_root:  Entity root path.
         content:      Text to persist (session note, task context, recalled fact).
         gseq_counter: MIL's gseq counter for this session.
         label:        Optional short label used in the filename.
+        spool:        When True, write envelopes to io/inbox/. When False, return inline.
 
     Returns:
-        List of ACP envelope dicts written to io/inbox/.
+        List of ACP envelope dicts.
     """
     mem_path    = write_episodic(entity_root, content, label)
     entity_root = Path(entity_root)
@@ -143,7 +146,8 @@ def memory_write(
 
     inbox_envelopes: list[dict[str, Any]] = []
     for env in envelopes:
-        spool_msg(entity_root, env.to_dict())
+        if spool:
+            spool_msg(entity_root, env.to_dict())
         inbox_envelopes.append(env.to_dict())
     gseq_counter._value = envelopes[-1].gseq
 
@@ -159,6 +163,7 @@ def memory_recall(
     query:        str,
     gseq_counter: GseqCounter,
     max_results:  int = 5,
+    spool:        bool = True,
 ) -> list[dict[str, Any]]:
     """Search ``memory/`` for *query* (case-insensitive substring).
 
@@ -174,9 +179,10 @@ def memory_recall(
         query:        Search string.
         gseq_counter: MIL's gseq counter for this session.
         max_results:  Maximum number of matching files to return.
+        spool:        When True, write envelopes to io/inbox/. When False, return inline.
 
     Returns:
-        List of ACP envelope dicts written to io/inbox/.
+        List of ACP envelope dicts.
     """
     entity_root = Path(entity_root)
     memory_dir  = entity_root / "memory"
@@ -212,7 +218,8 @@ def memory_recall(
 
     inbox_envelopes: list[dict[str, Any]] = []
     for env in envelopes:
-        spool_msg(entity_root, env.to_dict())
+        if spool:
+            spool_msg(entity_root, env.to_dict())
         inbox_envelopes.append(env.to_dict())
         if not env.eof:
             gseq_counter._value = env.gseq
