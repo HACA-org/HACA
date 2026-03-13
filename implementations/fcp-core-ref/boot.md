@@ -139,11 +139,11 @@ To add a new capability:
 
 1. Invoke `skill_create` with `skill_name`, `manifest` (JSON), `narrative` (markdown),
    and optionally `script` (bash content for execute.sh) and `hooks` (see below).
-2. Submit ONE `evolution_proposal` with `target_file` set to `"stage/<skill_name>"`
+2. Submit ONE `evolution_proposal` with `target_file` set to `"workspace/stage/<skill_name>"`
    and `content` set to the manifest JSON (same JSON passed to `skill_create`).
 
 Endure installs the cartridge atomically, rebuilds the skill index, and cleans
-`stage/` automatically.
+`workspace/stage/` automatically.
 
 ### hooks param — attaching lifecycle scripts to a skill
 
@@ -186,7 +186,7 @@ Built-in skills appear in [SKILLS INDEX]. Extended usage notes below.
 
 ### skill_create — stage a new skill cartridge
 
-Stages files in `stage/<skill_name>/`. Then submit an `evolution_proposal` with
+Stages files in `workspace/stage/<skill_name>/`. Then submit an `evolution_proposal` with
 `target_file` and `content` (manifest JSON) so Endure can install and rebuild
 the index automatically.
 
@@ -197,7 +197,7 @@ the index automatically.
                              "hooks": "<json>"}}      ← optional
 
     fcp-sil → {"type": "evolution_proposal",
-                "target_file": "stage/<skill_name>",
+                "target_file": "workspace/stage/<skill_name>",
                 "content": "<manifest JSON>"}
 
 ### file_reader — read a workspace file

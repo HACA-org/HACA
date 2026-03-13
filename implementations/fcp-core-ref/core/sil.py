@@ -711,10 +711,10 @@ def write_evolution_rejected(
 # ---------------------------------------------------------------------------
 
 def _is_skill_install(target_file: str) -> tuple[bool, str]:
-    """Return (True, skill_name) if target_file is stage/<name> (cartridge install)."""
+    """Return (True, skill_name) if target_file is workspace/stage/<name> (cartridge install)."""
     parts = Path(target_file).parts
-    if len(parts) == 2 and parts[0] == "stage":
-        return True, parts[1]
+    if len(parts) == 3 and parts[0] == "workspace" and parts[1] == "stage":
+        return True, parts[2]
     return False, ""
 
 
@@ -723,18 +723,18 @@ def _install_skill_cartridge(
     skill_name:       str,
     manifest_content: str,
 ) -> list[str]:
-    """Install cartridge from stage/<skill_name>/ to skills/<skill_name>/.
+    """Install cartridge from workspace/stage/<skill_name>/ to skills/<skill_name>/.
 
     Writes manifest.json from manifest_content, copies <skill_name>.md and
-    execute.* from stage/.  Returns list of error strings (empty = success).
+    execute.* from workspace/stage/.  Returns list of error strings (empty = success).
     """
     import shutil
 
-    stage_dir  = entity_root / "stage"  / skill_name
+    stage_dir  = entity_root / "workspace" / "stage" / skill_name
     skills_dir = entity_root / "skills" / skill_name
 
     if not stage_dir.exists():
-        return [f"stage/{skill_name}/ not found"]
+        return [f"workspace/stage/{skill_name}/ not found"]
 
     try:
         json.loads(manifest_content)
@@ -949,7 +949,7 @@ def run_endure(
             _awj(entity_root / "skills" / "index.json", new_index)
             new_doc = build_integrity_document(entity_root)
             write_integrity_document(entity_root, new_doc)
-            stage_dir = entity_root / "stage" / skill_name
+            stage_dir = entity_root / "workspace" / "stage" / skill_name
             if stage_dir.exists():
                 shutil.rmtree(stage_dir)
 

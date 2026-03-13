@@ -508,8 +508,8 @@ evolution_proposal: persona, config changes, or new skill install.
 ## PART 5 — Installing new skills
 
 1. Invoke skill_create (skill_name, manifest, narrative, optional script, optional hooks).
-2. Submit ONE evolution_proposal describing the new skill.
-Endure installs atomically, rebuilds index, cleans stage/.
+2. Submit ONE evolution_proposal with target_file: workspace/stage/<skill_name> and content: manifest JSON.
+Endure installs atomically, rebuilds index, cleans workspace/stage/.
 
 hooks param: JSON object {"event": "bash script"}.
 Events: on_boot, on_session_close, pre_skill, post_skill, post_endure.
@@ -585,7 +585,7 @@ MANIFEST="${FCP_PARAM_MANIFEST:?FCP_PARAM_MANIFEST is required}"
 NARRATIVE="${FCP_PARAM_NARRATIVE:?FCP_PARAM_NARRATIVE is required}"
 ENTITY_ROOT="${FCP_ENTITY_ROOT:?FCP_ENTITY_ROOT is required}"
 
-STAGE_DIR="$ENTITY_ROOT/stage/$SKILL_NAME"
+STAGE_DIR="$ENTITY_ROOT/workspace/stage/$SKILL_NAME"
 mkdir -p "$STAGE_DIR"
 
 printf '%s' "$MANIFEST"   > "$STAGE_DIR/manifest.json"
@@ -594,7 +594,7 @@ printf '%s' "$NARRATIVE"  > "$STAGE_DIR/$SKILL_NAME.md"
 if [ -n "${FCP_PARAM_SCRIPT:-}" ]; then
     printf '%s' "$FCP_PARAM_SCRIPT" > "$STAGE_DIR/execute.sh"
     chmod +x "$STAGE_DIR/execute.sh"
-    echo "Staged: stage/$SKILL_NAME/execute.sh"
+    echo "Staged: workspace/stage/$SKILL_NAME/execute.sh"
 fi
 
 if [ -n "${FCP_PARAM_HOOKS:-}" ]; then
@@ -602,7 +602,7 @@ if [ -n "${FCP_PARAM_HOOKS:-}" ]; then
 import json, os, sys
 hooks_json = os.environ.get("FCP_PARAM_HOOKS", "")
 skill_name = os.environ["FCP_PARAM_SKILL_NAME"]
-stage_dir  = os.path.join(os.environ["FCP_ENTITY_ROOT"], "stage", skill_name, "hooks")
+stage_dir  = os.path.join(os.environ["FCP_ENTITY_ROOT"], "workspace", "stage", skill_name, "hooks")
 if not hooks_json:
     sys.exit(0)
 try:
@@ -616,15 +616,15 @@ for event, script in hooks.items():
     with open(path, "w") as f:
         f.write(script)
     os.chmod(path, 0o755)
-    print(f"Staged: stage/{skill_name}/hooks/{event}.sh")
+    print(f"Staged: workspace/stage/{skill_name}/hooks/{event}.sh")
 PYEOF
 fi
 
-echo "Staged: stage/$SKILL_NAME/manifest.json"
-echo "Staged: stage/$SKILL_NAME/$SKILL_NAME.md"
+echo "Staged: workspace/stage/$SKILL_NAME/manifest.json"
+echo "Staged: workspace/stage/$SKILL_NAME/$SKILL_NAME.md"
 echo ""
 echo "Submit ONE evolution_proposal:"
-echo "  target_file: \"stage/$SKILL_NAME\""
+echo "  target_file: \"workspace/stage/$SKILL_NAME\""
 echo "  content: <complete manifest JSON text>"
 """
 
@@ -664,7 +664,7 @@ _BUILTIN_SKILLS: dict[str, tuple[dict, str, str]] = {
         _SKILL_CREATE_SH,
         (
             "# skill_create\n\n"
-            "Stages a new skill cartridge in `stage/<skill_name>/` for Endure installation.\n\n"
+            "Stages a new skill cartridge in `workspace/stage/<skill_name>/` for Endure installation.\n\n"
             "## Parameters\n\n"
             "- `skill_name` (required) — identifier used as directory and narrative filename.\n"
             "- `manifest` (required) — JSON string with the skill manifest.\n"
@@ -685,9 +685,9 @@ _BUILTIN_SKILLS: dict[str, tuple[dict, str, str]] = {
             "## Flow\n\n"
             "1. Call skill_create with all params.\n"
             "2. Submit ONE `evolution_proposal` to SIL:\n"
-            "   - `target_file`: `\"stage/<skill_name>\"`\n"
+            "   - `target_file`: `\"workspace/stage/<skill_name>\"`\n"
             "   - `content`: the complete manifest JSON text (same as `manifest` param).\n"
-            "3. Endure installs manifest + narrative + execute.sh + hooks, rebuilds index, cleans stage/.\n\n"
+            "3. Endure installs manifest + narrative + execute.sh + hooks, rebuilds index, cleans workspace/stage/.\n\n"
             "## Output\n\n"
             "Prints staged file paths and the exact evolution_proposal to submit.\n"
         ),

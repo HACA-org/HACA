@@ -295,7 +295,7 @@ def ensure_dirs(entity_root: str | Path) -> None:
         root / "skills" / "lib",
         root / "hooks",
         root / "workspace",
-        root / "stage",
+        root / "workspace" / "stage",
         root / "io" / "inbox" / "presession",
         root / "io" / "spool",
         root / "memory" / "episodic",
