@@ -63,6 +63,8 @@ This document assumes familiarity with HACA-Arch and HACA-Core. It does not rest
    - 9.3 [Action Ledger](#93-action-ledger)
    - 9.4 [Worker Skills](#94-worker-skills)
    - 9.5 [Built-in Skills](#95-built-in-skills)
+   - 9.6 [Operator Skills](#96-operator-skills)
+   - 9.7 [Lifecycle Hooks](#97-lifecycle-hooks)
 10. [Integrity Layer](#10-integrity-layer)
     - 10.1 [Structural Verification](#101-structural-verification)
     - 10.2 [Drift Detection](#102-drift-detection)
@@ -435,13 +437,19 @@ Stage 0 checks both the current cycle's per-probe scores and the aggregate trend
       "name": "memory_store",
       "desc": "Retrieves and stores concepts in the semantic graph",
       "manifest": "skills/memory_store/manifest.json",
-      "builtin": false
+      "class": "custom"
     },
     {
       "name": "file_reader",
       "desc": "Reads files within the workspace",
       "manifest": "skills/lib/file_reader/manifest.json",
-      "builtin": true
+      "class": "builtin"
+    },
+    {
+      "name": "endure_invoke",
+      "desc": "Triggers the Endure Protocol",
+      "manifest": "skills/lib/endure_invoke/manifest.json",
+      "class": "operator"
     }
   ],
   "aliases": {
@@ -456,14 +464,14 @@ Stage 0 checks both the current cycle's per-probe scores and the aggregate trend
 | `version` | string | Schema version; must be `"1.0"` |
 | `skills[]` | array | All skills the entity is authorized to invoke |
 | `skills[].name` | string | Skill name; must match the directory name under `skills/` and the `name` field in its `manifest.json` |
-| `skills[].desc` | string | Brief human-readable description of the skill's purpose; included in the `[SKILLS INDEX]` context block for non-built-in skills |
+| `skills[].desc` | string | Brief human-readable description of the skill's purpose; included in the `[SKILLS INDEX]` context block for `"builtin"` and `"custom"` skills |
 | `skills[].manifest` | string | Path to the skill's `manifest.json`, relative to entity root |
-| `skills[].builtin` | boolean | If `true`, the skill's executables reside in `skills/lib/`; built-in skills are excluded from the `[SKILLS INDEX]` context block in the CPE input |
+| `skills[].class` | string | `"builtin"` for skills shipped with FCP (executables in `skills/lib/`); `"custom"` for skills installed via Endure (executables in `skills/<name>/`); `"operator"` for system-control skills invokable exclusively by the Operator Channel (executables in `skills/lib/`); `"builtin"` and `"custom"` skills are included in the `[SKILLS INDEX]` context block; `"operator"` skills are excluded |
 | `aliases` | object | Map from slash command string (with leading `/`) to alias record; defines the alias dispatch table used by §12.3.2 |
 | `aliases[key].skill` | string | Target skill name; must reference a name present in `skills[]` |
 | `aliases[key].operator_only` | boolean | If `true`, this alias is rejected when issued from any source other than the interactive terminal prompt; default `false` |
 
-All six built-in skills (§9.5) must be present in `skills[]` at every point after FAP completion.
+All seven built-in skills (§9.5) must be present in `skills[]` at every point after FAP completion.
 
 ### 3.10 Skill Manifest
 
@@ -472,20 +480,21 @@ Each skill's `manifest.json`, located at `skills/<name>/manifest.json` (or `skil
 ```json
 {
   "name": "memory_store",
+  "class": "custom",
   "version": "1.0.0",
   "description": "...",
   "timeout_seconds": 30,
   "background": false,
   "ttl_seconds": null,
   "permissions": [],
-  "dependencies": [],
-  "operator_only": false
+  "dependencies": []
 }
 ```
 
 | Field | Type | Description |
 |---|---|---|
 | `name` | string | Skill name; must match the skill's directory name and its entry in `skills/index.json` |
+| `class` | string | `"builtin"` for skills shipped with FCP; `"custom"` for skills installed via Endure; `"operator"` for system-control skills invokable exclusively by the Operator Channel; the SIL copies this value into `skills/index.json` when building the Skill Index |
 | `version` | string | Semver string |
 | `description` | string | Human-readable description of the skill's purpose |
 | `timeout_seconds` | integer | Execution timeout in seconds; monitored by the SIL skill timeout watchdog (§10.4) |
@@ -493,7 +502,6 @@ Each skill's `manifest.json`, located at `skills/<name>/manifest.json` (or `skil
 | `ttl_seconds` | integer or null | Required when `background: true`; the SIL treats TTL expiry without a registered result as an incomplete execution and logs it to `state/integrity.log`; must be absent or `null` when `background: false` |
 | `permissions` | array | List of permission tokens the skill requires; validated by the SIL at boot; permission token semantics are implementation-defined |
 | `dependencies` | array | List of skill names or host capabilities required; the SIL validates availability at boot; a skill with unmet dependencies is excluded from `skills/index.json` |
-| `operator_only` | boolean | If `true`, the skill may only be dispatched when the originating request was issued by the Operator from the interactive terminal prompt; default `false` |
 
 ### 3.11 Drift Probe
 
@@ -971,6 +979,8 @@ At Phase 5 of the Boot Sequence, FCP loads the buffer contents into the Boot Man
 
 The execution layer is responsible for all skill dispatch and host actuation. Skill authorization is established once, at boot, when the SIL builds and seals `skills/index.json`. The EXEC dispatches against this index without per-execution re-validation.
 
+Every skill entry in `skills/index.json` carries a `class` field: `"builtin"`, `"custom"`, or `"operator"`. This field determines whether the skill is injected into the `[SKILLS INDEX]` context block assembled for the CPE: built-in and custom skills are included; operator skills are not. Skills absent from `[SKILLS INDEX]` are structurally invisible to the CPE — it receives no instruction, no context, and has no dispatch path to reach them. The EXEC enforces this at dispatch: a `skill_request` referencing an operator-class skill is rejected and logged to `state/integrity.log`.
+
 ### 9.1 Skill Index
 
 `skills/index.json` is the authoritative registry of skills the entity is authorized to use. It is part of the structural baseline, covered by the Integrity Document from the moment of FAP, and cannot be modified outside the Endure Protocol — with one exception: the SIL may remove a skill from the index as a maintenance operation when the skill's manifest is invalid or its executable is absent, without requiring a full Endure Protocol execution, to avoid blocking the system.
@@ -1033,7 +1043,7 @@ Worker skills are declared in `skills/index.json` and authorized at boot like an
 
 ### 9.5 Built-in Skills
 
-Built-in skills are shipped with FCP and present in every entity's Skill Index from genesis. They are regular skills — declared in `skills/index.json`, authorized at boot, and invokable by the CPE via `skill_request`. Their executables reside in `skills/lib/` and are excluded from the `[SKILLS INDEX]` context block in the CPE input — built-in skills are always available but not advertised in the cognitive context.
+Built-in skills are shipped with FCP and present in every entity's Skill Index from genesis. They are regular skills — declared in `skills/index.json` with `class: "builtin"`, authorized at boot, invokable by the CPE via `skill_request`, and included in the `[SKILLS INDEX]` context block. Their executables reside in `skills/lib/`.
 
 | Skill | Description |
 |---|---|
@@ -1043,10 +1053,19 @@ Built-in skills are shipped with FCP and present in every entity's Skill Index f
 | `file_writer` | Writes a file within `workspace/`; rejects any path outside `workspace/`; no file size limit beyond host disk capacity |
 | `worker_skill` | Instantiates a Worker Skill sub-agent with a provided persona, context, and task |
 | `commit` | Stages and records a version-control checkpoint; requires an explicit path parameter; validates that the path is within the active workspace_focus declared in `state/workspace_focus.json`; accepts `--remote` to push to the remote configured in the workspace repository's git config (conventionally `origin`); rejects execution if workspace_focus is unset or if the path falls outside it |
+| `shell_run` | Executes a shell command within the active `workspace_focus` directory; the set of permitted commands is declared as an allowlist in the skill's manifest — the allowlist is static and immutable without an Endure cycle; rejects execution if `workspace_focus` is unset or if the requested command is not in the allowlist |
 
 `skill_audit` has three invocation paths: CPE dispatches it via `skill_request` to validate skills under development; the SIL invokes it as a read-only Worker Skill for `SEVERANCE_PENDING` resolution (§10.8); and the Operator invokes it via the `/skill audit` platform command (§12.3).
 
-### 9.6 Lifecycle Hooks
+### 9.6 Operator Skills
+
+Operator skills are system-control capabilities invokable exclusively by the Operator. They carry `class: "operator"` in `skills/index.json` and are excluded from the `[SKILLS INDEX]` context block — the CPE has no awareness of their existence. The EXEC rejects any `skill_request` referencing an operator-class skill regardless of origin.
+
+Operator skills are dispatched directly by the Operator Channel (§10.6). Their executables reside in `skills/lib/` alongside built-in executables.
+
+The slash commands defined in §12.3 are the interactive surface over operator skills and FCP internal operations. Some platform commands map directly to operator skill invocations; others execute FCP logic internally without dispatching a skill.
+
+### 9.7 Lifecycle Hooks
 
 Lifecycle hooks are host executables stored in `hooks/` and tracked by the Integrity Document. FCP invokes them at defined lifecycle events:
 
