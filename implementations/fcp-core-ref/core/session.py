@@ -194,6 +194,7 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
         # ── Verbose: show outbound turn ────────────────────────────────────
         ui.verbose_cycle(cycle_count, len(chat_history), used_tokens)
         ui.verbose_text("user_message", user_content)
+        ui.refresh_status(cycle_count, used_tokens, budget_tokens)
 
         # ── Invoke CPE ─────────────────────────────────────────────────────
         try:

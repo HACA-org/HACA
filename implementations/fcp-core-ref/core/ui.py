@@ -5,6 +5,7 @@ PlainUI: ANSI rendering, zero external dependencies.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 
@@ -90,6 +91,82 @@ def _render_md(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Status bar — fixed bottom row (TTY only)
+# ---------------------------------------------------------------------------
+
+class _StatusBar:
+    """Reserves the last terminal row for a live status line.
+
+    Sets an ANSI scrolling region (rows 1..N-1) so normal output never
+    overwrites the bar.  Only active when stdout is a TTY.
+    """
+
+    def __init__(self, session_id: str, model_label: str, verbose: bool) -> None:
+        self._sid     = session_id[:8]
+        self._model   = model_label
+        self._verbose = verbose
+        self._active  = False
+        if not _TTY:
+            return
+        try:
+            self._rows = os.get_terminal_size().lines
+        except OSError:
+            return
+        self._active = True
+        # Reserve last row: scrolling region = rows 1..(N-1).
+        sys.stdout.write(f"\033[1;{self._rows - 1}r")
+        sys.stdout.write("\033[s")
+        self._draw(0, 0, 0)
+        sys.stdout.write("\033[u")
+        sys.stdout.flush()
+
+    def update(self, cycle: int, tokens: int, budget: int) -> None:
+        if not self._active:
+            return
+        try:
+            rows = os.get_terminal_size().lines
+            if rows != self._rows:
+                self._rows = rows
+                sys.stdout.write(f"\033[1;{self._rows - 1}r")
+        except OSError:
+            pass
+        sys.stdout.write("\033[s")
+        self._draw(cycle, tokens, budget)
+        sys.stdout.write("\033[u")
+        sys.stdout.flush()
+
+    def _draw(self, cycle: int, tokens: int, budget: int) -> None:
+        try:
+            cols = os.get_terminal_size().columns
+        except OSError:
+            cols = 80
+
+        left = f"  {self._sid}  {self._model}"
+        pct  = f"{tokens * 100 // budget}%" if budget else "--"
+        right_parts = [f"cycle:{cycle}", f"ctx:{tokens}/{budget} ({pct})"]
+        if self._verbose:
+            right_parts.append("verbose")
+        right = "  ".join(right_parts) + "  "
+
+        max_left = cols - len(right) - 1
+        if len(left) > max_left:
+            left = left[:max_left - 1] + "\u2026"
+
+        gap = cols - len(left) - len(right)
+        bar = (left + " " * max(gap, 1) + right)[:cols]
+
+        sys.stdout.write(f"\033[{self._rows};1H\033[2K"
+                         f"\033[{self._rows};1H\033[7m{bar}\033[0m")
+
+    def close(self) -> None:
+        if not self._active:
+            return
+        self._active = False
+        sys.stdout.write(f"\033[r\033[{self._rows};1H\033[2K\033[0m")
+        sys.stdout.flush()
+
+
+# ---------------------------------------------------------------------------
 # UI base interface
 # ---------------------------------------------------------------------------
 
@@ -106,6 +183,7 @@ class UI:
     def error(self, text: str) -> None: ...
     def verbose_cycle(self, cycle: int, turns: int, tokens: int) -> None: ...
     def verbose_text(self, label: str, text: str) -> None: ...
+    def refresh_status(self, cycle: int, tokens: int, budget: int) -> None: ...
     def skill_ok(self, skill: str, output: str) -> None: ...
     def skill_err(self, skill: str, error: str) -> None: ...
     def help_start(self) -> None: ...
@@ -129,10 +207,13 @@ _CLOSE_MSGS = {
 class PlainUI(UI):
     """Plain terminal UI: ANSI markdown rendering, no external dependencies."""
 
-    def __init__(self, verbose: bool = False) -> None:
-        self.verbose = verbose
+    def __init__(self, verbose: bool = False, model_label: str = "") -> None:
+        self.verbose      = verbose
+        self._model_label = model_label
+        self._status: _StatusBar | None = None
 
     def session_start(self, session_id: str) -> None:
+        self._status = _StatusBar(session_id, self._model_label, self.verbose)
         print(f"\n  {_DIM}Session {session_id[:8]}…{_RST}  "
               "Type your message or /help.\n")
 
@@ -167,6 +248,10 @@ class PlainUI(UI):
             indented = "\n".join("    " + ln for ln in text.splitlines())
             print(f"  {_DIM}[VRB] {label}:{_RST}\n{_DIM}{indented}{_RST}\n")
 
+    def refresh_status(self, cycle: int, tokens: int, budget: int) -> None:
+        if self._status:
+            self._status.update(cycle, tokens, budget)
+
     def skill_ok(self, skill: str, output: str) -> None:
         print(f"\n  {_GRN}✓{_RST} {_BOLD}{skill}{_RST}  {output}\n")
 
@@ -183,8 +268,12 @@ class PlainUI(UI):
         print()
 
     def teardown(self, phase: str) -> None:
+        if self._status:
+            self._status.close()
         print(f"  {_DIM}{phase}{_RST}")
 
     def session_close(self, by: str) -> None:
+        if self._status:
+            self._status.close()
         msg = _CLOSE_MSGS.get(by, "Session closed.")
         print(f"\n  {_DIM}{msg}{_RST}\n")

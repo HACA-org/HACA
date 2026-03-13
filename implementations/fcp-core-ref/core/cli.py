@@ -206,5 +206,10 @@ def _cmd_session(root: Path, verbose: bool = False) -> int:
     if ctx is None:
         return 1
 
-    run_session(ctx, ui=PlainUI(verbose=verbose))
+    cpe_cfg     = ctx.baseline.get("cpe", {})
+    backend     = cpe_cfg.get("backend", "?")
+    model       = cpe_cfg.get("model", "")
+    model_label = f"{backend}/{model}" if model else backend
+
+    run_session(ctx, ui=PlainUI(verbose=verbose, model_label=model_label))
     return 0
