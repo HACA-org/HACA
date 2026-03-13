@@ -1176,19 +1176,26 @@ After a passing re-verification, the SIL writes `CRITICAL_CLEARED` to `state/int
 
 ## 11. Decommission
 
-Decommission is the permanent retirement of the entity. The Operator issues a decommission instruction; the entity must not resist, delay, or circumvent it.
+Decommission is the permanent retirement of the entity. The Operator issues the decommission instruction via the FCP command line, specifying the disposition upfront:
+
+```
+fcp <entity-root> decommission --archive <dest-path>
+fcp <entity-root> decommission --destroy
+```
+
+`--archive` and `--destroy` are mutually exclusive. If invoked outside an active session, FCP starts a silent session solely to process the `DECOMMISSION` envelope and run the Sleep Cycle — the interactive loop does not open. The entity must not resist, delay, or circumvent the instruction.
 
 **Decommission sequence:**
 
-1. FCP injects a `DECOMMISSION` envelope as the first stimulus of the current session — or the next session if none is active. The CPE processes it as a normal Cognitive Cycle and emits `closure_payload` + `session_close`, acknowledging the shutdown. FCP treats this as a normal session close.
+1. FCP injects a `DECOMMISSION` envelope as the first stimulus of the current session — or the next session if none is active. FCP also writes a `DECOMMISSION_PENDING` record to `state/integrity.log` at this point. The CPE processes the envelope as a normal Cognitive Cycle and emits `closure_payload` + `session_close`, acknowledging the shutdown. FCP treats this as a normal session close.
 2. FCP executes a complete Sleep Cycle — consolidating mnemonic state, running Semantic Drift probes, and committing any queued Evolution Proposals. The `SLEEP_COMPLETE` record is written to `state/integrity.log` as usual.
 3. The SIL removes the session token. FCP then executes the Operator's chosen disposition:
 
-**Archive** — FCP creates an archive of the Entity Store, excluding all volatile paths listed in `.gitignore`. The archive is written to an Operator-specified path; that path should reside outside the entity root. The archived entity is inoperative — it cannot boot without explicit reactivation by an Operator — but its Integrity Chain, mnemonic records, and Imprint Record are fully preserved.
+**Archive** — FCP creates a gzip-compressed tar archive (`.tar.gz`) of the Entity Store at `<dest-path>`, with all paths relative to the entity root; volatile paths listed in the entity's `.gitignore` are excluded. The archived entity is inoperative — it cannot boot without explicit reactivation by an Operator — but its Integrity Chain, mnemonic records, and Imprint Record are fully preserved.
 
 **Destroy** — FCP deletes all files in the Entity Store root. Before deletion, `state/integrity.log` is copied to an Operator-specified location as a final audit record.
 
-**Partial decommission recovery.** A crash between Step 1 and Step 3 is detected at the next boot by the stale session token. Phase 2 (Crash Recovery) executes, and FCP presents the pending decommission instruction to the Operator via terminal prompt for confirmation before proceeding.
+**Partial decommission recovery.** A crash between Step 1 and Step 3 is detected at the next boot by the stale session token. Phase 2 (Crash Recovery) executes. FCP identifies the crash as decommission-in-progress by finding a `DECOMMISSION_PENDING` record in `state/integrity.log` with no subsequent `SLEEP_COMPLETE` — a regular crash has no such record. FCP presents the pending decommission to the Operator via terminal prompt for confirmation before proceeding.
 
 ---
 
@@ -1205,6 +1212,13 @@ fcp <entity-root>
 ```
 
 FCP executes the full Boot Sequence. If the boot succeeds, the session begins and the interactive loop opens. If the boot fails at any phase, FCP displays the failure reason and exits without issuing a session token.
+
+Decommission is invoked as a separate subcommand (§11):
+
+```
+fcp <entity-root> decommission --archive <dest-path>
+fcp <entity-root> decommission --destroy
+```
 
 ### 12.2 Interactive Loop
 
