@@ -222,10 +222,6 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
                 sil_gseq, mil_gseq, fcp_gseq, ui, pending_proposals,
             )
 
-            ui.verbose_actions([
-                {"tool": tr.tool_call_id, "error": tr.is_error} for tr in tool_results
-            ])
-
             # Add tool_result messages to history
             for msg in cpe.make_tool_result_message(tool_results):
                 chat_history.append(msg)
@@ -235,6 +231,7 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
 
             # Re-invoke so the CPE can react to tool results
             try:
+                ui.verbose_text("↩ re-invoke", f"turns={len(chat_history)}")
                 cpe_resp = cpe.invoke(system_prompt, chat_history, tools=FCP_TOOLS)
             except Exception as exc:
                 ui.error(str(exc))
@@ -243,7 +240,7 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
         # ── Final text response ────────────────────────────────────────────
         # Append narrative from the last (text-only) CPE response.
         if cpe_resp.text.strip():
-            ui.verbose_text("raw_cpe", cpe_resp.text[:600])
+            ui.verbose_text("raw_cpe", cpe_resp.text[:1200])
             ui.narrative(cpe_resp.text)
             _log_cpe_text(root, cpe_resp.text, fcp_gseq)
         chat_history.append({"role": "assistant", "content": cpe_resp.text})
@@ -428,22 +425,22 @@ def _dispatch_tool_calls(
         inp     = tc["input"]
         atype   = inp.get("type", "")
 
+        ui.verbose_text(f"→ {name}.{atype}", json.dumps(inp, ensure_ascii=False)[:400])
+
         if name == "fcp_mil":
             if atype == "memory_write":
                 content = inp.get("content", "")
                 envs    = memory_write(root, content, mil_gseq, spool=False)
-                tool_results.append(ToolResult(tool_id, _extract_env_text(envs)))
+                tr      = ToolResult(tool_id, _extract_env_text(envs))
             elif atype == "memory_recall":
                 query = inp.get("query", "")
                 envs  = memory_recall(root, query, mil_gseq, spool=False)
-                tool_results.append(ToolResult(tool_id, _extract_env_text(envs)))
+                tr    = ToolResult(tool_id, _extract_env_text(envs))
             elif atype == "closure_payload":
                 _handle_closure_payload(root, inp, sil_gseq, mil_gseq, ui)
-                tool_results.append(ToolResult(tool_id, "[Closure payload recorded]"))
+                tr = ToolResult(tool_id, "[Closure payload recorded]")
             else:
-                tool_results.append(ToolResult(
-                    tool_id, f"Unknown fcp_mil type: {atype!r}", is_error=True
-                ))
+                tr = ToolResult(tool_id, f"Unknown fcp_mil type: {atype!r}", is_error=True)
 
         elif name == "fcp_exec":
             skill = inp.get("skill", "")
@@ -452,36 +449,36 @@ def _dispatch_tool_calls(
                 envs   = dispatcher.dispatch_skill(skill, params, spool=False)
                 text   = _extract_env_text(envs)
                 is_err = bool(envs) and envs[0].get("type") != TYPE_SKILL_RESULT
-                tool_results.append(ToolResult(tool_id, text, is_error=is_err))
+                tr     = ToolResult(tool_id, text, is_error=is_err)
             elif atype == "skill_info":
                 envs   = dispatcher.dispatch_skill_info(skill, spool=False)
                 text   = _extract_env_text(envs)
                 is_err = bool(envs) and envs[0].get("type") != TYPE_SKILL_RESULT
-                tool_results.append(ToolResult(tool_id, text, is_error=is_err))
+                tr     = ToolResult(tool_id, text, is_error=is_err)
             else:
-                tool_results.append(ToolResult(
-                    tool_id, f"Unknown fcp_exec type: {atype!r}", is_error=True
-                ))
+                tr = ToolResult(tool_id, f"Unknown fcp_exec type: {atype!r}", is_error=True)
 
         elif name == "fcp_sil":
             if atype == "session_close":
                 close_requested = True
-                tool_results.append(ToolResult(tool_id, "[Session close initiated]"))
+                tr = ToolResult(tool_id, "[Session close initiated]")
             elif atype == "evolution_proposal":
                 _handle_evolution_proposal(root, inp, sil_gseq, ui, pending_proposals)
-                tool_results.append(ToolResult(
+                tr = ToolResult(
                     tool_id,
                     "[Evolution proposal registered. Awaiting Operator decision at session close.]",
-                ))
+                )
             else:
-                tool_results.append(ToolResult(
-                    tool_id, f"Unknown fcp_sil type: {atype!r}", is_error=True
-                ))
+                tr = ToolResult(tool_id, f"Unknown fcp_sil type: {atype!r}", is_error=True)
 
         else:
-            tool_results.append(ToolResult(
-                tool_id, f"Unknown tool: {name!r}", is_error=True
-            ))
+            tr = ToolResult(tool_id, f"Unknown tool: {name!r}", is_error=True)
+
+        ui.verbose_text(
+            f"← {name}.{atype}",
+            ("[ERR] " if tr.is_error else "") + tr.content[:600],
+        )
+        tool_results.append(tr)
 
     return tool_results, close_requested
 
