@@ -27,7 +27,7 @@ from typing import Any
 from .acp import (
     ACTOR_FCP, ACTOR_CPE, ACTOR_SIL,
     TYPE_MSG, TYPE_SESSION_CLOSE, TYPE_EVOLUTION_PROPOSAL, TYPE_CLOSURE_PAYLOAD,
-    TYPE_MEMO_RESULT,
+    TYPE_MEMO_RESULT, TYPE_PROPOSAL_PENDING,
     GseqCounter, build_envelope, chunk_payload,
 )
 from .boot import BootContext
@@ -420,6 +420,9 @@ def _format_inbox_event(env: dict) -> str:
         except Exception:
             return f"[Timeout]\n{data}"
 
+    if t == "PROPOSAL_PENDING":
+        return f"[Evolution Proposal registered] {data}"
+
     # Generic fallback for any other envelope type
     return f"[{t}]\n{data}" if data else f"[{t}]"
 
@@ -547,6 +550,14 @@ def _handle_evolution_proposal(
     })
     pending_proposals.append({"tx": env.tx, "content": content})
     # Per §10.5, outcome is never returned to the CPE.
+    # Spool a PROPOSAL_PENDING ACK to inbox so the CPE is re-invoked with feedback.
+    ack = build_envelope(
+        actor=ACTOR_SIL,
+        type_=TYPE_PROPOSAL_PENDING,
+        data="Evolution Proposal registered. Awaiting Operator decision at session close.",
+        gseq=sil_gseq.next(),
+    )
+    spool_msg(root, ack.to_dict())
     ui.info("[SIL] Evolution Proposal received. Decision at session close.")
 
 
