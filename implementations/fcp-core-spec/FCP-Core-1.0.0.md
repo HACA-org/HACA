@@ -471,7 +471,7 @@ Stage 0 checks both the current cycle's per-probe scores and the aggregate trend
 | `aliases[key].skill` | string | Target skill name; must reference a name present in `skills[]` |
 | `aliases[key].operator_only` | boolean | If `true`, this alias is rejected when issued from any source other than the interactive terminal prompt; default `false` |
 
-All seven built-in skills (§9.5) must be present in `skills[]` at every point after FAP completion.
+All eight built-in skills (§9.5) must be present in `skills[]` at every point after FAP completion.
 
 ### 3.10 Skill Manifest
 
@@ -1052,6 +1052,7 @@ Built-in skills are shipped with FCP and present in every entity's Skill Index f
 | `worker_skill` | Instantiates a Worker Skill sub-agent with a provided persona, context, and task |
 | `commit` | Stages and records a version-control checkpoint; requires an explicit path parameter; validates that the path is within the active workspace_focus declared in `state/workspace_focus.json`; accepts `--remote` to push to the remote configured in the workspace repository's git config (conventionally `origin`); rejects execution if workspace_focus is unset or if the path falls outside it |
 | `shell_run` | Executes a shell command within the active `workspace_focus` directory; the set of permitted commands is declared as an allowlist in the skill's manifest — the allowlist is static and immutable without an Endure cycle; rejects execution if `workspace_focus` is unset or if the requested command is not in the allowlist |
+| `web_fetch` | Fetches the content of a URL and returns it as text; the set of permitted URL prefixes is declared as an allowlist in the skill's manifest — the allowlist is static and immutable without an Endure cycle; rejects any URL not matched by the allowlist; content is delivered as chunked `SKILL_RESULT` envelopes; timeout is declared in the manifest and enforced by the SIL watchdog (§10.4) |
 
 `skill_audit` has three invocation paths: CPE dispatches it via `skill_request` to validate skills under development; the SIL invokes it as a read-only Worker Skill for `SEVERANCE_PENDING` resolution (§10.8); and the Operator invokes it via the `/skill audit` platform command (§12.3).
 
@@ -1259,7 +1260,7 @@ Platform commands are FCP-native operations that do not pass through the EXEC. M
                                files in io/spool/, rebuilds active_context/ symlinks from
                                memory/working-memory.json, and resets the consecutive crash
                                counter if the current boot passed Phase 2 cleanly
-/model                       — list available CPE inference endpoints and display the active one
+/model list                  — list available CPE inference endpoints and display the active one
 /model <name>                — switch the active CPE inference endpoint; Operator-exclusive;
                                updates cpe.backend in state/baseline.json, records a MODEL_CHANGE
                                entry to state/integrity_chain.jsonl, and updates
