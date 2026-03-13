@@ -1,0 +1,10 @@
+{
+  "name": "worker_skill",
+  "version": "1.0.0",
+  "description": "Instantiate a Worker Skill sub-agent with a provided persona, context, and task.",
+  "timeout_seconds": 120,
+  "background": false,
+  "irreversible": false,
+  "class": "builtin",
+  "permissions": []
+}

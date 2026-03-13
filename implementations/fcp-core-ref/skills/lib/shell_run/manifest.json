@@ -1,0 +1,11 @@
+{
+  "name": "shell_run",
+  "version": "1.0.0",
+  "description": "Execute a shell command within workspace_focus. Permitted commands declared as allowlist in this manifest.",
+  "timeout_seconds": 30,
+  "background": false,
+  "irreversible": true,
+  "class": "builtin",
+  "permissions": ["workspace_write"],
+  "allowlist": []
+}

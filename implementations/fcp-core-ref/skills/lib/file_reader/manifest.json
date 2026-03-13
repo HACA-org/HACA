@@ -1,0 +1,10 @@
+{
+  "name": "file_reader",
+  "version": "1.0.0",
+  "description": "Read a file within workspace/. Rejects any path outside workspace/.",
+  "timeout_seconds": 10,
+  "background": false,
+  "irreversible": false,
+  "class": "builtin",
+  "permissions": ["workspace_read"]
+}
