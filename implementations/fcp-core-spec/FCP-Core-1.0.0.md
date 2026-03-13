@@ -1197,8 +1197,8 @@ After a passing re-verification, the SIL writes `CRITICAL_CLEARED` to `state/int
 Decommission is the permanent retirement of the entity. The Operator issues the decommission instruction via the FCP command line, specifying the disposition upfront:
 
 ```
-fcp <entity-root> decommission --archive <dest-path>
-fcp <entity-root> decommission --destroy
+fcp-core <entity-root> decommission --archive <dest-path>
+fcp-core <entity-root> decommission --destroy
 ```
 
 `--archive` and `--destroy` are mutually exclusive. If invoked outside an active session, FCP starts a silent session solely to process the `DECOMMISSION` envelope and run the Sleep Cycle — the interactive loop does not open. The entity must not resist, delay, or circumvent the instruction.
@@ -1226,7 +1226,7 @@ The Operator Interface is the FCP terminal — the primary interaction surface b
 The Operator starts a session by invoking FCP from the command line, pointing it at the entity root:
 
 ```
-fcp <entity-root>
+fcp-core <entity-root>
 ```
 
 FCP executes the full Boot Sequence. If the boot succeeds, the session begins and the interactive loop opens. If the boot fails at any phase, FCP displays the failure reason and exits without issuing a session token.
@@ -1234,8 +1234,8 @@ FCP executes the full Boot Sequence. If the boot succeeds, the session begins an
 Decommission is invoked as a separate subcommand (§11):
 
 ```
-fcp <entity-root> decommission --archive <dest-path>
-fcp <entity-root> decommission --destroy
+fcp-core <entity-root> decommission --archive <dest-path>
+fcp-core <entity-root> decommission --destroy
 ```
 
 ### 12.2 Interactive Loop
@@ -1354,7 +1354,7 @@ The slash command registry is declared in `skills/index.json` as a `/command` al
 The Operator can inspect pending notifications at any time using the `/inbox` platform command (§12.3.1). Outside an active session, notifications are also accessible via:
 
 ```
-fcp <entity-root> --notifications
+fcp-core <entity-root> --notifications
 ```
 
 FCP reads `state/operator_notifications/` in timestamp order and displays each entry. Notifications that require an explicit Operator response — Critical condition acknowledgements, pending Evolution Proposals — are presented via terminal prompt immediately when FCP starts a session, before the Boot Sequence proceeds past Phase 6.
