@@ -192,7 +192,7 @@ def verify_integrity_document(entity_root: str | Path) -> tuple[bool, list[str]]
         if rel not in expected:
             errors.append(f"unauthorized addition: {rel} not in Integrity Document")
         elif expected[rel] != actual_hash:
-            errors.append(f"hash mismatch: {rel}")
+            errors.append(f"hash mismatch: {rel}  (current: {actual_hash[:16]}…)")
 
     # Check for files in document that are now missing
     for rel, _h in expected.items():

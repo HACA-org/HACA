@@ -3,6 +3,8 @@
 Comandos:
   fcp [entity-root]                → sessão plain (ANSI, zero deps)
   fcp tui [entity-root]            → sessão Rich TUI  (requer rich)
+  fcp doctor [entity-root]         → verificar integridade estrutural
+  fcp doctor --fix [entity-root]   → rebuild Integrity Document após edição directa
   fcp [entity-root] --notifications → mostra notificações pendentes
   fcp [entity-root] --status       → estado rápido da entidade
 
@@ -19,14 +21,18 @@ from pathlib import Path
 def main(argv: list[str] | None = None) -> int:
     raw = list(argv) if argv is not None else sys.argv[1:]
 
-    # Detect "tui" subcommand before argparse so it doesn't clash with
-    # the entity_root positional argument.
+    # Detect "tui" / "doctor" subcommands before argparse
     tui_mode = bool(raw and raw[0] == "tui")
     if tui_mode:
         raw = raw[1:]
 
+    doctor_mode = bool(raw and raw[0] == "doctor")
+    if doctor_mode:
+        raw = raw[1:]
+
+    subcmd = "tui" if tui_mode else ("doctor" if doctor_mode else "")
     parser = argparse.ArgumentParser(
-        prog="fcp" + (" tui" if tui_mode else ""),
+        prog="fcp" + (f" {subcmd}" if subcmd else ""),
         description="Filesystem Cognitive Platform — FCP-Core reference implementation",
     )
     parser.add_argument(
@@ -50,6 +56,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Print each cycle's messages and raw CPE response",
     )
+    parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="(doctor) Rebuild Integrity Document to match current structural files",
+    )
 
     args = parser.parse_args(raw)
     root = Path(args.entity_root).resolve()
@@ -64,6 +75,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.status:
         return _cmd_status(root)
 
+    if doctor_mode:
+        return _cmd_doctor(root, fix=args.fix)
+
     if tui_mode:
         return _cmd_tui(root, verbose=args.verbose)
 
@@ -77,6 +91,42 @@ def main(argv: list[str] | None = None) -> int:
 def _cmd_notifications(root: Path) -> int:
     from .operator import print_notifications
     print_notifications(root)
+    return 0
+
+
+def _cmd_doctor(root: Path, fix: bool = False) -> int:
+    """Verify structural integrity; rebuild Integrity Document if --fix given."""
+    from .sil import (
+        build_integrity_document,
+        write_integrity_document,
+        append_chain_entry,
+        verify_integrity_document,
+    )
+    from .fs import utcnow_iso
+
+    ok, errors = verify_integrity_document(root)
+    if ok:
+        print("Integrity document is clean — no mismatches found.")
+        return 0
+
+    print(f"Found {len(errors)} mismatch(es):")
+    for e in errors:
+        print(f"  {e}")
+
+    if not fix:
+        print("\nRun ./fcp doctor --fix to rebuild the Integrity Document.")
+        return 1
+
+    doc = build_integrity_document(root)
+    write_integrity_document(root, doc)
+    entry = {
+        "type":   "INTEGRITY_REPAIR",
+        "reason": "developer structural update (direct edit outside Endure Protocol)",
+        "files":  list(doc["files"].keys()),
+        "ts":     utcnow_iso(),
+    }
+    append_chain_entry(root, entry)
+    print(f"\nIntegrity document rebuilt — {len(doc['files'])} files tracked.")
     return 0
 
 

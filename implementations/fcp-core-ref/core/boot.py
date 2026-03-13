@@ -194,7 +194,8 @@ def run_boot(entity_root: str | Path) -> BootContext:
     # Step 2: structural file hashes
     ok, errors = verify_integrity_document(root)
     if not ok:
-        raise BootError("3", f"Integrity Document mismatch: {'; '.join(errors)}")
+        detail = "; ".join(errors)
+        raise BootError("3", f"Integrity Document mismatch: {detail}\nRun: ./fcp doctor --fix")
 
     # ------------------------------------------------------------------
     # Phase 4 — Skill Index
