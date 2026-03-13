@@ -1,0 +1,15 @@
+{
+  "name": "skill_create",
+  "description": "Stage a new skill cartridge for Endure installation.",
+  "aliases": [
+    "/skill-create"
+  ],
+  "permissions": [],
+  "params": {
+    "skill_name": "string",
+    "manifest": "string",
+    "narrative": "string"
+  },
+  "timeout_seconds": 30,
+  "irreversible": false
+}

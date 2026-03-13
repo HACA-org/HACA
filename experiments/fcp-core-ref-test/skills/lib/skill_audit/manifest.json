@@ -1,0 +1,11 @@
+{
+  "name": "skill_audit",
+  "description": "Validate a skill's manifest, executable, and index consistency; read-only.",
+  "aliases": ["/skill-audit"],
+  "permissions": [],
+  "params": {
+    "skill": "string"
+  },
+  "timeout_seconds": 30,
+  "irreversible": false
+}

@@ -1,0 +1,419 @@
+"""Execution Layer (EXEC) — FCP-Core §9 MVP subset.
+
+The EXEC is the sole component authorized to execute skills against the host.
+
+Skill authorization (§9.1/§9.2):
+  The SIL validates all manifests and executables at boot when building
+  skills/index.json.  The EXEC dispatches against this index without
+  per-execution re-validation — a skill present in the index is executed
+  directly.
+
+MVP scope (Fase 1):
+  - Skill Index loading and lookup
+  - Synchronous subprocess skill execution with timeout
+  - SKILL_RESULT / SKILL_ERROR written to io/inbox/
+  - Slash command resolution
+
+Deferred to Fase 2:
+  - Background / async skill execution
+  - Worker skills (CPE-invoked sub-agents)
+  - Action Ledger integration (irreversible side effects)
+  - Retry counter (fault.n_retry)
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import uuid
+from pathlib import Path
+from typing import Any
+
+from .acp import (
+    ACPEnvelope,
+    GseqCounter,
+    ACTOR_EXEC,
+    TYPE_SKILL_RESULT,
+    TYPE_SKILL_ERROR,
+    TYPE_SKILL_TIMEOUT,
+    TYPE_STRUCTURAL_ANOMALY,
+    build_envelope,
+    chunk_payload,
+)
+from .fs import (
+    read_json,
+    spool_msg,
+    utcnow_iso,
+)
+from .hooks import run_hook
+from .sil import append_integrity_log
+
+
+# ---------------------------------------------------------------------------
+# Skill Index (§9.1)
+# ---------------------------------------------------------------------------
+
+class SkillIndex:
+    """In-memory representation of skills/index.json.
+
+    Loaded once per session at Boot Phase 4.  The on-disk file was already
+    verified by the SIL (hash check) at Phase 3 — EXEC trusts this in-memory
+    representation for the session duration.
+    """
+
+    def __init__(self, index_data: dict[str, Any]) -> None:
+        self._data = index_data
+        # Map: skill_name → skill entry
+        self._skills: dict[str, dict[str, Any]] = {
+            s["name"]: s for s in index_data.get("skills", [])
+        }
+        # Map: /alias → skill_name
+        self._aliases: dict[str, str] = {}
+        for skill in self._skills.values():
+            for alias in skill.get("aliases", []):
+                self._aliases[alias] = skill["name"]
+
+    def get(self, skill_name: str) -> dict[str, Any] | None:
+        """Return the skill entry for *skill_name*, or None."""
+        return self._skills.get(skill_name)
+
+    def resolve_alias(self, alias: str) -> str | None:
+        """Return the skill name for a slash-command *alias*, or None."""
+        return self._aliases.get(alias)
+
+    def all_names(self) -> list[str]:
+        return list(self._skills.keys())
+
+    def all_aliases(self) -> list[str]:
+        return list(self._aliases.keys())
+
+
+def load_skill_index(entity_root: str | Path) -> SkillIndex:
+    """Load ``skills/index.json`` and return a SkillIndex.
+
+    Raises:
+        FileNotFoundError: if the index file is absent.
+        ValueError: if the file is malformed.
+    """
+    path = Path(entity_root) / "skills" / "index.json"
+    if not path.exists():
+        raise FileNotFoundError(f"skills/index.json not found at {entity_root}")
+    data = read_json(path)
+    return SkillIndex(data)
+
+
+def build_skill_index(entity_root: str | Path) -> dict[str, Any]:
+    """Scan ``skills/`` and ``skills/lib/`` and produce the skills/index.json content.
+
+    Regular skills (``skills/<name>/``) are user-installed cartridges visible in
+    the CPE context block.  Built-in skills (``skills/lib/<name>/``) are always
+    present and marked ``builtin: true``; they are excluded from the
+    ``[SKILLS INDEX]`` CPE context block (§9.5) but fully dispatched by EXEC.
+
+    Only skills with a valid manifest.json are included (§9.1 / §4 step 1).
+    execute.* is optional; skills without one are included but not executable.
+    """
+    entity_root = Path(entity_root)
+    skills_dir  = entity_root / "skills"
+    skills: list[dict[str, Any]] = []
+
+    if not skills_dir.exists():
+        return {"version": "1.0", "skills": []}
+
+    def _scan_skill_dir(skill_dir: Path, builtin: bool) -> None:
+        manifest_path = skill_dir / "manifest.json"
+        if not manifest_path.exists():
+            return
+        try:
+            manifest = read_json(manifest_path)
+        except Exception:
+            return
+        if "name" not in manifest:
+            return
+        # Locate executable (optional)
+        exe: Path | None = None
+        for exe_name in ("execute.sh", "execute.py"):
+            candidate = skill_dir / exe_name
+            if candidate.exists():
+                exe = candidate
+                break
+        manifest["_executable"] = str(exe.relative_to(entity_root)) if exe else ""
+        # Narrative presence flag
+        narrative = skill_dir / f"{skill_dir.name}.md"
+        manifest["_has_narrative"] = narrative.exists()
+        if builtin:
+            manifest["builtin"] = True
+        skills.append(manifest)
+
+    # Regular user-installed skills
+    for skill_dir in sorted(skills_dir.iterdir()):
+        if not skill_dir.is_dir() or skill_dir.name == "lib":
+            continue
+        _scan_skill_dir(skill_dir, builtin=False)
+
+    # Built-in skills in lib/ (§9.5)
+    lib_dir = skills_dir / "lib"
+    if lib_dir.exists():
+        for skill_dir in sorted(lib_dir.iterdir()):
+            if skill_dir.is_dir():
+                _scan_skill_dir(skill_dir, builtin=True)
+
+    return {"version": "1.0", "skills": skills}
+
+
+# ---------------------------------------------------------------------------
+# Dispatch (§9.2)
+# ---------------------------------------------------------------------------
+
+class ExecDispatcher:
+    """Stateful dispatcher for the current session.
+
+    Holds the skill index and gseq counter.  Used by the session loop and
+    the operator interface (slash commands).
+    """
+
+    def __init__(
+        self,
+        entity_root:  str | Path,
+        skill_index:  SkillIndex,
+        gseq_counter: GseqCounter,
+        session_id:   str = "",
+    ) -> None:
+        self.entity_root  = Path(entity_root)
+        self.skill_index  = skill_index
+        self.gseq_counter = gseq_counter
+        self.session_id   = session_id
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def dispatch_skill(
+        self,
+        skill_name: str,
+        params:     dict[str, Any],
+        spool:      bool = True,
+    ) -> list[dict[str, Any]]:
+        """Execute skill *skill_name* with *params*.
+
+        The skill index was validated by the SIL at boot.  EXEC dispatches
+        directly against the index — a skill present is executed immediately.
+
+        Args:
+            spool: When True (default), write result envelopes to io/inbox/.
+                   When False, return envelopes inline without spooling.
+
+        Returns:
+            List of ACP envelope dicts (spooled to io/inbox/ when spool=True).
+        """
+        entry = self.skill_index.get(skill_name)
+        if entry is None:
+            msg = f"Skill {skill_name!r} not in index — possible structural anomaly."
+            self._log_structural_anomaly(skill_name, msg)
+            return self._write_skill_error(skill_name, msg, spool=spool)
+
+        # --- Hooks: pre_skill ---
+        run_hook(self.entity_root, "pre_skill", self.session_id, {
+            "FCP_SKILL_NAME":   skill_name,
+            "FCP_SKILL_PARAMS": json.dumps(params),
+        })
+
+        # --- Execute ---
+        results = self._execute(skill_name, entry, params, spool=spool)
+
+        # --- Hooks: post_skill ---
+        _STATUS = {
+            TYPE_SKILL_RESULT:  "success",
+            TYPE_SKILL_ERROR:   "error",
+            TYPE_SKILL_TIMEOUT: "timeout",
+        }
+        status = _STATUS.get(results[0]["type"] if results else "", "error")
+        run_hook(self.entity_root, "post_skill", self.session_id, {
+            "FCP_SKILL_NAME":   skill_name,
+            "FCP_SKILL_STATUS": status,
+        })
+
+        return results
+
+    def dispatch_slash(self, slash_input: str) -> list[dict[str, Any]]:
+        """Resolve and dispatch a slash command (§12.3).
+
+        Args:
+            slash_input: Raw operator input starting with '/'.
+
+        Returns:
+            Result envelopes, or an error if the command is unrecognised.
+        """
+        parts = slash_input.strip().split(None, 1)
+        alias = parts[0]
+        raw_params = parts[1] if len(parts) > 1 else ""
+
+        skill_name = self.skill_index.resolve_alias(alias)
+        if skill_name is None:
+            return self._write_skill_error(
+                alias,
+                f"Unknown slash command {alias!r}.  "
+                f"Available: {', '.join(self.skill_index.all_aliases())}",
+            )
+
+        # Simple param parsing for slash commands: key=value pairs
+        params: dict[str, Any] = {}
+        if raw_params:
+            for token in raw_params.split():
+                if "=" in token:
+                    k, _, v = token.partition("=")
+                    params[k] = v
+
+        return self.dispatch_skill(skill_name, params)
+
+    def dispatch_skill_info(self, skill_name: str, spool: bool = True) -> list[dict[str, Any]]:
+        """Read skills/<skill_name>/<skill_name>.md and spool as SKILL_RESULT.
+
+        Returns error envelope if skill not found or narrative absent.
+        """
+        entry = self.skill_index.get(skill_name)
+        if entry is None:
+            return self._write_skill_error(
+                skill_name,
+                f"Skill {skill_name!r} not found in index.",
+                spool=spool,
+            )
+        if not entry.get("_has_narrative"):
+            return self._write_skill_error(
+                skill_name,
+                f"No narrative ({skill_name}.md) for skill {skill_name!r}.",
+                spool=spool,
+            )
+        exe_rel = entry.get("_executable", "")
+        if exe_rel:
+            narrative_path = (self.entity_root / exe_rel).parent / f"{skill_name}.md"
+        elif entry.get("builtin"):
+            narrative_path = self.entity_root / "skills" / "lib" / skill_name / f"{skill_name}.md"
+        else:
+            narrative_path = self.entity_root / "skills" / skill_name / f"{skill_name}.md"
+        try:
+            content = narrative_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return self._write_skill_error(skill_name, f"Could not read narrative: {exc}", spool=spool)
+        return self._write_skill_result(skill_name, content, spool=spool)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _execute(
+        self,
+        skill_name: str,
+        entry:      dict[str, Any],
+        params:     dict[str, Any],
+        spool:      bool = True,
+    ) -> list[dict[str, Any]]:
+        """Run the skill's executable as a subprocess and return result envelopes."""
+        exe_rel  = entry.get("_executable", "")
+        if not exe_rel:
+            return self._write_skill_error(
+                skill_name,
+                f"Skill {skill_name!r} has no executable (execute.sh / execute.py).",
+                spool=spool,
+            )
+        exe_path = self.entity_root / exe_rel
+        timeout  = entry.get("timeout_seconds", 60)
+
+        # Build environment: pass params as FCP_PARAM_<NAME>=<VALUE>
+        env = os.environ.copy()
+        env["FCP_ENTITY_ROOT"] = str(self.entity_root)
+        env["FCP_SKILL_NAME"]  = skill_name
+        for k, v in params.items():
+            env[f"FCP_PARAM_{k.upper()}"] = str(v)
+
+        try:
+            result = subprocess.run(
+                [str(exe_path)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+                cwd=str(self.entity_root),
+            )
+            if result.returncode == 0:
+                output = result.stdout.strip() or f"Skill {skill_name} completed."
+                return self._write_skill_result(skill_name, output, spool=spool)
+            else:
+                error = result.stderr.strip() or f"Exit code {result.returncode}"
+                return self._write_skill_error(skill_name, error, spool=spool)
+
+        except subprocess.TimeoutExpired:
+            return self._write_skill_error(
+                skill_name,
+                f"Skill {skill_name!r} timed out after {timeout}s.",
+                type_=TYPE_SKILL_TIMEOUT,
+                spool=spool,
+            )
+        except Exception as exc:
+            return self._write_skill_error(skill_name, str(exc), spool=spool)
+
+    def _log_structural_anomaly(self, skill_name: str, reason: str) -> None:
+        """Log a structural anomaly to integrity.log (§9.1).
+
+        Skill-absent-from-index failures are logged here so the SIL has a
+        persistent record for post-session analysis.
+        """
+        env = build_envelope(
+            actor=ACTOR_EXEC,
+            type_=TYPE_STRUCTURAL_ANOMALY,
+            data=json.dumps({"skill": skill_name, "reason": reason, "ts": utcnow_iso()}),
+            gseq=self.gseq_counter.next(),
+        )
+        append_integrity_log(self.entity_root, env)
+
+    def _write_skill_result(
+        self,
+        skill_name: str,
+        output:     str,
+        spool:      bool = True,
+    ) -> list[dict[str, Any]]:
+        payload = json.dumps({
+            "skill":  skill_name,
+            "status": "ok",
+            "output": output,
+            "ts":     utcnow_iso(),
+        })
+        envelopes = chunk_payload(
+            actor=ACTOR_EXEC,
+            type_=TYPE_SKILL_RESULT,
+            payload_str=payload,
+            gseq_start=self.gseq_counter.next(),
+        )
+        result = []
+        for env in envelopes:
+            if spool:
+                spool_msg(self.entity_root, env.to_dict())
+            result.append(env.to_dict())
+        return result
+
+    def _write_skill_error(
+        self,
+        skill_name: str,
+        error:      str,
+        type_:      str = TYPE_SKILL_ERROR,
+        spool:      bool = True,
+    ) -> list[dict[str, Any]]:
+        payload = json.dumps({
+            "skill":  skill_name,
+            "status": "error",
+            "error":  error,
+            "ts":     utcnow_iso(),
+        })
+        envelopes = chunk_payload(
+            actor=ACTOR_EXEC,
+            type_=type_,
+            payload_str=payload,
+            gseq_start=self.gseq_counter.next(),
+        )
+        result = []
+        for env in envelopes:
+            if spool:
+                spool_msg(self.entity_root, env.to_dict())
+            result.append(env.to_dict())
+        return result

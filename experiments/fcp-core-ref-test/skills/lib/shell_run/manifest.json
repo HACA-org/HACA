@@ -1,0 +1,18 @@
+{
+  "name":            "shell_run",
+  "description":     "Execute a shell command in the active workspace_focus directory.",
+  "aliases":         ["/run"],
+  "permissions":     ["shell.exec"],
+  "params":          {
+    "command": "string"
+  },
+  "timeout_seconds": 30,
+  "irreversible":    true,
+  "allowlist": [
+    "cat", "head", "tail", "wc", "sort", "uniq", "diff", "echo", "pwd",
+    "ls", "find", "grep", "du",
+    "git",
+    "python3", "python", "node", "npm", "npx",
+    "make", "cargo", "go"
+  ]
+}

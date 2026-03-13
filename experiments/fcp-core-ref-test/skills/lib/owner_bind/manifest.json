@@ -1,0 +1,12 @@
+{
+  "name": "owner_bind",
+  "description": "FAP operator binding (cold-start only).",
+  "aliases": [],
+  "permissions": [
+    "memory.write"
+  ],
+  "params": {},
+  "timeout_seconds": 30,
+  "irreversible": false,
+  "operator_only": true
+}
