@@ -282,7 +282,7 @@ The ACP (Atomic Chunked Protocol) envelope is the inter-component communication 
 }
 ```
 
-`cpe.topology` must be `"transparent"` — any other value causes boot abort with no session token issued. `cpe.backend` identifies the model or endpoint used for CPE invocations; its format is implementation-defined.
+`cpe.topology` must be `"transparent"` — any other value causes boot abort with no session token issued. `cpe.backend` identifies the model or endpoint used for CPE invocations; its format is implementation-defined. `cpe.backend` can be updated by the Operator via `/model <name>` — a direct structural modification that bypasses the Endure Protocol; the change is recorded as a `MODEL_CHANGE` integrity chain entry.
 
 ### 3.3 Integrity Document
 
@@ -536,7 +536,7 @@ If the probe's `target` file is absent from the Memory Store, the SIL logs the a
 
 ### 3.12 Integrity Chain Entry
 
-Each line in `state/integrity_chain.jsonl` is a chain entry. Three entry types exist.
+Each line in `state/integrity_chain.jsonl` is a chain entry. Four entry types exist.
 
 **Genesis entry** — written at FAP Step 7; seq 0; the entity's permanent identity anchor:
 
@@ -583,20 +583,39 @@ Each line in `state/integrity_chain.jsonl` is a chain entry. Three entry types e
 }
 ```
 
+**MODEL_CHANGE** — written when the Operator updates `cpe.backend` via `/model <name>`; no `EVOLUTION_AUTH` required:
+
+```json
+{
+  "seq": 8,
+  "type": "MODEL_CHANGE",
+  "ts": "2026-03-11T17:00:00Z",
+  "from": "claude-sonnet-4-6",
+  "to": "claude-opus-4-6",
+  "files": {
+    "state/baseline.json": "sha256:..."
+  },
+  "integrity_doc_hash": "sha256:...",
+  "prev_hash": "sha256:..."
+}
+```
+
 | Field | Type | Applicable | Description |
 |---|---|---|---|
 | `seq` | integer | all | Monotonically increasing; `0` for genesis; `1`-indexed for all subsequent entries |
-| `type` | string | all | Entry type: `"genesis"`, `"ENDURE_COMMIT"`, or `"SEVERANCE_COMMIT"` |
+| `type` | string | all | Entry type: `"genesis"`, `"ENDURE_COMMIT"`, `"SEVERANCE_COMMIT"`, or `"MODEL_CHANGE"` |
 | `ts` | string | all | ISO 8601 UTC timestamp |
 | `imprint_hash` | string | genesis | SHA-256 of the finalized Imprint Record; the Genesis Omega value |
 | `evolution_auth_digest` | string | ENDURE_COMMIT | SHA-256 of the `EVOLUTION_AUTH` ACP envelope that authorized this commit; used by Evolutionary Drift detection (§10.2) |
 | `skill_removed` | string | SEVERANCE_COMMIT | Name of the removed skill |
 | `reason` | string | SEVERANCE_COMMIT | Human-readable reason for removal |
-| `files` | object | ENDURE_COMMIT, SEVERANCE_COMMIT | Map of modified tracked file paths (relative to entity root) to their SHA-256 hashes after the write |
-| `integrity_doc_hash` | string | ENDURE_COMMIT, SEVERANCE_COMMIT | SHA-256 of `state/integrity.json` as written atomically during this commit; this is the verifiable anchor for checkpoint entries |
+| `from` | string | MODEL_CHANGE | Previous `cpe.backend` value |
+| `to` | string | MODEL_CHANGE | New `cpe.backend` value |
+| `files` | object | ENDURE_COMMIT, SEVERANCE_COMMIT, MODEL_CHANGE | Map of modified tracked file paths (relative to entity root) to their SHA-256 hashes after the write |
+| `integrity_doc_hash` | string | ENDURE_COMMIT, SEVERANCE_COMMIT, MODEL_CHANGE | SHA-256 of `state/integrity.json` as written atomically during this commit; this is the verifiable anchor for checkpoint entries |
 | `prev_hash` | string or null | all | SHA-256 of the previous entry's complete JSON line as stored in the file (excluding the trailing newline); `null` for genesis |
 
-**Chain validation.** Each entry's `prev_hash` must equal the SHA-256 of the previous entry line as written. Phase 3 Step 1 reads `last_checkpoint` from `state/integrity.json`, locates the entry at that `seq`, verifies its SHA-256 matches the recorded digest, then validates `prev_hash` continuity forward. If `last_checkpoint` is `null`, validation starts from seq 0. Evolutionary Drift detection (§10.2) additionally verifies that every `ENDURE_COMMIT` — but not `SEVERANCE_COMMIT` — carries a valid `evolution_auth_digest`.
+**Chain validation.** Each entry's `prev_hash` must equal the SHA-256 of the previous entry line as written. Phase 3 Step 1 reads `last_checkpoint` from `state/integrity.json`, locates the entry at that `seq`, verifies its SHA-256 matches the recorded digest, then validates `prev_hash` continuity forward. If `last_checkpoint` is `null`, validation starts from seq 0. Evolutionary Drift detection (§10.2) additionally verifies that every `ENDURE_COMMIT` — but not `SEVERANCE_COMMIT` or `MODEL_CHANGE` — carries a valid `evolution_auth_digest`.
 
 **Checkpoint identification.** Checkpoint entries carry no dedicated field — they are identified solely by their `seq` matching `last_checkpoint.seq` in `state/integrity.json`. The verifiable anchor is `integrity_doc_hash`, not a flag in the chain entry itself.
 
@@ -1240,7 +1259,12 @@ Platform commands are FCP-native operations that do not pass through the EXEC. M
                                files in io/spool/, rebuilds active_context/ symlinks from
                                memory/working-memory.json, and resets the consecutive crash
                                counter if the current boot passed Phase 2 cleanly
-/models                      — list available CPE inference endpoints
+/model                       — list available CPE inference endpoints and display the active one
+/model <name>                — switch the active CPE inference endpoint; Operator-exclusive;
+                               updates cpe.backend in state/baseline.json, records a MODEL_CHANGE
+                               entry to state/integrity_chain.jsonl, and updates
+                               state/integrity.json atomically; takes effect at the next session
+                               start
 /exit | /bye | /close        — requires active session; triggers normal close (CPE emits
                                closure_payload + session_close)
 /new | /clear | /reset       — requires active session; triggers a forced close (session token
