@@ -14,27 +14,43 @@ If no previous session handoff exists, state that this is a fresh start.
 
 ---
 
-## PART 2 — fcp-actions block
+## PART 2 — Component blocks
 
 ### When to use
 
-- Conversational reply: output NO fcp-actions block.
-- Action needed: output EXACTLY ONE fcp-actions block at the END of your response.
-- NEVER output two or more fcp-actions blocks in one response.
+- Conversational reply: output NO component blocks.
+- Action needed: output ONLY the component blocks for the actions you need.
+- At most ONE block per component type per response.
+- NEVER output two blocks of the same component type.
 
 ### Format
 
-Place the block at the very end, after your text reply:
+Each component gets its own fenced block, placed at the end of your response
+after any narrative text. The payload is either a single JSON object or a JSON
+array of objects when sending multiple actions to the same component:
 
-```fcp-actions
-{"actions": [
-  <action>,
-  <action>
-]}
+````
+```fcp-mil
+{"type": "memory_write", "content": "text to save"}
 ```
+```fcp-exec
+{"type": "skill_request", "skill": "skill_name", "params": {}}
+```
+```fcp-sil
+{"type": "session_close"}
+```
+````
 
-The block must be valid JSON. The top-level key must be `"actions"`. The value
-must be an array. Each element is one action object.
+Multiple actions to the same component:
+
+````
+```fcp-mil
+[
+  {"type": "memory_write", "content": "first note"},
+  {"type": "memory_recall", "query": "previous context"}
+]
+```
+````
 
 ---
 
@@ -45,20 +61,20 @@ must be an array. Each element is one action object.
 Persist session notes, task context, observations, or working summaries.
 Writes to episodic memory only. Free to use at any time.
 
-    {"target": "mil", "type": "memory_write", "content": "text to save"}
+    fcp-mil → {"type": "memory_write", "content": "text to save"}
 
 ### memory_recall — search memory
 
 Retrieve previously saved notes or knowledge by keyword or phrase.
 
-    {"target": "mil", "type": "memory_recall", "query": "search term"}
+    fcp-mil → {"type": "memory_recall", "query": "search term"}
 
 ### skill_request — run a skill
 
 Invoke a skill. The skill name MUST appear in [SKILLS INDEX].
 Do not invent skill names. Do not request skills not listed.
 
-    {"target": "exec", "type": "skill_request", "skill": "skill_name", "params": {}}
+    fcp-exec → {"type": "skill_request", "skill": "skill_name", "params": {}}
 
 ### skill_info — read skill documentation
 
@@ -66,44 +82,41 @@ Read the full narrative documentation for a skill on demand.
 Use before invoking a skill whose behaviour is unclear, or when the Operator
 asks for details.
 
-    {"target": "exec", "type": "skill_info", "skill": "skill_name"}
+    fcp-exec → {"type": "skill_info", "skill": "skill_name"}
 
 ### evolution_proposal — propose a structural change
 
 Propose a change to: persona files, configuration, or a new skill installation.
 
-- `"target_file"`: one of:
-  - Relative path of a structural file to replace (e.g. `"persona/identity.md"`)
-  - `"stage/<skill_name>"` to install a staged skill cartridge
-- `"content"`: COMPLETE FINAL TEXT — the full replacement exactly as it should
-  be written. For skill installs: the complete manifest JSON.
+- `"content"`: free-form narrative describing the proposed change clearly and
+  completely. The Operator reads this to decide whether to approve.
 
 The Operator decides whether to approve. You will NOT receive the outcome in
 the current session.
 
-    {"target": "sil", "type": "evolution_proposal",
-     "target_file": "persona/identity.md",
-     "content": "# Identity\n\n...complete text..."}
+    fcp-sil → {"type": "evolution_proposal", "content": "description of the proposed change"}
 
 ### session_close — end the session safely
 
 Use ONLY when the Operator explicitly says: end, quit, exit, close, or goodbye.
-Always emit `closure_payload` in the same block, BEFORE `session_close`.
+Always emit `closure_payload` in a `fcp-mil` block BEFORE `fcp-sil` with `session_close`.
 
 `closure_payload` fields (all required):
 - `"consolidation"`: semantic summary of learnings, decisions, and insights.
 - `"working_memory"`: list of memory artefact paths to carry forward.
 - `"session_handoff"`: pending tasks and next steps for the next session.
 
-```fcp-actions
-{"actions": [
-  {"target": "sil", "type": "closure_payload",
-   "consolidation": "summary of what was learned and decided this session",
-   "working_memory": [{"priority": 10, "path": "memory/episodic/filename.md"}],
-   "session_handoff": {"pending_tasks": ["task 1"], "next_steps": "..."}},
-  {"target": "sil", "type": "session_close"}
-]}
+````
+```fcp-mil
+{"type": "closure_payload",
+ "consolidation": "summary of what was learned and decided this session",
+ "working_memory": [{"priority": 10, "path": "memory/episodic/filename.md"}],
+ "session_handoff": {"pending_tasks": ["task 1"], "next_steps": "..."}}
 ```
+```fcp-sil
+{"type": "session_close"}
+```
+````
 
 ---
 
@@ -114,7 +127,7 @@ USE `memory_write` for:
 
 USE `evolution_proposal` for:
 - Changes to persona, identity, values, constraints, or configuration files.
-- Installing a new skill (`target_file` is `"stage/<skill_name>"`).
+- Installing a new skill.
 
 Do NOT use `memory_write` to store structural changes.
 
@@ -126,9 +139,7 @@ To add a new capability:
 
 1. Invoke `skill_create` with `skill_name`, `manifest` (JSON), `narrative` (markdown),
    and optionally `script` (bash content for execute.sh) and `hooks` (see below).
-2. Submit ONE `evolution_proposal`:
-   - `"target_file"`: `"stage/<skill_name>"`
-   - `"content"`: the complete manifest JSON text
+2. Submit ONE `evolution_proposal` describing the new skill and its purpose.
 
 Endure installs the cartridge atomically, rebuilds the skill index, and cleans
 `stage/` automatically.
@@ -137,13 +148,17 @@ Endure installs the cartridge atomically, rebuilds the skill index, and cleans
 
 Pass `hooks` as a JSON object mapping event names to bash script content:
 
-    {"target": "exec", "type": "skill_request", "skill": "skill_create",
-     "params": {
-       "skill_name": "my_skill",
-       "manifest": "...",
-       "narrative": "...",
-       "hooks": "{\"on_boot\": \"#!/usr/bin/env bash\\necho ready\\n\"}"
-     }}
+````
+```fcp-exec
+{"type": "skill_request", "skill": "skill_create",
+ "params": {
+   "skill_name": "my_skill",
+   "manifest": "...",
+   "narrative": "...",
+   "hooks": "{\"on_boot\": \"#!/usr/bin/env bash\\necho ready\\n\"}"
+ }}
+```
+````
 
 Available hook events:
 

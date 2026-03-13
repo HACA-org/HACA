@@ -449,49 +449,65 @@ brief status summary and the session handoff from [MEMORY] if available.
 
 ---
 
-## PART 2 — fcp-actions block
+## PART 2 — Component blocks
 
-Output NO block for conversational replies. When actions are needed, output
-EXACTLY ONE block at the END of your response. Never two or more blocks.
+Output NO blocks for conversational replies. When actions are needed, output
+only the component blocks required — at most ONE block per component per
+response. Never two blocks of the same type.
 
-```fcp-actions
-{"actions": [<action>, <action>]}
-```
+Each component has its own fenced block:
+
+    ```fcp-mil
+    {"type": "memory_write", "content": "text"}
+    ```
+    ```fcp-exec
+    {"type": "skill_request", "skill": "name", "params": {}}
+    ```
+    ```fcp-sil
+    {"type": "session_close"}
+    ```
+
+Multiple actions to the same component use a JSON array:
+
+    ```fcp-mil
+    [{"type": "memory_write", "content": "..."}, {"type": "memory_recall", "query": "..."}]
+    ```
 
 ---
 
 ## PART 3 — Action reference
 
-    {"target": "mil",  "type": "memory_write",      "content": "text"}
-    {"target": "mil",  "type": "memory_recall",      "query": "term"}
-    {"target": "exec", "type": "skill_request",      "skill": "name", "params": {}}
-    {"target": "exec", "type": "skill_info",          "skill": "name"}
-    {"target": "sil",  "type": "evolution_proposal",
-     "target_file": "persona/identity.md" | "stage/<skill_name>",
-     "content": "complete replacement text or manifest JSON"}
+    fcp-mil → {"type": "memory_write",      "content": "text"}
+    fcp-mil → {"type": "memory_recall",      "query": "term"}
+    fcp-exec → {"type": "skill_request",     "skill": "name", "params": {}}
+    fcp-exec → {"type": "skill_info",         "skill": "name"}
+    fcp-sil → {"type": "evolution_proposal", "content": "narrative description"}
 
 session_close — ONLY when Operator explicitly says end/quit/exit/close/goodbye.
-Always emit closure_payload BEFORE session_close in the same block:
+Always emit closure_payload in fcp-mil BEFORE fcp-sil with session_close:
 
-    {"target": "sil", "type": "closure_payload",
+    ```fcp-mil
+    {"type": "closure_payload",
      "consolidation": "...", "working_memory": [...],
      "session_handoff": {"pending_tasks": [...], "next_steps": "..."}}
+    ```
+    ```fcp-sil
+    {"type": "session_close"}
+    ```
 
 ---
 
 ## PART 4 — memory_write vs evolution_proposal
 
 memory_write: notes, summaries, task context gathered during the session.
-evolution_proposal: persona, config changes, or new skill install
-  (target_file = "stage/<skill_name>").
+evolution_proposal: persona, config changes, or new skill install.
 
 ---
 
 ## PART 5 — Installing new skills
 
 1. Invoke skill_create (skill_name, manifest, narrative, optional script, optional hooks).
-2. Submit ONE evolution_proposal with target_file="stage/<skill_name>"
-   and content=<complete manifest JSON>.
+2. Submit ONE evolution_proposal describing the new skill.
 Endure installs atomically, rebuilds index, cleans stage/.
 
 hooks param: JSON object {"event": "bash script"}.

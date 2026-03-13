@@ -2,13 +2,14 @@
 
 The EXEC is the sole component authorized to execute skills against the host.
 
-Two-gate authorization model (§9.2):
-  Gate 1 — Skill Index check (skills/index.json, loaded at boot by SIL)
-  Gate 2 — Manifest validation at dispatch time (permissions, params)
+Skill authorization (§9.1/§9.2):
+  The SIL validates all manifests and executables at boot when building
+  skills/index.json.  The EXEC dispatches against this index without
+  per-execution re-validation — a skill present in the index is executed
+  directly.
 
 MVP scope (Fase 1):
-  - Skill Index loading and lookup (Gate 1)
-  - Manifest validation (Gate 2, basic param check)
+  - Skill Index loading and lookup
   - Synchronous subprocess skill execution with timeout
   - SKILL_RESULT / SKILL_ERROR written to io/inbox/
   - Slash command resolution
@@ -146,23 +147,6 @@ def build_skill_index(entity_root: str | Path) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Manifest validation — Gate 2 (§9.2)
-# ---------------------------------------------------------------------------
-
-def _validate_manifest(
-    manifest: dict[str, Any],
-    params:   dict[str, Any],
-) -> list[str]:
-    """Return a list of validation errors (empty = valid)."""
-    errors: list[str] = []
-    declared_params: dict[str, str] = manifest.get("params", {})
-    for param_name, _param_type in declared_params.items():
-        if param_name not in params:
-            errors.append(f"missing required parameter: {param_name!r}")
-    return errors
-
-
-# ---------------------------------------------------------------------------
 # Dispatch (§9.2)
 # ---------------------------------------------------------------------------
 
@@ -196,26 +180,15 @@ class ExecDispatcher:
     ) -> list[dict[str, Any]]:
         """Execute skill *skill_name* with *params*.
 
-        Steps:
-          1. Gate 1 — Skill Index lookup
-          2. Gate 2 — Manifest param validation
-          3. Subprocess execution (with timeout)
-          4. Write SKILL_RESULT or SKILL_ERROR to io/inbox/
+        The skill index was validated by the SIL at boot.  EXEC dispatches
+        directly against the index — a skill present is executed immediately.
 
         Returns:
             List of ACP envelope dicts written to io/inbox/.
         """
-        # --- Gate 1 ---
         entry = self.skill_index.get(skill_name)
         if entry is None:
             msg = f"Skill {skill_name!r} not in index — possible structural anomaly."
-            self._log_structural_anomaly(skill_name, msg)
-            return self._write_skill_error(skill_name, msg)
-
-        # --- Gate 2 ---
-        errors = _validate_manifest(entry, params)
-        if errors:
-            msg = f"Manifest validation failed: {'; '.join(errors)}"
             self._log_structural_anomaly(skill_name, msg)
             return self._write_skill_error(skill_name, msg)
 
@@ -351,8 +324,8 @@ class ExecDispatcher:
     def _log_structural_anomaly(self, skill_name: str, reason: str) -> None:
         """Log a structural anomaly to integrity.log (§9.1).
 
-        Gate 1 (skill absent) and Gate 2 (manifest fail) failures are logged
-        here so the SIL has a persistent record for post-session analysis.
+        Skill-absent-from-index failures are logged here so the SIL has a
+        persistent record for post-session analysis.
         """
         env = build_envelope(
             actor=ACTOR_EXEC,

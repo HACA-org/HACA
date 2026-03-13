@@ -2,7 +2,7 @@
 
 Orquestra o ciclo cognitivo:
   drain inbox → consolidar → montar contexto → invocar CPE →
-  → parsear fcp-actions → despachar → próximo ciclo
+  → parse component blocks → despachar → próximo ciclo
 
 Gestão de sessão:
   - Operator input via terminal, injectado como MSG em io/inbox/
@@ -55,9 +55,9 @@ from .operator import (
     write_notification, SEVERITY_DEGRADED, SEVERITY_INFO,
 )
 
-# ── regex para bloco fcp-actions ──────────────────────────────────────────
-_FCP_ACTIONS_RE = re.compile(
-    r"```fcp-actions\s*\n(.*?)\n```",
+# ── regex para blocos per-component (§6.2) ────────────────────────────────
+_COMPONENT_RE = re.compile(
+    r"```(fcp-exec|fcp-mil|fcp-sil)\s*\n(.*?)\n```",
     re.DOTALL,
 )
 
@@ -227,8 +227,8 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
         )
         append_session_event(root, cpe_env.to_dict())
 
-        # ── Parse fcp-actions block ─────────────────────────────────────────
-        narrative, actions, parse_error = _parse_fcp_actions(raw_response)
+        # ── Parse per-component blocks ──────────────────────────────────────
+        narrative, blocks, parse_error = _parse_component_blocks(raw_response)
 
         if narrative.strip():
             ui.narrative(narrative)
@@ -238,44 +238,46 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
             _log_parse_error(root, parse_error, fcp_gseq)
             continue
 
-        ui.verbose_actions(actions)
+        all_actions = [a for acts in blocks.values() for a in acts]
+        ui.verbose_actions(all_actions)
 
-        # ── Dispatch actions ────────────────────────────────────────────────
-        close_requested = False
-        for action in actions:
-            target = action.get("target")
-            atype  = action.get("type")
-
-            if target == "sil" and atype == "session_close":
-                close_requested = True
-
-            elif target == "sil" and atype == "closure_payload":
+        # ── Dispatch: fcp-mil first (§6 — closure_payload before session_close)
+        for action in blocks.get("mil", []):
+            atype = action.get("type")
+            if atype == "memory_write":
+                content = action.get("content", "")
+                memory_write(root, content, mil_gseq)
+            elif atype == "memory_recall":
+                query = action.get("query", "")
+                memory_recall(root, query, mil_gseq)
+            elif atype == "closure_payload":
                 _handle_closure_payload(root, action, sil_gseq, mil_gseq, ui)
+            else:
+                ui.warning(f"Unknown fcp-mil action type: {atype!r}")
 
-            elif target == "sil" and atype == "evolution_proposal":
-                _handle_evolution_proposal(root, action, sil_gseq, ui, pending_proposals)
-
-            elif target == "exec" and atype == "skill_request":
+        # ── Dispatch: fcp-exec ───────────────────────────────────────────────
+        for action in blocks.get("exec", []):
+            atype = action.get("type")
+            if atype == "skill_request":
                 skill  = action.get("skill", "")
                 params = action.get("params", {})
                 dispatcher.dispatch_skill(skill, params)
-                # Results arrive in inbox next cycle
-
-            elif target == "exec" and atype == "skill_info":
+            elif atype == "skill_info":
                 skill = action.get("skill", "")
                 dispatcher.dispatch_skill_info(skill)
-                # Result arrives in inbox next cycle
-
-            elif target == "mil" and atype == "memory_write":
-                content = action.get("content", "")
-                memory_write(root, content, mil_gseq)
-
-            elif target == "mil" and atype == "memory_recall":
-                query = action.get("query", "")
-                memory_recall(root, query, mil_gseq)
-
             else:
-                ui.warning(f"Unknown action target/type: {target}/{atype}")
+                ui.warning(f"Unknown fcp-exec action type: {atype!r}")
+
+        # ── Dispatch: fcp-sil last ───────────────────────────────────────────
+        close_requested = False
+        for action in blocks.get("sil", []):
+            atype = action.get("type")
+            if atype == "session_close":
+                close_requested = True
+            elif atype == "evolution_proposal":
+                _handle_evolution_proposal(root, action, sil_gseq, ui, pending_proposals)
+            else:
+                ui.warning(f"Unknown fcp-sil action type: {atype!r}")
 
         if close_requested:
             ui.session_close("entity")
@@ -423,49 +425,60 @@ def _format_inbox_event(env: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# fcp-actions parser (§6.2)
+# Component block parser (§6.2)
 # ---------------------------------------------------------------------------
 
-def _parse_fcp_actions(
+def _parse_component_blocks(
     raw: str,
-) -> tuple[str, list[dict[str, Any]], str]:
-    """Parse CPE response into (narrative, actions, error).
+) -> tuple[str, dict[str, list[dict[str, Any]]], str]:
+    """Parse CPE response into (narrative, component_blocks, error).
 
     Rules (§6.2):
-      - Zero fcp-actions blocks → valid conversational turn (no external actions).
-      - Exactly one block → parsed normally.
-      - Multiple blocks → rejected.
+      - Zero component blocks → valid conversational turn.
+      - At most one block per component type; duplicates are rejected.
+      - Payload must be a JSON object or array of objects.
       - Malformed JSON → rejected.
-      - Missing actions array → rejected.
 
     Returns:
-        (narrative_text, actions_list, error_message)
-        On rejection: actions_list=[], error_message set.
+        (narrative_text, blocks_dict, error_message)
+        blocks_dict keys: "exec", "mil", "sil".
+        On rejection: blocks_dict={}, error_message set.
     """
-    matches = _FCP_ACTIONS_RE.findall(raw)
+    matches = _COMPONENT_RE.findall(raw)   # list of (component_tag, json_body)
 
-    if len(matches) == 0:
-        # No fcp-actions block — valid conversational turn, no external actions.
-        return raw, [], ""
+    if not matches:
+        return raw, {}, ""
 
-    if len(matches) > 1:
-        narrative = _FCP_ACTIONS_RE.sub("", raw).strip()
-        return narrative, [], f"Multiple fcp-actions blocks found ({len(matches)}). Rejected."
+    # Check for duplicate component blocks.
+    seen: set[str] = set()
+    for tag, _ in matches:
+        key = tag[4:]  # "fcp-exec" -> "exec"
+        if key in seen:
+            narrative = _COMPONENT_RE.sub("", raw).strip()
+            return narrative, {}, f"Duplicate component block {tag!r}. Rejected."
+        seen.add(key)
 
-    # Exactly one block
-    block_json = matches[0].strip()
-    narrative  = _FCP_ACTIONS_RE.sub("", raw).strip()
+    narrative = _COMPONENT_RE.sub("", raw).strip()
+    blocks: dict[str, list[dict[str, Any]]] = {}
 
-    try:
-        payload = json.loads(block_json)
-    except json.JSONDecodeError as exc:
-        return narrative, [], f"fcp-actions JSON malformed: {exc}"
+    for tag, body in matches:
+        key = tag[4:]
+        body = body.strip()
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as exc:
+            return narrative, {}, f"{tag} JSON malformed: {exc}"
 
-    actions = payload.get("actions")
-    if not isinstance(actions, list):
-        return narrative, [], "fcp-actions payload missing 'actions' array."
+        if isinstance(payload, dict):
+            blocks[key] = [payload]
+        elif isinstance(payload, list):
+            if not all(isinstance(a, dict) for a in payload):
+                return narrative, {}, f"{tag} array contains non-object elements."
+            blocks[key] = payload
+        else:
+            return narrative, {}, f"{tag} payload must be a JSON object or array."
 
-    return narrative, actions, ""
+    return narrative, blocks, ""
 
 
 # ---------------------------------------------------------------------------

@@ -164,39 +164,71 @@ def spool_presession_msg(entity_root: str | Path, envelope: dict[str, Any]) -> P
 # ---------------------------------------------------------------------------
 
 def drain_inbox(entity_root: str | Path) -> list[dict[str, Any]]:
-    """Read all .msg files from ``io/inbox/`` in arrival order.
+    """Read all .msg files from ``io/inbox/``, sort by envelope ts/gseq, and
+    reassemble multi-chunk transactions.
 
-    Each file is parsed, appended to the result list, and then **deleted**.
-    The arrival order heuristic is file creation time (``st_ctime``) falling
-    back to filename lexicographic order when timestamps are identical.
+    Each file is parsed and **deleted** on read, regardless of whether its
+    transaction is complete.  The presession sub-directory is NOT drained here.
 
-    The presession sub-directory is NOT drained here; it is handled
-    separately during Boot Phase 5 context assembly (§5.1).
+    Sort order (§6.1): ascending ``ts`` field; ties broken by ``gseq``.
+
+    Chunk reassembly: envelopes sharing a ``tx`` are grouped, reassembled by
+    ``seq`` order, and returned as a single envelope once ``eof=True`` is
+    present.  Incomplete transactions (missing eof chunk) are silently dropped
+    — all files are already deleted.
 
     Returns:
-        List of parsed envelope dicts in arrival order.
+        List of reassembled envelope dicts in ts/gseq order.
     """
     entity_root = Path(entity_root)
     inbox_dir = entity_root / "io" / "inbox"
     inbox_dir.mkdir(parents=True, exist_ok=True)
 
-    msg_files = sorted(
-        [p for p in inbox_dir.iterdir() if p.is_file() and p.suffix == ".msg"],
-        key=lambda p: (p.stat().st_ctime, p.name),
-    )
-
-    envelopes: list[dict[str, Any]] = []
-    for msg_file in msg_files:
+    # Read and delete all .msg files in one pass.
+    raw: list[dict[str, Any]] = []
+    for msg_file in inbox_dir.iterdir():
+        if not msg_file.is_file() or msg_file.suffix != ".msg":
+            continue
         try:
-            raw = msg_file.read_text(encoding="utf-8")
-            obj = json.loads(raw)
-            envelopes.append(obj)
+            obj = json.loads(msg_file.read_text(encoding="utf-8"))
+            raw.append(obj)
         except (OSError, json.JSONDecodeError):
-            pass  # Malformed .msg — skip but leave; SIL handles at Vital Check
+            pass  # malformed — skip; SIL handles at Vital Check
         finally:
             msg_file.unlink(missing_ok=True)
 
-    return envelopes
+    if not raw:
+        return []
+
+    # Sort by (ts, gseq) — spec §6.1.
+    raw.sort(key=lambda e: (e.get("ts", ""), e.get("gseq", 0)))
+
+    # Group by tx, preserving first-chunk order.
+    groups: dict[str, list[dict[str, Any]]] = {}
+    tx_order: list[str] = []
+    for env in raw:
+        tx = env.get("tx", "")
+        if tx not in groups:
+            groups[tx] = []
+            tx_order.append(tx)
+        groups[tx].append(env)
+
+    # Reassemble each transaction.
+    result: list[dict[str, Any]] = []
+    for tx in tx_order:
+        chunks = sorted(groups[tx], key=lambda e: e.get("seq", 0))
+        if not chunks[-1].get("eof", False):
+            continue  # incomplete — dropped
+        if len(chunks) == 1:
+            result.append(chunks[0])
+        else:
+            assembled = dict(chunks[0])
+            assembled["data"] = "".join(c.get("data", "") for c in chunks)
+            assembled["seq"] = chunks[-1]["seq"]
+            assembled["eof"] = True
+            result.append(assembled)
+
+    return result
 
 
 def drain_presession(

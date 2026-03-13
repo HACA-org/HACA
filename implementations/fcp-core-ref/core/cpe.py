@@ -185,7 +185,7 @@ class CPEBackend:
                       The last entry is always the current user turn.
 
         Returns:
-            Raw CPE response string (contains the fcp-actions block).
+            Raw CPE response string (may contain component blocks).
 
         Raises:
             CPEError: on any HTTP or parsing failure.

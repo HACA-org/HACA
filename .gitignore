@@ -27,7 +27,7 @@ __pycache__/
 *.pyo
 
 # --- HACA / FCP reference implementation ---
-# Entity runtime state (state/, memory/, io/) is handled by the nested
+# Entity runtime state (state/, memory/, io/, workspace/) is handled by the nested
 # .gitignore in implementations/fcp-core-ref/.
 
 # --- Logs ---
