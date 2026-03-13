@@ -111,6 +111,7 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
 
     ui.session_start(session_id)
     run_hook(ctx.entity_root, "on_boot", session_id)
+    _setup_readline(ctx)
 
     while True:
         # ── Heartbeat Vital Check (simplified — no background thread in MVP) ──
@@ -518,6 +519,38 @@ def _log_cpe_text(root: Path, text: str, gseq: GseqCounter) -> None:
         gseq=gseq.next(),
     )
     append_session_event(root, env.to_dict())
+
+
+# ---------------------------------------------------------------------------
+# Readline tab completion (TTY only, best-effort)
+# ---------------------------------------------------------------------------
+
+def _setup_readline(ctx: BootContext) -> None:
+    """Register Tab completion for / commands.  No-op if readline unavailable."""
+    if not sys.stdin.isatty():
+        return
+    try:
+        import readline  # stdlib; absent on some minimal Pythons
+    except ImportError:
+        return
+
+    _BUILTIN_CMDS = ["/help", "/?", "/verbose", "/verbose on", "/verbose off"]
+    all_cmds = _BUILTIN_CMDS + list(ctx.skill_index.all_aliases())
+
+    # Keep '/' as part of the completion token so '/ski' → ['/skill_create', …]
+    readline.set_completer_delims(" \t\n")
+
+    def _completer(text: str, state: int) -> str | None:
+        if not readline.get_line_buffer().lstrip().startswith("/"):
+            return None
+        matches = [c for c in all_cmds if c.startswith(text)]
+        return matches[state] if state < len(matches) else None
+
+    readline.set_completer(_completer)
+    try:
+        readline.parse_and_bind("tab: complete")
+    except Exception:
+        readline.parse_and_bind("bind ^I rl_complete")  # libedit (macOS)
 
 
 # ---------------------------------------------------------------------------
