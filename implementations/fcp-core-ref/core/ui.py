@@ -182,6 +182,7 @@ class UI:
 
     def session_start(self, session_id: str) -> None: ...
     def write_prompt(self) -> None: ...
+    def input_prompt(self) -> str: return ""
     def narrative(self, text: str) -> None: ...
     def info(self, text: str) -> None: ...
     def warning(self, text: str) -> None: ...
@@ -225,8 +226,15 @@ class PlainUI(UI):
               "Type your message or /help.\n")
 
     def write_prompt(self) -> None:
+        # write_prompt is kept for non-TTY / piped input fallback.
         sys.stdout.write(f"{_BOLD}you>{_RST} ")
         sys.stdout.flush()
+
+    def input_prompt(self) -> str:
+        # \x01…\x02 wraps invisible ANSI bytes so readline counts prompt width correctly.
+        if _TTY:
+            return f"\x01{_BOLD}\x02you>\x01{_RST}\x02 "
+        return "you> "
 
     def narrative(self, text: str) -> None:
         text = _CODE_BLOCK_RE.sub("", text).strip()

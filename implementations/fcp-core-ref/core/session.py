@@ -129,17 +129,15 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
         # ── Get Operator input (if inbox is empty) ─────────────────────────
         if not inbox_envs:
             try:
-                ui.write_prompt()
-                line = sys.stdin.readline()
+                line = input(ui.input_prompt())
             except KeyboardInterrupt:
                 print()
                 continue
-
-            if not line:                            # EOF — close session
+            except EOFError:
                 ui.session_close("operator")
                 break
 
-            operator_input = line.rstrip("\n")
+            operator_input = line
 
             if not operator_input.strip():
                 continue                             # ignore blank lines
@@ -558,7 +556,7 @@ def _setup_readline(ctx: BootContext) -> None:
 # ---------------------------------------------------------------------------
 
 def _handle_slash(ctx: BootContext, slash_input: str, ui: UI) -> None:
-    if slash_input.strip() in ("/help", "/?"):
+    if slash_input.strip() in ("/help", "/?", "/"):
         _print_help(ctx, ui)
         return
 
@@ -571,6 +569,17 @@ def _handle_slash(ctx: BootContext, slash_input: str, ui: UI) -> None:
             ui.set_verbose(True)
         else:
             ui.set_verbose(not ui.verbose)  # toggle
+        return
+
+    # Partial match: show suggestions instead of dispatching to an unknown skill.
+    cmd = parts[0]
+    all_aliases = list(ctx.skill_index.all_aliases())
+    if cmd not in all_aliases:
+        suggestions = [a for a in sorted(all_aliases) if a.startswith(cmd)]
+        if suggestions:
+            ui.info("  ".join(suggestions))
+        else:
+            ui.info(f"Unknown command {cmd!r} — try /help")
         return
 
     ui.info(f"→ dispatching {slash_input.split()[0]}")
