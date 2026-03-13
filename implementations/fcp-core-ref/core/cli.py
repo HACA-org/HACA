@@ -2,7 +2,6 @@
 
 Comandos:
   fcp [entity-root]                → sessão plain (ANSI, zero deps)
-  fcp tui [entity-root]            → sessão Rich TUI  (requer rich)
   fcp doctor [entity-root]         → verificar integridade estrutural
   fcp doctor --fix [entity-root]   → rebuild Integrity Document após edição directa
   fcp [entity-root] --notifications → mostra notificações pendentes
@@ -21,18 +20,13 @@ from pathlib import Path
 def main(argv: list[str] | None = None) -> int:
     raw = list(argv) if argv is not None else sys.argv[1:]
 
-    # Detect "tui" / "doctor" subcommands before argparse
-    tui_mode = bool(raw and raw[0] == "tui")
-    if tui_mode:
-        raw = raw[1:]
-
+    # Detect "doctor" subcommand before argparse
     doctor_mode = bool(raw and raw[0] == "doctor")
     if doctor_mode:
         raw = raw[1:]
 
-    subcmd = "tui" if tui_mode else ("doctor" if doctor_mode else "")
     parser = argparse.ArgumentParser(
-        prog="fcp" + (f" {subcmd}" if subcmd else ""),
+        prog="fcp" + (" doctor" if doctor_mode else ""),
         description="Filesystem Cognitive Platform — FCP-Core reference implementation",
     )
     parser.add_argument(
@@ -77,9 +71,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if doctor_mode:
         return _cmd_doctor(root, fix=args.fix)
-
-    if tui_mode:
-        return _cmd_tui(root, verbose=args.verbose)
 
     return _cmd_session(root, verbose=args.verbose)
 
@@ -216,22 +207,4 @@ def _cmd_session(root: Path, verbose: bool = False) -> int:
         return 1
 
     run_session(ctx, ui=PlainUI(verbose=verbose))
-    return 0
-
-
-def _cmd_tui(root: Path, verbose: bool = False) -> int:
-    """Boot the entity and start a Rich TUI session."""
-    from .session import run_session
-
-    try:
-        from .tui import RichUI
-    except ImportError as exc:
-        print(f"\nerror: {exc}", file=sys.stderr)
-        return 1
-
-    ctx = _boot_entity(root)
-    if ctx is None:
-        return 1
-
-    run_session(ctx, ui=RichUI(verbose=verbose))
     return 0

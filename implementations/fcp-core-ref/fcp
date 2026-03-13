@@ -3,7 +3,6 @@
 
 Usage:
   ./fcp [entity-root]                  — start interactive session
-  ./fcp tui [entity-root]              — start Rich TUI session
   ./fcp doctor [entity-root]           — check structural integrity
   ./fcp doctor --fix [entity-root]     — rebuild Integrity Document after direct edits
   ./fcp [entity-root] --notifications  — list pending notifications

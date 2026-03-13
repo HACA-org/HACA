@@ -1,7 +1,6 @@
 """Session UI interface — FCP-Core display layer.
 
-PlainUI: ANSI rendering, zero external dependencies (default for ./fcp).
-RichUI:  full Rich rendering, imported lazily from core.tui (used by ./fcp tui).
+PlainUI: ANSI rendering, zero external dependencies.
 """
 
 from __future__ import annotations
@@ -35,7 +34,6 @@ _C3    = _A("1")      # bold       — H3
 _ICODE = _A("97;40")  # white/black bg — inline code
 
 # Strip remaining fenced blocks before plain-text display.
-# RichUI skips this and renders code blocks natively.
 _CODE_BLOCK_RE = re.compile(r"```[\w-]*\n.*?\n```", re.DOTALL)
 
 
