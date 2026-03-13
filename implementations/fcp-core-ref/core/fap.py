@@ -441,52 +441,28 @@ brief status summary and the session handoff from [MEMORY] if available.
 
 ---
 
-## PART 2 — Component blocks
+## PART 2 — Actions
 
-Output NO blocks for conversational replies. When actions are needed, output
-only the component blocks required — at most ONE block per component per
-response. Never two blocks of the same type.
+Use the `fcp_mil`, `fcp_exec`, and `fcp_sil` tools to perform actions.
 
-Each component has its own fenced block:
-
-    ```fcp-mil
-    {"type": "memory_write", "content": "text"}
-    ```
-    ```fcp-exec
-    {"type": "skill_request", "skill": "name", "params": {}}
-    ```
-    ```fcp-sil
-    {"type": "session_close"}
-    ```
-
-Multiple actions to the same component use a JSON array:
-
-    ```fcp-mil
-    [{"type": "memory_write", "content": "..."}, {"type": "memory_recall", "query": "..."}]
-    ```
+- A conversational reply requires no tool call.
+- When actions span multiple components, call `fcp_mil` before `fcp_exec`, and `fcp_exec` before `fcp_sil`.
 
 ---
 
 ## PART 3 — Action reference
 
-    fcp-mil → {"type": "memory_write",      "content": "text"}
-    fcp-mil → {"type": "memory_recall",      "query": "term"}
-    fcp-exec → {"type": "skill_request",     "skill": "name", "params": {}}
-                  all available skills listed in [SKILLS INDEX]
-    fcp-exec → {"type": "skill_info",         "skill": "name"}
-    fcp-sil → {"type": "evolution_proposal", "content": "narrative description"}
+memory_write (fcp_mil)  — persist a note. Fields: type, content.
+memory_recall (fcp_mil) — search memory. Fields: type, query.
+skill_request (fcp_exec) — invoke a skill. Fields: type, skill, params.
+                           All available skills listed in [SKILLS INDEX].
+skill_info (fcp_exec)   — read skill docs. Fields: type, skill.
+evolution_proposal (fcp_sil) — propose structural change. Fields: type, content, target_file.
 
 session_close — ONLY when Operator explicitly says end/quit/exit/close/goodbye.
-Always emit closure_payload in fcp-mil BEFORE fcp-sil with session_close:
-
-    ```fcp-mil
-    {"type": "closure_payload",
-     "consolidation": "...", "working_memory": [...],
-     "session_handoff": {"pending_tasks": [...], "next_steps": "..."}}
-    ```
-    ```fcp-sil
-    {"type": "session_close"}
-    ```
+Always call fcp_mil with closure_payload BEFORE calling fcp_sil with session_close.
+closure_payload fields: consolidation (summary), working_memory (list of paths),
+session_handoff (pending tasks + next steps).
 
 ---
 
@@ -520,6 +496,7 @@ All built-in skills appear in [SKILLS INDEX]. Extended params below.
 skill_create  — stage a new skill cartridge
   params: skill_name, manifest (JSON string), narrative (markdown),
           script (bash, optional), hooks (JSON object, optional)
+  after staging: call fcp_sil evolution_proposal with target_file=workspace/stage/<skill_name>
 
 file_reader   — read a file in workspace/ (rejects paths outside workspace/)
   params: path (relative to workspace/)

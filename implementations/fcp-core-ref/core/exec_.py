@@ -193,20 +193,25 @@ class ExecDispatcher:
         self,
         skill_name: str,
         params:     dict[str, Any],
+        spool:      bool = True,
     ) -> list[dict[str, Any]]:
         """Execute skill *skill_name* with *params*.
 
         The skill index was validated by the SIL at boot.  EXEC dispatches
         directly against the index — a skill present is executed immediately.
 
+        Args:
+            spool: When True (default), write result envelopes to io/inbox/.
+                   When False, return envelopes inline without spooling.
+
         Returns:
-            List of ACP envelope dicts written to io/inbox/.
+            List of ACP envelope dicts (spooled to io/inbox/ when spool=True).
         """
         entry = self.skill_index.get(skill_name)
         if entry is None:
             msg = f"Skill {skill_name!r} not in index — possible structural anomaly."
             self._log_structural_anomaly(skill_name, msg)
-            return self._write_skill_error(skill_name, msg)
+            return self._write_skill_error(skill_name, msg, spool=spool)
 
         # --- Hooks: pre_skill ---
         run_hook(self.entity_root, "pre_skill", self.session_id, {
@@ -215,7 +220,7 @@ class ExecDispatcher:
         })
 
         # --- Execute ---
-        results = self._execute(skill_name, entry, params)
+        results = self._execute(skill_name, entry, params, spool=spool)
 
         # --- Hooks: post_skill ---
         _STATUS = {
@@ -262,7 +267,7 @@ class ExecDispatcher:
 
         return self.dispatch_skill(skill_name, params)
 
-    def dispatch_skill_info(self, skill_name: str) -> list[dict[str, Any]]:
+    def dispatch_skill_info(self, skill_name: str, spool: bool = True) -> list[dict[str, Any]]:
         """Read skills/<skill_name>/<skill_name>.md and spool as SKILL_RESULT.
 
         Returns error envelope if skill not found or narrative absent.
@@ -272,11 +277,13 @@ class ExecDispatcher:
             return self._write_skill_error(
                 skill_name,
                 f"Skill {skill_name!r} not found in index.",
+                spool=spool,
             )
         if not entry.get("_has_narrative"):
             return self._write_skill_error(
                 skill_name,
                 f"No narrative ({skill_name}.md) for skill {skill_name!r}.",
+                spool=spool,
             )
         exe_rel = entry.get("_executable", "")
         if exe_rel:
@@ -288,8 +295,8 @@ class ExecDispatcher:
         try:
             content = narrative_path.read_text(encoding="utf-8")
         except OSError as exc:
-            return self._write_skill_error(skill_name, f"Could not read narrative: {exc}")
-        return self._write_skill_result(skill_name, content)
+            return self._write_skill_error(skill_name, f"Could not read narrative: {exc}", spool=spool)
+        return self._write_skill_result(skill_name, content, spool=spool)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -300,6 +307,7 @@ class ExecDispatcher:
         skill_name: str,
         entry:      dict[str, Any],
         params:     dict[str, Any],
+        spool:      bool = True,
     ) -> list[dict[str, Any]]:
         """Run the skill's executable as a subprocess and return result envelopes."""
         exe_rel  = entry.get("_executable", "")
@@ -307,6 +315,7 @@ class ExecDispatcher:
             return self._write_skill_error(
                 skill_name,
                 f"Skill {skill_name!r} has no executable (execute.sh / execute.py).",
+                spool=spool,
             )
         exe_path = self.entity_root / exe_rel
         timeout  = entry.get("timeout_seconds", 60)
@@ -329,19 +338,20 @@ class ExecDispatcher:
             )
             if result.returncode == 0:
                 output = result.stdout.strip() or f"Skill {skill_name} completed."
-                return self._write_skill_result(skill_name, output)
+                return self._write_skill_result(skill_name, output, spool=spool)
             else:
                 error = result.stderr.strip() or f"Exit code {result.returncode}"
-                return self._write_skill_error(skill_name, error)
+                return self._write_skill_error(skill_name, error, spool=spool)
 
         except subprocess.TimeoutExpired:
             return self._write_skill_error(
                 skill_name,
                 f"Skill {skill_name!r} timed out after {timeout}s.",
                 type_=TYPE_SKILL_TIMEOUT,
+                spool=spool,
             )
         except Exception as exc:
-            return self._write_skill_error(skill_name, str(exc))
+            return self._write_skill_error(skill_name, str(exc), spool=spool)
 
     def _log_structural_anomaly(self, skill_name: str, reason: str) -> None:
         """Log a structural anomaly to integrity.log (§9.1).
@@ -361,6 +371,7 @@ class ExecDispatcher:
         self,
         skill_name: str,
         output:     str,
+        spool:      bool = True,
     ) -> list[dict[str, Any]]:
         payload = json.dumps({
             "skill":  skill_name,
@@ -376,7 +387,8 @@ class ExecDispatcher:
         )
         result = []
         for env in envelopes:
-            spool_msg(self.entity_root, env.to_dict())
+            if spool:
+                spool_msg(self.entity_root, env.to_dict())
             result.append(env.to_dict())
         return result
 
@@ -385,6 +397,7 @@ class ExecDispatcher:
         skill_name: str,
         error:      str,
         type_:      str = TYPE_SKILL_ERROR,
+        spool:      bool = True,
     ) -> list[dict[str, Any]]:
         payload = json.dumps({
             "skill":  skill_name,
@@ -400,6 +413,7 @@ class ExecDispatcher:
         )
         result = []
         for env in envelopes:
-            spool_msg(self.entity_root, env.to_dict())
+            if spool:
+                spool_msg(self.entity_root, env.to_dict())
             result.append(env.to_dict())
         return result

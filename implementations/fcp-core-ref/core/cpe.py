@@ -2,7 +2,7 @@
 
 Um único módulo, um único HTTPBackend.  Cada provider é apenas um conjunto
 de funções puras que transformam o contexto num request HTTP e a resposta
-num string — sem classes duplicadas.
+num CPEResponse — sem classes duplicadas.
 
 Formato do campo `cpe.backend` em state/baseline.json:
   "ollama"                         → Ollama, auto-selecciona modelo
@@ -26,7 +26,9 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass, field
 from typing import Any
+
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -37,28 +39,141 @@ class CPEError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Provider configuration table
-#
-# Each entry is a dict with three callables:
-#   url(model, api_key)           → str
-#   headers(api_key)              → dict
-#   build_body(model, msgs, sys)  → dict   (msgs = list of {role, content})
-#   parse(response_dict)          → str
+# Response + ToolResult types
 # ---------------------------------------------------------------------------
 
-def _ollama_url(model: str, _key: str) -> str:
-    return "http://localhost:11434/api/chat"
+@dataclass
+class ToolResult:
+    """Result of a single tool call dispatched by the session loop."""
+    tool_call_id: str
+    content: str
+    is_error: bool = False
 
-def _ollama_headers(_key: str) -> dict[str, str]:
-    return {"Content-Type": "application/json"}
 
-def _ollama_build(model: str, messages: list[dict], system: str) -> dict:
-    msgs = ([{"role": "system", "content": system}] if system else []) + messages
-    return {"model": model, "messages": msgs, "stream": False, "num_ctx": 32768}
+@dataclass
+class CPEResponse:
+    """Parsed response from one CPE invocation.
 
-def _ollama_parse(resp: dict) -> str:
-    return resp["message"]["content"]
+    text:        Narrative text (may be empty if only tool calls were emitted).
+    tool_calls:  List of tool invocations; each dict has keys id, name, input.
+    raw_content: Full content list from the API (needed to replay in chat history).
+    """
+    text: str = ""
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    raw_content: list[dict[str, Any]] = field(default_factory=list)
 
+
+# ---------------------------------------------------------------------------
+# FCP tool definitions — passed to every CPE invocation
+# ---------------------------------------------------------------------------
+
+FCP_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "fcp_mil",
+        "description": (
+            "Memory and lifecycle actions. "
+            "memory_write: persist a note or observation. "
+            "memory_recall: search previously saved notes by keyword. "
+            "closure_payload: session-close consolidation (summary + handoff)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["memory_write", "memory_recall", "closure_payload"],
+                    "description": "Action type.",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Text to save (memory_write).",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query (memory_recall).",
+                },
+                "consolidation": {
+                    "type": "string",
+                    "description": "Semantic summary of this session (closure_payload).",
+                },
+                "working_memory": {
+                    "type": "array",
+                    "description": "Memory artefact paths to carry forward (closure_payload).",
+                    "items": {"type": "object"},
+                },
+                "session_handoff": {
+                    "type": "object",
+                    "description": "Pending tasks and next steps for the next session (closure_payload).",
+                },
+            },
+            "required": ["type"],
+        },
+    },
+    {
+        "name": "fcp_exec",
+        "description": (
+            "Skill execution. "
+            "skill_request: invoke a skill listed in [SKILLS INDEX]. "
+            "skill_info: read the full documentation for a skill."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["skill_request", "skill_info"],
+                    "description": "Action type.",
+                },
+                "skill": {
+                    "type": "string",
+                    "description": "Skill name exactly as listed in [SKILLS INDEX].",
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Skill parameters (skill_request only).",
+                },
+            },
+            "required": ["type", "skill"],
+        },
+    },
+    {
+        "name": "fcp_sil",
+        "description": (
+            "Structural integrity actions. "
+            "evolution_proposal: propose a change to persona, config, or skills. "
+            "session_close: end the session safely (always emit closure_payload first)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["evolution_proposal", "session_close"],
+                    "description": "Action type.",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Human-readable description of the proposed change (evolution_proposal).",
+                },
+                "target_file": {
+                    "type": "string",
+                    "description": (
+                        "Target path for Endure, e.g. workspace/stage/<skill_name> "
+                        "(evolution_proposal)."
+                    ),
+                },
+            },
+            "required": ["type"],
+        },
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# Provider helpers — build / parse_response
+# ---------------------------------------------------------------------------
+
+# ── Anthropic ──────────────────────────────────────────────────────────────
 
 def _anthropic_url(_model: str, _key: str) -> str:
     return "https://api.anthropic.com/v1/messages"
@@ -70,15 +185,54 @@ def _anthropic_headers(key: str) -> dict[str, str]:
         "anthropic-version": "2023-06-01",
     }
 
-def _anthropic_build(model: str, messages: list[dict], system: str) -> dict:
+def _anthropic_build(
+    model: str,
+    messages: list[dict],
+    system: str,
+    tools: list[dict] | None = None,
+) -> dict:
     body: dict[str, Any] = {"model": model, "max_tokens": 8192, "messages": messages}
     if system:
         body["system"] = system
+    if tools:
+        body["tools"] = tools
     return body
 
-def _anthropic_parse(resp: dict) -> str:
-    return resp["content"][0]["text"]
+def _anthropic_parse_response(resp: dict) -> CPEResponse:
+    text_parts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    content: list[dict[str, Any]] = resp.get("content", [])
+    for block in content:
+        btype = block.get("type", "")
+        if btype == "text":
+            text_parts.append(block.get("text", ""))
+        elif btype == "tool_use":
+            tool_calls.append({
+                "id":    block["id"],
+                "name":  block["name"],
+                "input": block.get("input", {}),
+            })
+    return CPEResponse(
+        text=" ".join(text_parts).strip(),
+        tool_calls=tool_calls,
+        raw_content=content,
+    )
 
+def _anthropic_make_tool_results(results: list[ToolResult]) -> list[dict]:
+    """Return one user message containing all tool_result blocks (Anthropic format)."""
+    blocks = [
+        {
+            "type":        "tool_result",
+            "tool_use_id": r.tool_call_id,
+            "content":     r.content,
+            **({"is_error": True} if r.is_error else {}),
+        }
+        for r in results
+    ]
+    return [{"role": "user", "content": blocks}]
+
+
+# ── OpenAI / Ollama ────────────────────────────────────────────────────────
 
 def _openai_url(_model: str, _key: str) -> str:
     return "https://api.openai.com/v1/chat/completions"
@@ -86,13 +240,88 @@ def _openai_url(_model: str, _key: str) -> str:
 def _openai_headers(key: str) -> dict[str, str]:
     return {"Content-Type": "application/json", "Authorization": f"Bearer {key}"}
 
-def _openai_build(model: str, messages: list[dict], system: str) -> dict:
+def _ollama_url(_model: str, _key: str) -> str:
+    return "http://localhost:11434/api/chat"
+
+def _ollama_headers(_key: str) -> dict[str, str]:
+    return {"Content-Type": "application/json"}
+
+def _openai_build(
+    model: str,
+    messages: list[dict],
+    system: str,
+    tools: list[dict] | None = None,
+) -> dict:
     msgs = ([{"role": "system", "content": system}] if system else []) + messages
-    return {"model": model, "messages": msgs, "max_tokens": 8192}
+    body: dict[str, Any] = {"model": model, "messages": msgs, "max_tokens": 8192}
+    if tools:
+        body["tools"] = _fcp_tools_to_openai(tools)
+    return body
 
-def _openai_parse(resp: dict) -> str:
-    return resp["choices"][0]["message"]["content"]
+def _ollama_build(
+    model: str,
+    messages: list[dict],
+    system: str,
+    tools: list[dict] | None = None,
+) -> dict:
+    msgs = ([{"role": "system", "content": system}] if system else []) + messages
+    body: dict[str, Any] = {"model": model, "messages": msgs, "stream": False, "num_ctx": 32768}
+    if tools:
+        body["tools"] = _fcp_tools_to_openai(tools)
+    return body
 
+def _openai_parse_response(resp: dict) -> CPEResponse:
+    msg = resp["choices"][0]["message"]
+    text = msg.get("content") or ""
+    tool_calls: list[dict[str, Any]] = []
+    raw_content: list[dict[str, Any]] = []
+    if text:
+        raw_content.append({"type": "text", "text": text})
+    for tc in msg.get("tool_calls") or []:
+        try:
+            inp = json.loads(tc["function"]["arguments"])
+        except Exception:
+            inp = {}
+        tool_calls.append({
+            "id":    tc["id"],
+            "name":  tc["function"]["name"],
+            "input": inp,
+        })
+        raw_content.append({
+            "type":  "tool_use",
+            "id":    tc["id"],
+            "name":  tc["function"]["name"],
+            "input": inp,
+        })
+    return CPEResponse(text=text.strip(), tool_calls=tool_calls, raw_content=raw_content)
+
+def _openai_make_tool_results(results: list[ToolResult]) -> list[dict]:
+    """Return one message per tool result (OpenAI format)."""
+    return [
+        {
+            "role":         "tool",
+            "tool_call_id": r.tool_call_id,
+            "content":      r.content,
+        }
+        for r in results
+    ]
+
+def _fcp_tools_to_openai(tools: list[dict]) -> list[dict]:
+    """Convert Anthropic-style tool defs to OpenAI function-calling format."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name":        t["name"],
+                "description": t.get("description", ""),
+                "parameters":  t.get("input_schema", {}),
+            },
+        }
+        for t in tools
+    ]
+
+
+# ── Google ─────────────────────────────────────────────────────────────────
 
 def _google_url(model: str, key: str) -> str:
     base = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -101,23 +330,63 @@ def _google_url(model: str, key: str) -> str:
 def _google_headers(_key: str) -> dict[str, str]:
     return {"Content-Type": "application/json"}
 
-def _google_build(_model: str, messages: list[dict], system: str) -> dict:
+def _google_build(
+    _model: str,
+    messages: list[dict],
+    system: str,
+    tools: list[dict] | None = None,
+) -> dict:
+    if tools:
+        raise CPEError("Google provider does not support FCP tool_use yet.")
     contents = [{"role": m["role"], "parts": [{"text": m["content"]}]} for m in messages]
     body: dict[str, Any] = {"contents": contents}
     if system:
         body["systemInstruction"] = {"parts": [{"text": system}]}
     return body
 
-def _google_parse(resp: dict) -> str:
+def _google_parse_response(resp: dict) -> CPEResponse:
     parts = resp["candidates"][0]["content"]["parts"]
-    return "".join(p.get("text", "") for p in parts)
+    text = "".join(p.get("text", "") for p in parts)
+    content = [{"type": "text", "text": text}]
+    return CPEResponse(text=text.strip(), tool_calls=[], raw_content=content)
 
+def _google_make_tool_results(_results: list[ToolResult]) -> list[dict]:
+    raise CPEError("Google provider does not support FCP tool_use yet.")
+
+
+# ---------------------------------------------------------------------------
+# Provider configuration table
+# ---------------------------------------------------------------------------
 
 _PROVIDERS: dict[str, dict] = {
-    "ollama":    {"url": _ollama_url,    "headers": _ollama_headers,    "build": _ollama_build,    "parse": _ollama_parse},
-    "anthropic": {"url": _anthropic_url, "headers": _anthropic_headers, "build": _anthropic_build, "parse": _anthropic_parse},
-    "openai":    {"url": _openai_url,    "headers": _openai_headers,    "build": _openai_build,    "parse": _openai_parse},
-    "google":    {"url": _google_url,    "headers": _google_headers,    "build": _google_build,    "parse": _google_parse},
+    "ollama": {
+        "url":              _ollama_url,
+        "headers":          _ollama_headers,
+        "build":            _ollama_build,
+        "parse_response":   _openai_parse_response,
+        "make_tool_results": _openai_make_tool_results,
+    },
+    "anthropic": {
+        "url":              _anthropic_url,
+        "headers":          _anthropic_headers,
+        "build":            _anthropic_build,
+        "parse_response":   _anthropic_parse_response,
+        "make_tool_results": _anthropic_make_tool_results,
+    },
+    "openai": {
+        "url":              _openai_url,
+        "headers":          _openai_headers,
+        "build":            _openai_build,
+        "parse_response":   _openai_parse_response,
+        "make_tool_results": _openai_make_tool_results,
+    },
+    "google": {
+        "url":              _google_url,
+        "headers":          _google_headers,
+        "build":            _google_build,
+        "parse_response":   _google_parse_response,
+        "make_tool_results": _google_make_tool_results,
+    },
 }
 
 DEFAULT_MODELS = {
@@ -175,25 +444,33 @@ class CPEBackend:
     def name(self) -> str:
         return f"{self.provider}:{self.model}" if self.model else self.provider
 
-    def invoke(self, system: str, messages: list[dict]) -> str:
-        """Send a turn to the CPE and return the raw response text.
+    def invoke(
+        self,
+        system:   str,
+        messages: list[dict],
+        tools:    list[dict] | None = None,
+    ) -> CPEResponse:
+        """Send a turn to the CPE and return a structured CPEResponse.
 
         Args:
             system:   System prompt (Boot Manifest — persona, boot protocol,
                       skills index, memory).  Stays fixed throughout the session.
-            messages: Chat history as alternating user/assistant dicts.
-                      The last entry is always the current user turn.
+            messages: Chat history as alternating user/assistant turns.
+                      Content may be a string (text-only turns) or a list
+                      of content blocks (turns with tool_use / tool_results).
+            tools:    Tool definitions to pass to the model.  Defaults to None
+                      (no tools — text-only response).
 
         Returns:
-            Raw CPE response string (may contain component blocks).
+            CPEResponse with text, tool_calls, and raw_content.
 
         Raises:
-            CPEError: on any HTTP or parsing failure.
+            CPEError: on any HTTP, parsing, or unsupported-feature failure.
         """
         cfg  = _PROVIDERS[self.provider]
-        body = cfg["build"](self.model, messages, system)
-        url      = cfg["url"](self.model, self.api_key)
-        headers  = cfg["headers"](self.api_key)
+        body = cfg["build"](self.model, messages, system, tools)
+        url     = cfg["url"](self.model, self.api_key)
+        headers = cfg["headers"](self.api_key)
 
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
@@ -210,11 +487,20 @@ class CPEBackend:
             raise CPEError(f"{self.provider} invocation failed: {exc}") from exc
 
         try:
-            return cfg["parse"](resp_data)
+            return cfg["parse_response"](resp_data)
         except (KeyError, IndexError, TypeError) as exc:
             raise CPEError(
                 f"{self.provider} unexpected response format: {resp_data!r}"
             ) from exc
+
+    def make_tool_result_message(self, results: list[ToolResult]) -> list[dict]:
+        """Convert tool results to provider-specific chat history entries.
+
+        Returns a list of message dicts to extend into chat_history:
+          - Anthropic: one user message with tool_result content blocks.
+          - OpenAI/Ollama: one tool message per result.
+        """
+        return _PROVIDERS[self.provider]["make_tool_results"](results)
 
 
 # ---------------------------------------------------------------------------

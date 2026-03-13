@@ -2,7 +2,7 @@
 
 Orquestra o ciclo cognitivo:
   drain inbox → consolidar → montar contexto → invocar CPE →
-  → parse component blocks → despachar → próximo ciclo
+  → tool loop (dispatch tool calls ↔ tool results) → próximo ciclo
 
 Gestão de sessão:
   - Operator input via terminal, injectado como MSG em io/inbox/
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import sys
 import time
 from pathlib import Path
@@ -28,9 +27,11 @@ from .acp import (
     ACTOR_FCP, ACTOR_CPE, ACTOR_SIL,
     TYPE_MSG, TYPE_SESSION_CLOSE, TYPE_EVOLUTION_PROPOSAL, TYPE_CLOSURE_PAYLOAD,
     TYPE_MEMO_RESULT, TYPE_PROPOSAL_PENDING,
+    TYPE_SKILL_RESULT,
     GseqCounter, build_envelope, chunk_payload,
 )
 from .boot import BootContext
+from .cpe import FCP_TOOLS, ToolResult
 from .fs import drain_inbox, spool_msg, utcnow_iso
 from .hooks import run_hook
 from .mil import (
@@ -53,12 +54,6 @@ from .ui import UI, PlainUI
 from .operator import (
     assert_terminal_accessible, terminal_prompt,
     write_notification, SEVERITY_DEGRADED, SEVERITY_INFO,
-)
-
-# ── regex para blocos per-component (§6.2) ────────────────────────────────
-_COMPONENT_RE = re.compile(
-    r"```(fcp-exec|fcp-mil|fcp-sil)\s*\n(.*?)\n```",
-    re.DOTALL,
 )
 
 
@@ -202,82 +197,56 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
 
         # ── Invoke CPE ─────────────────────────────────────────────────────
         try:
-            raw_response = cpe.invoke(system_prompt, chat_history)
+            cpe_resp = cpe.invoke(system_prompt, chat_history, tools=FCP_TOOLS)
         except Exception as exc:
             ui.error(str(exc))
             # Remove the user turn — don't poison history with a failed request.
-            # Do NOT post the error to inbox: that would re-inject it back to the
-            # CPE on the next cycle, causing an infinite error loop.
             chat_history.pop()
             continue
 
-        # ── Append assistant response to history ───────────────────────────
-        chat_history.append({"role": "assistant", "content": raw_response})
-
-        # ── Verbose: show raw response ─────────────────────────────────────
-        preview = raw_response[:600] + ("…" if len(raw_response) > 600 else "")
-        ui.verbose_text("raw_cpe", preview)
-
-        # ── Record CPE response in session.jsonl ───────────────────────────
-        cpe_env = build_envelope(
-            actor=ACTOR_CPE,
-            type_=TYPE_MSG,
-            data=raw_response[:3800],   # truncate for ACP limit; full stored below
-            gseq=fcp_gseq.next(),
-        )
-        append_session_event(root, cpe_env.to_dict())
-
-        # ── Parse per-component blocks ──────────────────────────────────────
-        narrative, blocks, parse_error = _parse_component_blocks(raw_response)
-
-        if narrative.strip():
-            ui.narrative(narrative)
-
-        if parse_error:
-            ui.warning(parse_error)
-            _log_parse_error(root, parse_error, fcp_gseq)
-            continue
-
-        all_actions = [a for acts in blocks.values() for a in acts]
-        ui.verbose_actions(all_actions)
-
-        # ── Dispatch: fcp-mil first (§6 — closure_payload before session_close)
-        for action in blocks.get("mil", []):
-            atype = action.get("type")
-            if atype == "memory_write":
-                content = action.get("content", "")
-                memory_write(root, content, mil_gseq)
-            elif atype == "memory_recall":
-                query = action.get("query", "")
-                memory_recall(root, query, mil_gseq)
-            elif atype == "closure_payload":
-                _handle_closure_payload(root, action, sil_gseq, mil_gseq, ui)
-            else:
-                ui.warning(f"Unknown fcp-mil action type: {atype!r}")
-
-        # ── Dispatch: fcp-exec ───────────────────────────────────────────────
-        for action in blocks.get("exec", []):
-            atype = action.get("type")
-            if atype == "skill_request":
-                skill  = action.get("skill", "")
-                params = action.get("params", {})
-                dispatcher.dispatch_skill(skill, params)
-            elif atype == "skill_info":
-                skill = action.get("skill", "")
-                dispatcher.dispatch_skill_info(skill)
-            else:
-                ui.warning(f"Unknown fcp-exec action type: {atype!r}")
-
-        # ── Dispatch: fcp-sil last ───────────────────────────────────────────
+        # ── Tool loop ──────────────────────────────────────────────────────
+        # The CPE may issue tool calls in response to any turn.  We dispatch
+        # them and re-invoke until the model returns a text-only response.
         close_requested = False
-        for action in blocks.get("sil", []):
-            atype = action.get("type")
-            if atype == "session_close":
-                close_requested = True
-            elif atype == "evolution_proposal":
-                _handle_evolution_proposal(root, action, sil_gseq, ui, pending_proposals)
-            else:
-                ui.warning(f"Unknown fcp-sil action type: {atype!r}")
+        while cpe_resp.tool_calls:
+            if cpe_resp.text.strip():
+                ui.narrative(cpe_resp.text)
+                _log_cpe_text(root, cpe_resp.text, fcp_gseq)
+
+            # Append assistant message with full content (includes tool_use blocks)
+            chat_history.append({"role": "assistant", "content": cpe_resp.raw_content})
+
+            # Dispatch tool calls in MIL → EXEC → SIL order
+            tool_results, close_requested = _dispatch_tool_calls(
+                cpe_resp.tool_calls, root, dispatcher,
+                sil_gseq, mil_gseq, fcp_gseq, ui, pending_proposals,
+            )
+
+            ui.verbose_actions([
+                {"tool": tr.tool_call_id, "error": tr.is_error} for tr in tool_results
+            ])
+
+            # Add tool_result messages to history
+            for msg in cpe.make_tool_result_message(tool_results):
+                chat_history.append(msg)
+
+            if close_requested:
+                break
+
+            # Re-invoke so the CPE can react to tool results
+            try:
+                cpe_resp = cpe.invoke(system_prompt, chat_history, tools=FCP_TOOLS)
+            except Exception as exc:
+                ui.error(str(exc))
+                break
+
+        # ── Final text response ────────────────────────────────────────────
+        # Append narrative from the last (text-only) CPE response.
+        if cpe_resp.text.strip():
+            ui.verbose_text("raw_cpe", cpe_resp.text[:600])
+            ui.narrative(cpe_resp.text)
+            _log_cpe_text(root, cpe_resp.text, fcp_gseq)
+        chat_history.append({"role": "assistant", "content": cpe_resp.text})
 
         if close_requested:
             ui.session_close("entity")
@@ -428,60 +397,130 @@ def _format_inbox_event(env: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Component block parser (§6.2)
+# Tool call dispatcher (§6 — tool loop)
 # ---------------------------------------------------------------------------
 
-def _parse_component_blocks(
-    raw: str,
-) -> tuple[str, dict[str, list[dict[str, Any]]], str]:
-    """Parse CPE response into (narrative, component_blocks, error).
-
-    Rules (§6.2):
-      - Zero component blocks → valid conversational turn.
-      - At most one block per component type; duplicates are rejected.
-      - Payload must be a JSON object or array of objects.
-      - Malformed JSON → rejected.
+def _dispatch_tool_calls(
+    tool_calls:        list[dict[str, Any]],
+    root:              Path,
+    dispatcher:        Any,
+    sil_gseq:          GseqCounter,
+    mil_gseq:          GseqCounter,
+    fcp_gseq:          GseqCounter,
+    ui:                Any,
+    pending_proposals: list[dict],
+) -> tuple[list[ToolResult], bool]:
+    """Dispatch CPE tool calls in MIL → EXEC → SIL order.
 
     Returns:
-        (narrative_text, blocks_dict, error_message)
-        blocks_dict keys: "exec", "mil", "sil".
-        On rejection: blocks_dict={}, error_message set.
+        (tool_results, close_requested)
     """
-    matches = _COMPONENT_RE.findall(raw)   # list of (component_tag, json_body)
+    close_requested = False
+    tool_results: list[ToolResult] = []
 
-    if not matches:
-        return raw, {}, ""
+    # Process in component order: MIL first, EXEC second, SIL last.
+    _ORDER = {"fcp_mil": 0, "fcp_exec": 1, "fcp_sil": 2}
+    sorted_calls = sorted(tool_calls, key=lambda tc: _ORDER.get(tc["name"], 9))
 
-    # Check for duplicate component blocks.
-    seen: set[str] = set()
-    for tag, _ in matches:
-        key = tag[4:]  # "fcp-exec" -> "exec"
-        if key in seen:
-            narrative = _COMPONENT_RE.sub("", raw).strip()
-            return narrative, {}, f"Duplicate component block {tag!r}. Rejected."
-        seen.add(key)
+    for tc in sorted_calls:
+        tool_id = tc["id"]
+        name    = tc["name"]
+        inp     = tc["input"]
+        atype   = inp.get("type", "")
 
-    narrative = _COMPONENT_RE.sub("", raw).strip()
-    blocks: dict[str, list[dict[str, Any]]] = {}
+        if name == "fcp_mil":
+            if atype == "memory_write":
+                content = inp.get("content", "")
+                envs    = memory_write(root, content, mil_gseq)
+                tool_results.append(ToolResult(tool_id, _extract_env_text(envs)))
+            elif atype == "memory_recall":
+                query = inp.get("query", "")
+                envs  = memory_recall(root, query, mil_gseq)
+                tool_results.append(ToolResult(tool_id, _extract_env_text(envs)))
+            elif atype == "closure_payload":
+                _handle_closure_payload(root, inp, sil_gseq, mil_gseq, ui)
+                tool_results.append(ToolResult(tool_id, "[Closure payload recorded]"))
+            else:
+                tool_results.append(ToolResult(
+                    tool_id, f"Unknown fcp_mil type: {atype!r}", is_error=True
+                ))
 
-    for tag, body in matches:
-        key = tag[4:]
-        body = body.strip()
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError as exc:
-            return narrative, {}, f"{tag} JSON malformed: {exc}"
+        elif name == "fcp_exec":
+            skill = inp.get("skill", "")
+            if atype == "skill_request":
+                params = inp.get("params") or {}
+                envs   = dispatcher.dispatch_skill(skill, params, spool=False)
+                text   = _extract_env_text(envs)
+                is_err = bool(envs) and envs[0].get("type") != TYPE_SKILL_RESULT
+                tool_results.append(ToolResult(tool_id, text, is_error=is_err))
+            elif atype == "skill_info":
+                envs   = dispatcher.dispatch_skill_info(skill, spool=False)
+                text   = _extract_env_text(envs)
+                is_err = bool(envs) and envs[0].get("type") != TYPE_SKILL_RESULT
+                tool_results.append(ToolResult(tool_id, text, is_error=is_err))
+            else:
+                tool_results.append(ToolResult(
+                    tool_id, f"Unknown fcp_exec type: {atype!r}", is_error=True
+                ))
 
-        if isinstance(payload, dict):
-            blocks[key] = [payload]
-        elif isinstance(payload, list):
-            if not all(isinstance(a, dict) for a in payload):
-                return narrative, {}, f"{tag} array contains non-object elements."
-            blocks[key] = payload
+        elif name == "fcp_sil":
+            if atype == "session_close":
+                close_requested = True
+                tool_results.append(ToolResult(tool_id, "[Session close initiated]"))
+            elif atype == "evolution_proposal":
+                _handle_evolution_proposal(root, inp, sil_gseq, ui, pending_proposals)
+                tool_results.append(ToolResult(
+                    tool_id,
+                    "[Evolution proposal registered. Awaiting Operator decision at session close.]",
+                ))
+            else:
+                tool_results.append(ToolResult(
+                    tool_id, f"Unknown fcp_sil type: {atype!r}", is_error=True
+                ))
+
         else:
-            return narrative, {}, f"{tag} payload must be a JSON object or array."
+            tool_results.append(ToolResult(
+                tool_id, f"Unknown tool: {name!r}", is_error=True
+            ))
 
-    return narrative, blocks, ""
+    return tool_results, close_requested
+
+
+def _extract_env_text(envs: list[dict[str, Any]]) -> str:
+    """Extract the human-readable result string from a list of ACP envelope dicts."""
+    for env in envs:
+        try:
+            d = json.loads(env.get("data", "{}"))
+        except Exception:
+            d = {}
+        t = env.get("type", "")
+        if t == TYPE_SKILL_RESULT:
+            return d.get("output", "").strip() or d.get("path", "")
+        elif t == TYPE_MEMO_RESULT:
+            if "path" in d:
+                return f"[Memory saved: {d['path']}]"
+            count   = d.get("count", 0)
+            results = d.get("results", [])
+            if not results:
+                return f"[Memory recall: {d.get('query', '')}] No matching entries."
+            parts = [f"[Memory recall: {count} result(s)]"]
+            for r in results:
+                parts.append(f"--- {r['path']} ---\n{r['excerpt'].strip()}")
+            return "\n".join(parts)
+        else:
+            return d.get("error", d.get("output", "")).strip()
+    return ""
+
+
+def _log_cpe_text(root: Path, text: str, gseq: GseqCounter) -> None:
+    """Append CPE narrative text to session.jsonl."""
+    env = build_envelope(
+        actor=ACTOR_CPE,
+        type_=TYPE_MSG,
+        data=text[:3800],
+        gseq=gseq.next(),
+    )
+    append_session_event(root, env.to_dict())
 
 
 # ---------------------------------------------------------------------------
@@ -608,16 +647,3 @@ def _handle_closure_payload(
     if handoff:
         write_session_handoff(root, handoff)
 
-
-# ---------------------------------------------------------------------------
-# Error logging
-# ---------------------------------------------------------------------------
-
-def _log_parse_error(root: Path, error: str, gseq: GseqCounter) -> None:
-    env = build_envelope(
-        actor=ACTOR_FCP,
-        type_="MSG",
-        data=json.dumps({"parse_error": error, "ts": utcnow_iso()}),
-        gseq=gseq.next(),
-    )
-    append_session_event(root, env.to_dict())
