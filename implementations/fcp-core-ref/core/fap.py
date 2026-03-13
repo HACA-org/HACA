@@ -80,9 +80,12 @@ def run_fap(entity_root: str | Path) -> str:
 
     try:
         return _run_pipeline(root, track)
+    except FAPError:
+        _rollback(written)
+        raise  # message already set by the failing step
     except Exception as exc:
         _rollback(written)
-        raise FAPError(f"FAP failed — all writes reverted: {exc}") from exc
+        raise FAPError(f"Unexpected error — all writes reverted: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +206,11 @@ def _run_pipeline(root: Path, track) -> str:
     try:
         assert_terminal_accessible()
     except OSError as exc:
-        raise FAPError(str(exc)) from exc
+        raise FAPError(
+            f"Operator Channel unavailable: {exc}\n"
+            "  FAP requires an interactive terminal (stdin/tty) for Operator enrollment.\n"
+            "  Run FAP in an interactive shell, not via a pipeline or background process."
+        ) from exc
 
     # Log FAP start
     env_log = build_envelope(

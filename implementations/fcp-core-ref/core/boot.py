@@ -129,7 +129,7 @@ def run_boot(entity_root: str | Path) -> BootContext:
             options=["yes", "no"],
         )
         if ans != "yes":
-            raise BootError("BEACON", "Operator declined to clear beacon.")
+            raise BootError("BEACON", "Operator declined to clear beacon — boot aborted.\n  Restart ./fcp when ready to clear the beacon and resume.")
         from .sil import clear_distress_beacon
         clear_distress_beacon(root)
         print("  Beacon cleared.  Proceeding with boot.\n")
@@ -154,7 +154,12 @@ def run_boot(entity_root: str | Path) -> BootContext:
     try:
         assert_terminal_accessible()
     except OSError as exc:
-        raise BootError("0", str(exc))
+        raise BootError(
+            "0",
+            f"Operator Channel unavailable: {exc}\n"
+            "  HACA-Core requires an interactive terminal (stdin/tty).\n"
+            "  Run ./fcp in an interactive shell."
+        ) from exc
 
     # ------------------------------------------------------------------
     # Phase 1 — Host introspection
@@ -173,7 +178,8 @@ def run_boot(entity_root: str | Path) -> BootContext:
         raise BootError(
             "1",
             f"watchdog.sil_threshold_seconds ({wd_secs}) > "
-            f"heartbeat.interval_seconds ({hb_secs}) — constraint violation."
+            f"heartbeat.interval_seconds ({hb_secs}) — constraint violation.\n"
+            "  Edit state/baseline.json: watchdog.sil_threshold_seconds must be ≤ heartbeat.interval_seconds."
         )
 
     # ------------------------------------------------------------------
@@ -313,7 +319,7 @@ def run_boot(entity_root: str | Path) -> BootContext:
             options=["yes", "no"],
         )
         if ans != "yes":
-            raise BootError("6", "Operator declined to acknowledge Critical conditions.")
+            raise BootError("6", "Operator declined to acknowledge Critical conditions — boot aborted.\n  All Critical conditions must be acknowledged before a new session can start.")
         # Write CRITICAL_CLEARED for each
         for crit in unresolved:
             env = build_envelope(
@@ -466,8 +472,9 @@ def _handle_crash_recovery(
         )
         raise BootError(
             "2",
-            f"Boot loop threshold reached ({crash_count} crashes). "
-            "Passive Distress Beacon activated."
+            f"Boot loop threshold reached ({crash_count} consecutive crashes, limit={n_boot}).\n"
+            "  Passive Distress Beacon activated — no session token will be issued.\n"
+            "  Investigate crash cause, fix it, then run: ./fcp  (you will be prompted to clear the beacon)."
         )
 
     # Scan for unresolved ACTION_LEDGER entries

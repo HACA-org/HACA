@@ -199,7 +199,7 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
         try:
             cpe_resp = cpe.invoke(system_prompt, chat_history, tools=FCP_TOOLS)
         except Exception as exc:
-            ui.error(str(exc))
+            ui.error(f"[CPE] {exc}")
             # Remove the user turn — don't poison history with a failed request.
             chat_history.pop()
             continue
@@ -234,7 +234,7 @@ def _session_loop(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> No
                 ui.verbose_text("↩ re-invoke", f"turns={len(chat_history)}")
                 cpe_resp = cpe.invoke(system_prompt, chat_history, tools=FCP_TOOLS)
             except Exception as exc:
-                ui.error(str(exc))
+                ui.error(f"[CPE] tool-loop re-invoke: {exc}")
                 break
 
         # ── Final text response ────────────────────────────────────────────
@@ -276,8 +276,10 @@ def _teardown(ctx: BootContext, ui: UI, pending_proposals: list[dict]) -> None:
     snapshot_keep       = ctx.baseline.get("endure", {}).get("snapshot_keep", 3)
     run_hook(ctx.entity_root, "on_session_close", ctx.session_id)
     errors = run_endure(root, ctx.sil_gseq, ctx.session_id, checkpoint_interval, snapshot_keep)
-    for err in errors:
-        ui.warning(f"[Endure] {err}")
+    if errors:
+        ui.warning(f"[Endure] {len(errors)} error(s) during Stage 3 — affected proposals remain pending for next session:")
+        for err in errors:
+            ui.warning(f"[Endure]   {err}")
 
     write_sleep_complete(root, ctx.sil_gseq, ctx.session_id)
     remove_session_token(root)
