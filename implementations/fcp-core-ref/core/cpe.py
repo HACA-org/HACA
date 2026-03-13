@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -270,6 +271,31 @@ def _ollama_build(
         body["tools"] = _fcp_tools_to_openai(tools)
     return body
 
+def _ollama_parse_response(resp: dict) -> CPEResponse:
+    """Parse native Ollama /api/chat response (different layout from OpenAI)."""
+    msg = resp["message"]
+    text = msg.get("content") or ""
+    tool_calls: list[dict[str, Any]] = []
+    raw_content: list[dict[str, Any]] = []
+    if text:
+        raw_content.append({"type": "text", "text": text})
+    for tc in msg.get("tool_calls") or []:
+        fn   = tc["function"]
+        args = fn.get("arguments") or {}
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                args = {}
+        call_id = str(uuid.uuid4())
+        tool_calls.append({"id": call_id, "name": fn["name"], "input": args})
+        raw_content.append({"type": "tool_use", "id": call_id, "name": fn["name"], "input": args})
+    return CPEResponse(text=text.strip(), tool_calls=tool_calls, raw_content=raw_content)
+
+def _ollama_make_tool_results(results: list[ToolResult]) -> list[dict]:
+    """Ollama native /api/chat does not use tool_call_id in tool results."""
+    return [{"role": "tool", "content": r.content} for r in results]
+
 def _openai_parse_response(resp: dict) -> CPEResponse:
     msg = resp["choices"][0]["message"]
     text = msg.get("content") or ""
@@ -363,8 +389,8 @@ _PROVIDERS: dict[str, dict] = {
         "url":              _ollama_url,
         "headers":          _ollama_headers,
         "build":            _ollama_build,
-        "parse_response":   _openai_parse_response,
-        "make_tool_results": _openai_make_tool_results,
+        "parse_response":   _ollama_parse_response,
+        "make_tool_results": _ollama_make_tool_results,
     },
     "anthropic": {
         "url":              _anthropic_url,
