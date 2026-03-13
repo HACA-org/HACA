@@ -1255,6 +1255,9 @@ Platform commands are FCP-native operations that do not pass through the EXEC. M
 ```
 /help                        — display available commands and their status
 /status                      — show entity state, session counters, and last heartbeat
+/verbose [on|off]            — toggle verbose output; when on, FCP displays tool_use calls,
+                               component dispatch details, and tool_results in the terminal;
+                               session-scoped, not persisted; if omitted, displays current state
 /doctor [--fix]              — run entity health diagnostics; --fix attempts correctable repairs:
                                recreates absent volatile state directories, clears temp spool
                                files in io/spool/, rebuilds active_context/ symlinks from
