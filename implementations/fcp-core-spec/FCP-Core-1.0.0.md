@@ -1278,6 +1278,13 @@ Platform commands are FCP-native operations that do not pass through the EXEC. M
                                to the cloned directory; SIL validates the resulting path
 /work clear                  — unset workspace_focus; state/workspace_focus.json is removed
 /work status                 — display the active workspace_focus path
+/snapshot [path]             — create a copy of entity_root/ at the specified path; path must
+                               be outside entity_root/; if omitted, FCP writes to a default
+                               implementation-defined location; available at any time including
+                               outside an active session
+/memory [query]              — display the contents of the Memory Store; if a query is provided,
+                               the display is filtered to entries containing the query string;
+                               read-only, does not invoke the CPE or pass through EXEC
 ```
 
 **Endure boundary.** A modification to entity root structural content is an Endure event — it must go through the Endure Protocol to be valid. A modification to `workspace/` is outside the Endure scope and is not tracked by the Integrity Chain. This boundary is enforced at every level: `/endure` and related commands operate on structural content only; the `commit` built-in skill operates on `workspace/` projects only. The two domains never overlap. When the CPE is operating in a workspace project context, it uses `commit` for version control — it has no visibility into `/endure sync` or the Endure domain. This separation is by design: FCP enforces it structurally so neither domain can accidentally operate in the other's scope.
@@ -1289,9 +1296,6 @@ Commands declared as `"operator_only"` are rejected if issued from any source ot
 Skill aliases dispatch to a named skill via EXEC. They require an active session and follow session token routing. FCP resolves each alias against the `/command` alias map in `skills/index.json` — a flat lookup table from slash command name to skill name — and dispatches directly to EXEC, bypassing the cognitive pipeline. Action Ledger protection (§9.3) still applies for skills with irreversible side effects. Aliases not present in the map are rejected; they are never forwarded to the CPE.
 
 ```
-/snapshot                    — invoke the snapshot_create skill
-/endure                      — invoke the sys_endure skill
-/memory                      — invoke the memory_retrieve skill
 /commit [--remote]           — invoke the commit skill on the active workspace/ project;
                                --remote also pushes to the configured remote
 ```
@@ -1316,7 +1320,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 
 **Entity Layout**
 - [ ] Entity root contains `boot.md`, `persona/`, `skills/`, `hooks/`, `workspace/`, `io/`, `memory/`, `state/` as defined in §2.1; `workspace/stage/` is the skill staging area inside `workspace/`.
-- [ ] `skills/lib/` contains built-in skill executables; its contents are excluded from the `[SKILLS INDEX]` context block.
+- [ ] `skills/lib/` contains built-in and operator skill executables; operator-class skills are excluded from the `[SKILLS INDEX]` context block; built-in and custom skills are included.
 - [ ] `workspace/` is excluded from the Endure scope and not tracked by the Integrity Document.
 - [ ] `memory/imprint.json` is present after FAP and never modified thereafter.
 - [ ] `state/integrity_chain.jsonl` is append-only and never compacted or deleted.
