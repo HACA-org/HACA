@@ -374,8 +374,28 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
             return
         atomic_write(layout.workspace_focus, {"path": str(dest)})
         print(f"  cloned and focus set: {dest}")
+    elif sub == "status":
+        wf = ""
+        if layout.workspace_focus.exists():
+            try:
+                wf = str(read_json(layout.workspace_focus).get("path", ""))
+            except Exception:
+                pass
+        print(f"  workspace focus: {wf or '(not set)'}")
+        if layout.workspace_dir.exists():
+            subdirs = [d for d in sorted(layout.workspace_dir.iterdir()) if d.is_dir()]
+            if subdirs:
+                print("  available:")
+                for d in subdirs:
+                    print(f"    {d.name}")
+    elif sub == "clear":
+        if layout.workspace_focus.exists():
+            layout.workspace_focus.unlink()
+            print("  workspace focus cleared")
+        else:
+            print("  workspace focus not set")
     else:
-        print("  usage: /work set <subdir> | clone <repo>")
+        print("  usage: /work set <subdir> | clone <repo> | status | clear")
 
 
 # --- Skills & execution ---
@@ -610,8 +630,10 @@ def _cmd_help() -> None:
     /inbox clear                 — remove all notifications
 
   Workspace:
+    /work status                 — show active workspace focus
     /work set <subdir>           — set workspace focus
     /work clone <repo>           — clone repo and set as workspace focus
+    /work clear                  — unset workspace focus
 
   Skills & execution:
     /skill list                  — list installed skills
