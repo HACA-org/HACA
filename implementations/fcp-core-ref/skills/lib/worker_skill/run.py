@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""worker_skill — invoke a sub-agent CPE with isolated persona, context, and task."""
+"""worker_skill — invoke a sub-agent CPE with isolated persona and task.
+
+Params:
+  task     (required) — the task description to give the worker
+  persona  (optional) — system prompt / persona for the worker
+  context  (optional) — additional context prepended to the task message
+"""
 
 from __future__ import annotations
 import json
@@ -10,32 +16,37 @@ from pathlib import Path
 def main() -> None:
     req = json.loads(sys.stdin.read())
     params = req.get("params", {})
-    entity_root = Path(req.get("entity_root", "."))
+    entity_root = Path(req.get("entity_root", ".")).resolve()
 
-    persona = str(params.get("persona", "")).strip()
-    context = str(params.get("context", "")).strip()
     task = str(params.get("task", "")).strip()
-
     if not task:
         print(json.dumps({"error": "missing required param: task"}))
         sys.exit(1)
 
-    # Detect adapter and invoke with minimal FCPContext
-    sys.path.insert(0, str(entity_root.parent))
-    from fcp_core.cpe.base import detect_adapter, FCPContext
+    persona = str(params.get("persona", "You are a focused sub-agent. Complete the given task concisely.")).strip()
+    context = str(params.get("context", "")).strip()
 
-    adapter = detect_adapter()
-    ctx = FCPContext(
-        persona=[persona] if persona else [],
-        boot_protocol="",
-        skills_index="",
-        skill_blocks=[],
-        memory=[context] if context else [],
-        session=[],
-        presession=[],
-        tools=[],
-    )
-    response = adapter.invoke(ctx)
+    sys.path.insert(0, str(entity_root.parent))
+    from fcp_core.cpe.base import detect_adapter
+
+    try:
+        adapter = detect_adapter()
+    except Exception as exc:
+        print(json.dumps({"error": f"no CPE adapter available: {exc}"}))
+        sys.exit(1)
+
+    message = f"{context}\n\n{task}".strip() if context else task
+
+    try:
+        response = adapter.invoke(
+            system=persona,
+            messages=[{"role": "user", "content": message}],
+            tools=[],
+        )
+    except Exception as exc:
+        print(json.dumps({"error": f"CPE invocation failed: {exc}"}))
+        sys.exit(1)
+
     print(json.dumps({"status": "ok", "result": response.text}))
 
 
