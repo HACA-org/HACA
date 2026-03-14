@@ -101,6 +101,12 @@ def _stage0_drift(layout: Layout) -> bool:
         if not result:
             fault = True
             _write_drift_fault(layout, target_rel)
+            from .hooks import run_hook
+            run_hook(layout, "on_drift_fault", {
+                "target": target_rel,
+                "probe_type": probe_type,
+                "reference": reference,
+            })
             break
 
     _update_semantic_digest(layout, fault)

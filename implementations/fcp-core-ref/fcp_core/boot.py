@@ -163,6 +163,12 @@ def run(layout: Layout) -> BootResult:
 
 def _crash_recovery(layout: Layout, baseline: StructuralBaseline) -> None:
     """Handle stale session token found at boot.  §5.2"""
+    from .hooks import run_hook
+    run_hook(layout, "on_crash_recovery", {
+        "crash_count": _read_crash_count(read_jsonl(layout.integrity_log)),
+        "max_consecutive": baseline.fault_n_boot,
+    })
+
     # Step 0: ensure session.jsonl exists (rotation may have removed it).
     if not layout.session_store.exists():
         layout.session_store.write_text("", encoding="utf-8")

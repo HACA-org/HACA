@@ -215,6 +215,11 @@ def activate_beacon(
             "consecutive_failures": consecutive_failures,
         },
     )
+    from .hooks import run_hook
+    run_hook(layout, "on_beacon_activated", {
+        "cause": cause,
+        "consecutive_failures": consecutive_failures,
+    })
 
 
 def beacon_is_active(layout: Layout) -> bool:

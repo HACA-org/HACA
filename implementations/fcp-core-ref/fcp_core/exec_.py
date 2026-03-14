@@ -55,11 +55,15 @@ def dispatch(
     entry = _find_skill(index, skill_name)
     if entry is None:
         _log_rejected(layout, skill_name, "not in index")
+        from .hooks import run_hook
+        run_hook(layout, "on_skill_rejected", {"skill": skill_name, "reason": "not_in_index"})
         raise SkillRejected(f"Skill not in index: {skill_name!r}")
 
     skill_class = entry.get("class", "builtin")
     if skill_class == "operator" and not sil_invoked:
         _log_rejected(layout, skill_name, "operator-class")
+        from .hooks import run_hook
+        run_hook(layout, "on_skill_rejected", {"skill": skill_name, "reason": "operator_class"})
         raise SkillRejected(f"Operator-class skill rejected: {skill_name!r}")
 
     manifest = _load_manifest(layout, entry)

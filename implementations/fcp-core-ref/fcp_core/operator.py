@@ -538,9 +538,13 @@ def _endure_decide(layout: Layout, idx_str: str, approve: bool) -> None:
         auth_digest = _sha256_str(content)
         _write_evolution_auth(layout, content, auth_digest)
         print(f"  approved: [{idx}]")
+        from .hooks import run_hook
+        run_hook(layout, "on_evolution_authorized", {"content": content[:256], "auth_digest": auth_digest})
     else:
         _write_evolution_rejected(layout, content)
         print(f"  rejected: [{idx}]")
+        from .hooks import run_hook
+        run_hook(layout, "on_evolution_rejected", {"content": content[:256]})
     pfile = p["file"]
     if isinstance(pfile, Path):
         pfile.unlink(missing_ok=True)
