@@ -107,7 +107,7 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
 # Platform commands  §12.3.1
 # ---------------------------------------------------------------------------
 
-def handle_platform_command(layout: Layout, line: str) -> bool:
+def handle_platform_command(layout: Layout, line: str, adapter_ref: Any = None) -> bool:
     """Handle a /command line. Returns True if handled, False if unknown."""
     parts = line.strip().split()
     if not parts:
@@ -131,7 +131,7 @@ def handle_platform_command(layout: Layout, line: str) -> bool:
 
     # --- Memory & inbox ---
     if cmd == "/inbox":
-        _cmd_inbox(layout)
+        _cmd_inbox(layout, args)
         return True
 
     # --- Workspace ---
@@ -146,7 +146,7 @@ def handle_platform_command(layout: Layout, line: str) -> bool:
 
     # --- Model & endure ---
     if cmd == "/model":
-        _cmd_model(layout, args)
+        _cmd_model(layout, args, adapter_ref)
         return True
     if cmd == "/endure":
         _cmd_endure(layout, args)
@@ -230,16 +230,82 @@ def fix_integrity_hashes(layout: Layout) -> None:
 
 # --- Memory & inbox ---
 
-def _cmd_inbox(layout: Layout) -> None:
-    if not layout.presession_dir.exists():
-        print("  inbox empty")
-        return
-    files = list(layout.presession_dir.iterdir())
+def _cmd_inbox(layout: Layout, args: list[str]) -> None:
+    sub = args[0].lower() if args else "list"
+
+    if sub == "list":
+        _inbox_list(layout)
+    elif sub == "view" and len(args) > 1:
+        _inbox_view(layout, args[1])
+    elif sub == "dismiss" and len(args) > 1:
+        _inbox_dismiss(layout, args[1])
+    elif sub == "clear":
+        _inbox_clear(layout)
+    else:
+        print("  usage: /inbox [list] | view <n> | dismiss <n> | clear")
+
+
+def _inbox_notifications(layout: Layout) -> list[Path]:
+    """Return sorted notification files excluding proposal_pending."""
+    if not layout.operator_notifications_dir.exists():
+        return []
+    return [
+        f for f in sorted(layout.operator_notifications_dir.iterdir())
+        if f.suffix == ".json" and not f.name.endswith(".tmp")
+        and "proposal_pending" not in f.name
+    ]
+
+
+def _inbox_list(layout: Layout) -> None:
+    files = _inbox_notifications(layout)
     if not files:
         print("  inbox empty")
         return
-    for f in sorted(files):
-        print(f"  {f.name}")
+    for i, f in enumerate(files):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            inner = data.get("data", data)
+            ntype = inner.get("type", "?") if isinstance(inner, dict) else "?"
+            print(f"  [{i}] {ntype}  {f.name}")
+        except Exception:
+            print(f"  [{i}] (unreadable)  {f.name}")
+
+
+def _inbox_view(layout: Layout, idx_str: str) -> None:
+    files = _inbox_notifications(layout)
+    try:
+        idx = int(idx_str)
+        f = files[idx]
+    except (ValueError, IndexError):
+        print(f"  no notification at index {idx_str}")
+        return
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+        print(json.dumps(data.get("data", data), indent=2, ensure_ascii=False))
+    except Exception as exc:
+        print(f"  could not read: {exc}")
+
+
+def _inbox_dismiss(layout: Layout, idx_str: str) -> None:
+    files = _inbox_notifications(layout)
+    try:
+        idx = int(idx_str)
+        f = files[idx]
+    except (ValueError, IndexError):
+        print(f"  no notification at index {idx_str}")
+        return
+    f.unlink(missing_ok=True)
+    print(f"  dismissed: {f.name}")
+
+
+def _inbox_clear(layout: Layout) -> None:
+    files = _inbox_notifications(layout)
+    if not files:
+        print("  inbox already empty")
+        return
+    for f in files:
+        f.unlink(missing_ok=True)
+    print(f"  cleared {len(files)} notification(s)")
 
 
 # --- Workspace ---
@@ -299,16 +365,63 @@ def _cmd_skill(layout: Layout, args: list[str]) -> None:
 
 # --- Model & endure ---
 
-def _cmd_model(layout: Layout, args: list[str]) -> None:
-    if not args:
-        try:
-            baseline = read_json(layout.baseline)
-            model = baseline.get("cpe", {}).get("model", "(not set)")
-            print(f"  current model: {model}")
-        except Exception:
-            print("  could not read baseline")
+def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None:
+    try:
+        baseline = read_json(layout.baseline)
+        cpe_cfg = baseline.get("cpe", {})
+    except Exception:
+        print("  could not read baseline")
         return
-    print("  /model change requires an Endure cycle — use /endure to queue a proposal")
+
+    if not args:
+        print(f"  current model  : {cpe_cfg.get('model', '(not set)')}")
+        print(f"  backend        : {cpe_cfg.get('backend', '(not set)')}")
+        return
+
+    sub = args[0].lower()
+
+    if sub == "list":
+        _model_list(cpe_cfg.get("backend", ""))
+        return
+
+    # /model <name> — swap adapter mid-session
+    new_model = args[0]
+    if adapter_ref is None:
+        print("  /model <name> is only available during an active session")
+        return
+    from .cpe.base import make_adapter
+    try:
+        new_adapter = make_adapter(
+            backend=cpe_cfg.get("backend", "ollama"),
+            model=new_model,
+            api_key="",
+        )
+    except Exception as exc:
+        print(f"  failed to create adapter: {exc}")
+        return
+    adapter_ref.current = new_adapter
+    # persist to baseline
+    cpe_cfg["model"] = new_model
+    baseline["cpe"] = cpe_cfg
+    from .store import atomic_write
+    atomic_write(layout.baseline, baseline)
+    print(f"  model switched : {new_model}")
+
+
+def _model_list(backend: str) -> None:
+    known: dict[str, list[str]] = {
+        "anthropic": ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+        "openai": ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
+        "google": ["gemini-2.0-flash", "gemini-2.0-pro", "gemini-1.5-pro"],
+        "ollama": ["llama3.2", "llama3.1", "mistral", "qwen2.5", "phi4"],
+    }
+    models = known.get(backend, [])
+    if not models:
+        print(f"  no model list available for backend: {backend or '(unknown)'}")
+        return
+    print(f"  backend: {backend}")
+    for m in models:
+        print(f"    {m}")
 
 
 def _cmd_endure(layout: Layout, args: list[str]) -> None:
@@ -412,7 +525,10 @@ def _cmd_help() -> None:
     /exit | /bye | /close        — close session
 
   Memory & inbox:
-    /inbox                       — list pre-session buffer contents
+    /inbox [list]                — list system notifications
+    /inbox view <n>              — view notification by index
+    /inbox dismiss <n>           — remove notification by index
+    /inbox clear                 — remove all notifications
 
   Workspace:
     /work set <subdir>           — set workspace focus
@@ -423,7 +539,9 @@ def _cmd_help() -> None:
     /skill audit <name>          — audit a skill
 
   Model & endure:
-    /model                       — show current CPE model
+    /model                       — show current model and backend
+    /model list                  — list known models for current backend
+    /model <name>                — switch model mid-session (takes effect immediately)
     /endure list                 — list pending Evolution Proposals
     /endure sync [--remote]      — commit entity root to version control
 

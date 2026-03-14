@@ -71,6 +71,16 @@ class CPEAdapter(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Mutable adapter reference (allows mid-session model swap)
+# ---------------------------------------------------------------------------
+
+class AdapterRef:
+    """Thin wrapper so the session loop and operator handler share the same adapter."""
+    def __init__(self, adapter: CPEAdapter) -> None:
+        self.current = adapter
+
+
+# ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
 

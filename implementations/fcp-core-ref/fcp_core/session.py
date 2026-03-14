@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .acp import drain_inbox, make as acp_encode
-from .cpe.base import CPEAdapter, CPEResponse
+from .cpe.base import AdapterRef, CPEAdapter, CPEResponse
 from .mil import memory_recall, result_recall, write_episodic
 from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger
 from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
@@ -33,7 +33,7 @@ from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
 
 def run_session(
     layout: Layout,
-    adapter: CPEAdapter,
+    adapter: CPEAdapter | AdapterRef,
     index: dict[str, Any],
     *,
     inject: list[dict[str, Any]] | None = None,
@@ -46,6 +46,7 @@ def run_session(
     Returns the close reason string.
     """
     tools = _tool_declarations()
+    adapter_ref = adapter if isinstance(adapter, AdapterRef) else AdapterRef(adapter)
 
     # --- Build system prompt and initial chat history once at session start ---
     system, chat_history = build_boot_context(layout, index)
@@ -69,22 +70,56 @@ def run_session(
 
     close_reason = "session_close"
     cycle = 0
+    # True for the first cycle (SESSION_START already injected); False after that
+    # until the operator provides input or tool results arrive.
+    stimulus_ready = bool(greeting or inject)
 
     while True:
-        cycle += 1
-        _vlog("fcp", f"── Cognitive Cycle {cycle} ──────────────────────────")
-
         # drain io/inbox/ → consolidate to session.jsonl
         inbox_envs = _drain_and_consolidate(layout)
         for env in inbox_envs:
             text = _envelope_to_text(env)
             if text:
                 chat_history.append({"role": "user", "content": text})
+                stimulus_ready = True
 
+        # if no stimulus, wait for operator input before invoking CPE
+        if not stimulus_ready:
+            try:
+                user_input = _readline_with_history("> ")
+            except KeyboardInterrupt:
+                print()
+                close_reason = "operator_interrupt"
+                break
+            except EOFError:
+                close_reason = "operator_eof"
+                break
+            stripped = user_input.strip()
+            if not stripped:
+                continue
+            # platform commands — handle without invoking CPE
+            if stripped.startswith("/"):
+                from .operator import handle_platform_command
+                handled = handle_platform_command(layout, stripped, adapter_ref=adapter_ref)
+                if handled:
+                    if stripped.lower().split()[0] in ("/exit", "/bye", "/close"):
+                        close_reason = "operator_exit"
+                        break
+                    if stripped.lower().split()[0] in ("/new", "/clear", "/reset"):
+                        close_reason = "operator_reset"
+                        break
+                    continue  # back to top — wait for next input, no CPE call
+            _vlog("operator", f"input: {stripped!r}")
+            _append_msg(layout, "operator", user_input)
+            chat_history.append({"role": "user", "content": stripped})
+
+        stimulus_ready = False
+        cycle += 1
+        _vlog("fcp", f"── Cognitive Cycle {cycle} ──────────────────────────")
         _vlog_request(system, chat_history, tools)
 
-        # invoke CPE
-        response = adapter.invoke(system, chat_history, tools)
+        # invoke CPE (adapter_ref.current may be swapped mid-session via /model)
+        response = adapter_ref.current.invoke(system, chat_history, tools)
         _vlog_response(response)
 
         # add CPE response to chat history
@@ -121,39 +156,10 @@ def run_session(
         # use result_recall to retrieve the full payload if needed.
         if tool_summaries:
             chat_history.append({"role": "user", "content": "\n".join(tool_summaries)})
+            stimulus_ready = True  # tool results need a follow-up CPE cycle
 
         if session_closed:
             break
-
-        # no tool calls — wait for next operator input
-        if not response.tool_use_calls:
-            try:
-                user_input = _readline_with_history("> ")
-            except KeyboardInterrupt:
-                print()
-                close_reason = "operator_interrupt"
-                break
-            except EOFError:
-                close_reason = "operator_eof"
-                break
-            stripped = user_input.strip()
-            if not stripped:
-                continue
-            # platform commands handled here too (session context)
-            if stripped.startswith("/"):
-                from .operator import handle_platform_command
-                handled = handle_platform_command(layout, stripped)
-                if handled:
-                    if stripped.lower().split()[0] in ("/exit", "/bye", "/close"):
-                        close_reason = "operator_exit"
-                        break
-                    if stripped.lower().split()[0] in ("/new", "/clear", "/reset"):
-                        close_reason = "operator_reset"
-                        break
-                    continue
-            _vlog("operator", f"input: {stripped!r}")
-            _append_msg(layout, "operator", user_input)
-            chat_history.append({"role": "user", "content": stripped})
 
     _vlog("fcp", f"session closed — reason: {close_reason}")
     return close_reason
