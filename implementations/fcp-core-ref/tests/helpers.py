@@ -41,15 +41,20 @@ def make_layout() -> tuple[Layout, Path]:
     # minimal baseline
     baseline: dict[str, Any] = {
         "version": "1.0.0",
+        "entity_id": "test-entity",
         "profile": "HACA-Core",
         "cpe": {"backend": "ollama", "model": "llama3.2", "topology": "transparent"},
+        "context_window": {"budget_tokens": 200000, "critical_pct": 80},
         "context_budget": {"session_critical_threshold": 100000},
+        "drift": {"comparison_mechanism": "hash", "threshold": 0.0},
         "session_store": {"rotation_threshold_bytes": 1000000},
         "working_memory": {"max_entries": 50},
         "heartbeat": {"interval_seconds": 30, "cycle_threshold": 10},
         "watchdog": {"sil_threshold_seconds": 25},
         "fault": {"n_retry": 3, "n_boot": 3, "n_channel": 3},
         "integrity_chain": {"checkpoint_interval": 10},
+        "pre_session_buffer": {"max_entries": 20},
+        "operator_channel": {"notifications_dir": "state/operator_notifications"},
     }
     _atomic_write(tmp / "state" / "baseline.json", baseline)
 
@@ -77,10 +82,20 @@ def make_layout() -> tuple[Layout, Path]:
     # empty session store
     (tmp / "memory" / "session.jsonl").write_text("", encoding="utf-8")
 
-    # minimal imprint
+    # minimal valid imprint
     _atomic_write(tmp / "memory" / "imprint.json", {
-        "entity_id": "test",
-        "genesis_omega": "0" * 64,
+        "version": "1.0",
+        "activated_at": "2000-01-01T00:00:00Z",
+        "haca_arch_version": "1.0.0",
+        "haca_profile": "HACA-Core-1.0.0",
+        "operator_bound": {
+            "operator_name": "Test Operator",
+            "operator_email": "test@example.com",
+            "operator_hash": "0" * 64,
+        },
+        "structural_baseline": "0" * 64,
+        "integrity_document": "0" * 64,
+        "skills_index": "0" * 64,
     })
 
     # empty working memory

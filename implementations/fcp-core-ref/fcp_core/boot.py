@@ -182,7 +182,7 @@ def _crash_recovery(layout: Layout, baseline: StructuralBaseline) -> None:
     # Imported here to avoid circular imports; sleep.py is implemented later.
     try:
         from . import sleep as sleep_mod
-        sleep_mod.run(layout, session_id="crash-recovery")
+        sleep_mod.run_sleep_cycle(layout)
     except ImportError:
         pass  # sleep.py not yet implemented — acceptable during development
 
