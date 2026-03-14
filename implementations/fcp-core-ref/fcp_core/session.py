@@ -232,8 +232,11 @@ def build_boot_context(
     if layout.working_memory.exists():
         wm = read_json(layout.working_memory)
         for entry in sorted(wm.get("entries", []), key=lambda e: int(e.get("priority", 99))):
-            p = layout.root / entry.get("path", "")
-            if p.exists():
+            rel = entry.get("path", "")
+            if not rel:
+                continue
+            p = layout.root / rel
+            if p.is_file():
                 memory_parts.append(p.read_text(encoding="utf-8").strip())
 
     skill_blocks: list[str] = []

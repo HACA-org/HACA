@@ -578,12 +578,10 @@ def _cmd_compact() -> None:
 
 def _cmd_verbose(layout: Layout, args: list[str]) -> None:
     global _verbose, _debugger
-    if args and args[0].lower() == "on":
-        _verbose = True
-    elif args and args[0].lower() == "off":
+    if args and args[0] == "--off":
         _verbose = False
     else:
-        _verbose = not _verbose
+        _verbose = True
     if _verbose and _debugger is not None:
         _debugger = None
         print("  debugger: off (switched to verbose)")
@@ -592,23 +590,20 @@ def _cmd_verbose(layout: Layout, args: list[str]) -> None:
 
 def _cmd_debugger(layout: Layout, args: list[str]) -> None:
     global _verbose, _debugger
-    if not args or args[0].lower() == "off":
+    flag = next((a for a in args if a.startswith("--")), None)
+    if flag == "--off":
         _debugger = None
         print("  debugger: off")
         return
-    if args[0].lower() == "on":
-        flag = next((a for a in args[1:] if a.startswith("--")), None)
-        mode = flag.lstrip("-") if flag else "chat"
-        if mode not in ("all", "chat", "boot"):
-            print("  usage: /debugger on [--all | --chat | --boot] | off")
-            return
-        _debugger = mode
-        if _verbose:
-            _verbose = False
-            print("  verbose: off (switched to debugger)")
-        print(f"  debugger: on --{mode}")
+    mode = flag.lstrip("-") if flag else "all"
+    if mode not in ("all", "chat", "boot"):
+        print("  usage: /debugger [--all | --chat | --boot | --off]")
         return
-    print("  usage: /debugger on [--all | --chat | --boot] | off")
+    _debugger = mode
+    if _verbose:
+        _verbose = False
+        print("  verbose: off (switched to debugger)")
+    print(f"  debugger: on --{mode}")
 
 
 def _cmd_help() -> None:
@@ -649,12 +644,13 @@ def _cmd_help() -> None:
     /endure sync [--remote]      — commit entity root to version control
 
   Debug:
-    /verbose [on|off]            — toggle component message summary
-    /debugger on [--all|--chat|--boot] | off
+    /verbose [--off]             — enable component message summary (--off to disable)
+    /debugger [--all|--chat|--boot|--off]
                                  — inspect CPE context (disables verbose)
+                                   --all:  full context (default)
                                    --chat: session history only
                                    --boot: system + instruction block only
-                                   --all:  full context
+                                   --off:  disable debugger
 
     /help                        — this message
 """)
