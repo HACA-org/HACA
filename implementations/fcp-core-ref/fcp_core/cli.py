@@ -1,11 +1,11 @@
 """
 CLI entry point — FCP-Core §12.1.
 
-Usage:
-  fcp-core init <entity-root>                    — create a new entity root skeleton
-  fcp-core <entity-root>                         — boot and run a session
-  fcp-core <entity-root> --notifications         — print pending notifications and exit
-  fcp-core <entity-root> decommission --archive | --destroy
+Usage (always run from inside the entity root):
+  ./fcp-core                          — boot and run a session
+  ./fcp-core init                     — initialise entity root in cwd
+  ./fcp-core doctor [--fix]           — check/repair without booting
+  ./fcp-core decommission --archive | --destroy
 """
 
 from __future__ import annotations
@@ -17,37 +17,40 @@ from pathlib import Path
 
 def main() -> None:
     args = sys.argv[1:]
+    entity_root = Path.cwd()
+
+    verbose = "--verbose" in args
+    args = [a for a in args if a != "--verbose"]
+
     if not args:
-        print("usage: fcp-core init <entity-root> | fcp-core <entity-root> [--notifications] [decommission --archive|--destroy]")
-        sys.exit(1)
-
-    # init subcommand — no entity root required to exist yet
-    if args[0] == "init":
-        if len(args) < 2:
-            print("usage: fcp-core init <entity-root>")
-            sys.exit(1)
-        _run_init(Path(args[1]).resolve())
+        # normal boot + session
+        from .store import Layout
+        if verbose:
+            from .operator import set_verbose
+            set_verbose(True)
+        _run_normal(Layout(entity_root))
         return
 
-    entity_root = Path(args[0]).resolve()
-    rest = list(itertools.islice(args, 1, len(args)))
+    cmd = args[0]
+    rest = args[1:]
 
-    from .store import Layout
-    layout = Layout(entity_root)
-
-    # --notifications mode: print pending notifications and exit
-    if rest and rest[0] == "--notifications":
-        from .operator import present_notifications
-        present_notifications(layout)
+    if cmd == "init":
+        _run_init(entity_root)
         return
 
-    # decommission mode
-    if rest and rest[0] == "decommission":
-        _run_decommission(layout, list(itertools.islice(rest, 1, len(rest))))
+    if cmd == "doctor":
+        from .store import Layout
+        _run_doctor(Layout(entity_root), rest)
         return
 
-    # normal boot + session
-    _run_normal(layout)
+    if cmd == "decommission":
+        from .store import Layout
+        _run_decommission(Layout(entity_root), rest)
+        return
+
+    print(f"unknown command: {cmd}")
+    print("usage: ./fcp-core [init | doctor [--fix] | decommission --archive|--destroy]")
+    sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +60,7 @@ def main() -> None:
 def _run_normal(layout: "Layout") -> None:
     from .boot import run as boot_run, BootError
     from .cpe.base import make_adapter
+    from .fap import FAPError
     from .operator import (
         handle_platform_command,
         present_notifications,
@@ -66,14 +70,15 @@ def _run_normal(layout: "Layout") -> None:
     from .sleep import run_sleep_cycle
     from .store import read_json
 
-    # Boot
     try:
         boot_result = boot_run(layout)
+    except FAPError as exc:
+        print(f"[FAP FAILED] {exc}")
+        sys.exit(1)
     except BootError as exc:
         print(f"[BOOT FAILED] {exc}")
         sys.exit(1)
 
-    # Adapter from baseline
     try:
         baseline = read_json(layout.baseline)
         cpe_cfg = baseline.get("cpe", {})
@@ -86,59 +91,17 @@ def _run_normal(layout: "Layout") -> None:
         print(f"[CPE ERROR] {exc}")
         sys.exit(1)
 
-    # Load sealed skill index
     index: dict = {}
     if layout.skills_index.exists():
         index = read_json(layout.skills_index)
 
-    # Present pending notifications
     present_notifications(layout)
-
     print("[FCP-Core] Entity ready. Type your message or /help.")
 
-    # Session loop — each user message triggers one cognitive cycle
-    while True:
-        try:
-            user_input = input("> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            break
+    run_session(layout, adapter, index, greeting=True)
 
-        if not user_input:
-            continue
-
-        # platform commands
-        if user_input.startswith("/"):
-            if handle_platform_command(layout, user_input):
-                continue
-            from .operator import resolve_alias
-            from .exec_ import dispatch, SkillRejected
-            skill_name = resolve_alias(layout, user_input)
-            if skill_name:
-                parts = user_input.split()
-                params = {"args": list(itertools.islice(parts, 1, len(parts)))} if len(parts) > 1 else {}
-                try:
-                    out = dispatch(layout, skill_name, params, index)
-                    print(out)
-                except SkillRejected as exc:
-                    print(f"[rejected] {exc}")
-                continue
-            print(f"  unknown command: {user_input}")
-            continue
-
-        # inject as MSG and run one cognitive cycle
-        from .acp import make as acp_make
-        from .store import append_jsonl
-        envelope = acp_make(env_type="MSG", source="operator", data=user_input)
-        append_jsonl(layout.session_store, envelope)
-
-        close_reason = run_session(layout, adapter, index)
-        if close_reason == "session_close":
-            break
-
-    # Pre-sleep: present evolution proposals
     present_evolution_proposals(layout)
 
-    # Sleep Cycle
     print("[FCP-Core] Running Sleep Cycle...")
     try:
         run_sleep_cycle(layout)
@@ -149,12 +112,52 @@ def _run_normal(layout: "Layout") -> None:
 
 
 # ---------------------------------------------------------------------------
+# Doctor — operates without booting
+# ---------------------------------------------------------------------------
+
+def _run_doctor(layout: "Layout", args: list[str]) -> None:
+    from .compliance import run_all, print_report
+    from .operator import fix_integrity_hashes
+    from .sil import clear_beacon, beacon_is_active
+
+    fix = "--fix" in args
+
+    if fix:
+        # Clear distress beacon if active
+        if beacon_is_active(layout):
+            clear_beacon(layout)
+            print("  distress beacon cleared")
+
+        # Remove stale session token
+        if layout.session_token.exists():
+            layout.session_token.unlink()
+            print("  stale session token removed")
+
+        # Repair volatile dirs
+        for d in layout.volatile_dirs():
+            if not d.exists():
+                d.mkdir(parents=True, exist_ok=True)
+                print(f"  created: {d.relative_to(layout.root)}")
+
+        # Recalculate integrity hashes
+        fix_integrity_hashes(layout)
+
+    findings = run_all(layout)
+    print_report(findings)
+
+    failed = [f for f in findings if not f.passed]
+    if failed:
+        print(f"\n  {len(failed)} issue(s) found. Run ./fcp-core doctor --fix to repair.")
+
+
+# ---------------------------------------------------------------------------
 # Decommission
 # ---------------------------------------------------------------------------
 
 def _run_decommission(layout: "Layout", args: list[str]) -> None:
     from .boot import run as boot_run, BootError
     from .cpe.base import make_adapter
+    from .fap import FAPError
     from .acp import make as acp_make
     from .operator import present_evolution_proposals
     from .session import run_session
@@ -170,6 +173,9 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
 
     try:
         boot_result = boot_run(layout)
+    except FAPError as exc:
+        print(f"[FAP FAILED] {exc}")
+        sys.exit(1)
     except BootError as exc:
         print(f"[BOOT FAILED] {exc}")
         sys.exit(1)
@@ -204,35 +210,38 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Init — create a new entity root skeleton
+# Init
 # ---------------------------------------------------------------------------
 
 def _run_init(entity_root: Path) -> None:
-    """Create runtime dirs (memory/, state/, io/, workspace/) inside entity_root.
+    """Create runtime dirs inside entity_root (cwd).
 
     Structural content (boot.md, persona/, skills/, hooks/) must already exist
     in entity_root — they are committed to the repo and not generated here.
     """
-    import os
-
-    # Validate structural prerequisites
     missing = []
     if not (entity_root / "boot.md").exists():
         missing.append("boot.md")
     if not (entity_root / "persona").is_dir() or not any((entity_root / "persona").iterdir()):
         missing.append("persona/ (must have at least one file)")
     if missing:
-        print(f"[ERROR] Missing structural content in {entity_root}: {', '.join(missing)}")
+        print(f"[ERROR] Missing structural content: {', '.join(missing)}")
         print("  These files belong in the repo and must exist before running init.")
         sys.exit(1)
 
-    # Check nothing was already initialised
     if (entity_root / "state").exists() or (entity_root / "memory").exists():
-        print(f"[ERROR] {entity_root} appears already initialised (state/ or memory/ exists).")
-        print("  Remove those directories manually if you want to re-initialise.")
-        sys.exit(1)
+        try:
+            answer = input("Already initialised (state/ or memory/ exists). Re-initialise? [y/N] ").strip().lower()
+        except EOFError:
+            answer = "n"
+        if answer != "y":
+            sys.exit(0)
+        import shutil
+        for d in ["state", "memory", "io", "workspace"]:
+            p = entity_root / d
+            if p.exists():
+                shutil.rmtree(p)
 
-    # Runtime directories
     runtime_dirs = [
         entity_root / "memory" / "episodic",
         entity_root / "memory" / "semantic",
@@ -247,7 +256,6 @@ def _run_init(entity_root: Path) -> None:
     for d in runtime_dirs:
         d.mkdir(parents=True, exist_ok=True)
 
-    # baseline — ask for backend/model
     print("=== FCP-Core Init ===")
     backend = input("CPE backend [ollama/anthropic/openai/google] (default: ollama): ").strip() or "ollama"
     model_defaults = {
@@ -276,13 +284,11 @@ def _run_init(entity_root: Path) -> None:
         "operator_channel": {"notifications_dir": "state/operator_notifications"},
     })
 
-    # integrity doc (empty — FAP will populate)
     _atomic_write(entity_root / "state" / "integrity.json", {
         "version": "1.0", "algorithm": "sha256",
         "genesis_omega": None, "last_checkpoint": None, "files": {},
     })
 
-    # empty runtime files
     for p in [
         entity_root / "state" / "integrity_chain.jsonl",
         entity_root / "state" / "integrity.log",
@@ -294,7 +300,7 @@ def _run_init(entity_root: Path) -> None:
 
     print(f"\n[FCP-Core] Initialised: {entity_root}")
     print("  First boot will run FAP (First Activation Protocol).")
-    print(f"  Run: ./fcp-core {entity_root}")
+    print("  Run: ./fcp-core")
 
 
 def _atomic_write(path: Path, data: object) -> None:

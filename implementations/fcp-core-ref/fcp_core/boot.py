@@ -169,22 +169,31 @@ def _crash_recovery(layout: Layout, baseline: StructuralBaseline) -> None:
     # Step 2: present unresolved ACTION_LEDGER entries to Operator.
     _resolve_action_ledger(layout)
 
-    # Step 3: increment crash counter; activate beacon if threshold reached.
-    crash_count = _increment_crash_counter(layout)
-    if crash_count >= baseline.fault_n_boot:
-        activate_beacon(layout, "n_boot", crash_count)
-        raise BootError(
-            f"Phase 2: {crash_count} consecutive boot failures — "
-            "Passive Distress Beacon activated"
-        )
-
-    # Step 4: re-run Sleep Cycle to consolidate the crashed session.
-    # Imported here to avoid circular imports; sleep.py is implemented later.
+    # Step 3: re-run Sleep Cycle to consolidate the crashed session.
     try:
         from . import sleep as sleep_mod
         sleep_mod.run_sleep_cycle(layout)
     except ImportError:
         pass  # sleep.py not yet implemented — acceptable during development
+    except Exception as exc:
+        # Sleep Cycle failed — increment counter before raising
+        crash_count = _increment_crash_counter(layout)
+        if crash_count >= baseline.fault_n_boot:
+            activate_beacon(layout, "n_boot", crash_count)
+            raise BootError(
+                f"Phase 2: {crash_count} consecutive boot failures — "
+                f"Passive Distress Beacon activated. "
+                f"Last Sleep Cycle error: {exc}"
+            ) from exc
+        raise BootError(
+            f"Phase 2: Sleep Cycle failed during crash recovery "
+            f"(attempt {crash_count}/{baseline.fault_n_boot}): {exc}"
+        ) from exc
+
+    # Step 4: Sleep Cycle completed — remove stale session token and reset counter.
+    if layout.session_token.exists():
+        layout.session_token.unlink()
+    _reset_crash_counter(layout)
 
 
 def _restore_partial_endure(layout: Layout) -> None:
@@ -283,6 +292,18 @@ def _read_crash_count(entries: list[dict]) -> int:
         if t == "HEARTBEAT" and cc is not None:
             return int(cc)
     return 0
+
+
+def _reset_crash_counter(layout: Layout) -> None:
+    """Write a crash_count=0 HEARTBEAT entry to signal clean recovery."""
+    ts = _utcnow()
+    data_str = json.dumps({"crash_count": 0, "ts": ts})
+    env = ACPEnvelope(
+        actor="sil", gseq=0, tx=str(uuid.uuid4()),
+        seq=1, eof=True, type="HEARTBEAT", ts=ts,
+        data=data_str, crc=crc32(data_str),
+    )
+    append_jsonl(layout.integrity_log, env.to_dict())
 
 
 def _increment_crash_counter(layout: Layout) -> int:

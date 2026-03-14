@@ -15,8 +15,7 @@ import urllib.request
 from typing import Any
 
 from .base import (
-    CPEAuthError, CPEError, CPERateLimitError, CPEResponse, FCPContext, ToolUseCall, _trunc,
-    build_system, build_instruction_block, build_history,
+    CPEAuthError, CPEError, CPERateLimitError, CPEResponse, ToolUseCall, _trunc,
 )
 
 _BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -31,39 +30,26 @@ class GoogleAdapter:
         self._api_key = api_key or os.environ.get("GOOGLE_API_KEY", "")
         self._model = model
 
-    def invoke(self, context: FCPContext) -> CPEResponse:
-        system_instruction, contents = _build_contents(context)
+    def invoke(
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> CPEResponse:
+        # Convert OpenAI-style messages to Gemini contents format
+        contents: list[dict[str, Any]] = []
+        for msg in messages:
+            role = "model" if msg["role"] == "assistant" else "user"
+            contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+
         payload: dict[str, Any] = {
-            "system_instruction": {"parts": [{"text": system_instruction}]},
+            "system_instruction": {"parts": [{"text": system}]},
             "contents": contents,
             "generationConfig": {"maxOutputTokens": _MAX_TOKENS},
         }
-        if context.tools:
-            payload["tools"] = [{"function_declarations": context.tools}]
+        if tools:
+            payload["tools"] = [{"function_declarations": tools}]
         return _parse_response(_post(self._api_key, self._model, payload))
-
-
-# ---------------------------------------------------------------------------
-# Message formatting
-# ---------------------------------------------------------------------------
-
-def _build_contents(ctx: FCPContext) -> tuple[str, list[dict[str, Any]]]:
-    system_instruction = build_system(ctx)
-
-    contents: list[dict[str, Any]] = [
-        {"role": "user", "parts": [{"text": build_instruction_block(ctx)}]},
-        {"role": "model", "parts": [{"text": "Understood. I am ready."}]},
-    ]
-
-    history = build_history(ctx)
-    for role, text in history:
-        g_role = "model" if role == "assistant" else "user"
-        contents.append({"role": g_role, "parts": [{"text": text}]})
-
-    if not history:
-        contents.append({"role": "user", "parts": [{"text": "(awaiting first message)"}]})
-
-    return system_instruction, contents
 
 
 # ---------------------------------------------------------------------------

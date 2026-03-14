@@ -14,8 +14,7 @@ import urllib.request
 from typing import Any
 
 from .base import (
-    CPEAuthError, CPEError, CPERateLimitError, CPEResponse, FCPContext, ToolUseCall, _trunc,
-    build_system, build_instruction_block, build_history,
+    CPEAuthError, CPEError, CPERateLimitError, CPEResponse, ToolUseCall, _trunc,
 )
 
 _DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -32,37 +31,21 @@ class OpenAIAdapter:
         base = base_url or os.environ.get("OPENAI_BASE_URL", _DEFAULT_BASE_URL)
         self._base_url = base.rstrip("/")
 
-    def invoke(self, context: FCPContext) -> CPEResponse:
-        messages = _build_messages(context)
+    def invoke(
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> CPEResponse:
+        full_messages = [{"role": "system", "content": system}] + messages
         payload: dict[str, Any] = {
             "model": self._model,
             "max_tokens": _MAX_TOKENS,
-            "messages": messages,
+            "messages": full_messages,
         }
-        if context.tools:
-            payload["tools"] = context.tools
+        if tools:
+            payload["tools"] = tools
         return _parse_response(_post(self._api_key, self._base_url, payload))
-
-
-# ---------------------------------------------------------------------------
-# Message formatting
-# ---------------------------------------------------------------------------
-
-def _build_messages(ctx: FCPContext) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": build_system(ctx)},
-        {"role": "user", "content": build_instruction_block(ctx)},
-        {"role": "assistant", "content": "Understood. I am ready."},
-    ]
-
-    history = build_history(ctx)
-    for role, text in history:
-        messages.append({"role": role, "content": text})
-
-    if not history:
-        messages.append({"role": "user", "content": "(awaiting first message)"})
-
-    return messages
 
 
 # ---------------------------------------------------------------------------

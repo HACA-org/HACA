@@ -66,7 +66,15 @@ Optional: `"path"` restricts recall to a specific memory file path.
 ]
 ```
 
-`closure_payload` is a third `fcp_mil` action, used only at session close — see Session Close below.
+**result_recall** — retrieve the full payload of a previous tool result by timestamp. Tool results in the conversation history are stored as compact summaries (`[fcp_mil:memory_recall ts:... — ok]`). Use `result_recall` when you need the complete content of a past result.
+
+```json
+{ "type": "result_recall", "ts": 1773463571136 }
+```
+
+`ts` is the timestamp shown in the summary line of the result you want to retrieve.
+
+`closure_payload` is a fourth `fcp_mil` action, used only at session close — see Session Close below.
 
 ---
 

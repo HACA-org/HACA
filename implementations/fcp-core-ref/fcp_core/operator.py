@@ -2,7 +2,7 @@
 Operator Interface — FCP-Core §12.
 
 §12.2  Interactive loop (input → inject as MSG → session cycle)
-§12.3.1 Platform commands (/status, /doctor, /model, /endure, /inbox, /work, /skill, /verbose)
+§12.3.1 Platform commands (/status, /doctor, /model, /endure, /inbox, /work, /skill, /verbose, /debugger)
 §12.3.2 Skill aliases (/commit, ...)
 §12.4  Notifications
 """
@@ -19,26 +19,34 @@ from typing import Any
 from .acp import make as acp_encode
 from .store import Layout, append_jsonl, atomic_write, read_json
 
+
 # ---------------------------------------------------------------------------
-# Verbose state — session-scoped, not persisted
+# Debug state — session-scoped, not persisted
 # ---------------------------------------------------------------------------
 
 _verbose: bool = False
+_debugger: str | None = None  # None | "all" | "chat" | "boot"
+
 
 def is_verbose() -> bool:
     return _verbose
+
 
 def set_verbose(value: bool) -> None:
     global _verbose
     _verbose = value
 
 
+def get_debugger() -> str | None:
+    return _debugger
+
+
 # ---------------------------------------------------------------------------
-# Notification display
+# Notifications  §12.4
 # ---------------------------------------------------------------------------
 
 def present_notifications(layout: Layout) -> None:
-    """Print and clear pending operator notifications."""
+    """Print pending operator notifications."""
     if not layout.operator_notifications_dir.exists():
         return
     for f in sorted(layout.operator_notifications_dir.iterdir()):
@@ -53,10 +61,7 @@ def present_notifications(layout: Layout) -> None:
 
 
 def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
-    """Display pending Evolution Proposals; collect Operator approve/reject decisions.
-
-    Returns list of authorized proposals (approved by Operator).
-    """
+    """Display pending Evolution Proposals and collect Operator decisions."""
     if not layout.operator_notifications_dir.exists():
         return []
 
@@ -110,42 +115,63 @@ def handle_platform_command(layout: Layout, line: str) -> bool:
     cmd = parts[0].lower()
     args = list(itertools.islice(parts, 1, len(parts)))
 
+    # --- Entity & session ---
     if cmd == "/status":
         _cmd_status(layout)
         return True
     if cmd == "/doctor":
         _cmd_doctor(layout, args)
         return True
+    if cmd in ("/exit", "/bye", "/close"):
+        print("  closing session...")
+        return True
+
+    # --- Memory & inbox ---
+    if cmd == "/inbox":
+        _cmd_inbox(layout)
+        return True
+
+    # --- Workspace ---
+    if cmd == "/work":
+        _cmd_work(layout, args)
+        return True
+
+    # --- Skills & execution ---
+    if cmd == "/skill":
+        _cmd_skill(layout, args)
+        return True
+
+    # --- Model & endure ---
     if cmd == "/model":
         _cmd_model(layout, args)
         return True
     if cmd == "/endure":
         _cmd_endure(layout, args)
         return True
-    if cmd == "/inbox":
-        _cmd_inbox(layout)
-        return True
-    if cmd == "/work":
-        _cmd_work(layout, args)
-        return True
-    if cmd == "/skill":
-        _cmd_skill(layout, args)
-        return True
+
+    # --- Debug ---
     if cmd == "/verbose":
         _cmd_verbose(layout, args)
         return True
+    if cmd == "/debugger":
+        _cmd_debugger(layout, args)
+        return True
+
     if cmd == "/help":
         _cmd_help()
         return True
+
     return False
 
+
+# --- Entity & session ---
 
 def _cmd_status(layout: Layout) -> None:
     token_present = layout.session_token.exists()
     session_size = layout.session_store.stat().st_size if layout.session_store.exists() else 0
     beacon = layout.distress_beacon.exists()
-    print(f"  session token : {'active' if token_present else 'inactive'}")
-    print(f"  session store : {session_size} bytes")
+    print(f"  session token  : {'active' if token_present else 'inactive'}")
+    print(f"  session store  : {session_size} bytes")
     print(f"  distress beacon: {'ACTIVE' if beacon else 'clear'}")
     wf = ""
     if layout.workspace_focus.exists():
@@ -159,26 +185,20 @@ def _cmd_status(layout: Layout) -> None:
 def _cmd_doctor(layout: Layout, args: list[str]) -> None:
     from .compliance import run_all, print_report
     fix = "--fix" in args
-
     if fix:
-        # Repair volatile dirs
         for d in layout.volatile_dirs():
             if not d.exists():
                 d.mkdir(parents=True, exist_ok=True)
                 print(f"  created: {d.relative_to(layout.root)}")
-
-        # Recalculate hashes for all tracked files in integrity.json
-        _fix_integrity_hashes(layout)
-
+        fix_integrity_hashes(layout)
     findings = run_all(layout)
     print_report(findings)
-
     failed = [f for f in findings if not f.passed]
     if failed:
         print(f"\n  {len(failed)} issue(s) found. Run /doctor --fix to repair volatile dirs.")
 
 
-def _fix_integrity_hashes(layout: Layout) -> None:
+def fix_integrity_hashes(layout: Layout) -> None:
     """Recalculate sha256 hashes for all files tracked in integrity.json."""
     import hashlib
     if not layout.integrity_doc.exists():
@@ -204,6 +224,77 @@ def _fix_integrity_hashes(layout: Layout) -> None:
     else:
         print("  integrity.json: all hashes up to date")
 
+
+# --- Memory & inbox ---
+
+def _cmd_inbox(layout: Layout) -> None:
+    if not layout.presession_dir.exists():
+        print("  inbox empty")
+        return
+    files = list(layout.presession_dir.iterdir())
+    if not files:
+        print("  inbox empty")
+        return
+    for f in sorted(files):
+        print(f"  {f.name}")
+
+
+# --- Workspace ---
+
+def _cmd_work(layout: Layout, args: list[str]) -> None:
+    if not args:
+        print("  usage: /work set <subdir> | clone <repo>")
+        return
+    sub = args[0].lower()
+    if sub == "set" and len(args) > 1:
+        subdir = args[1]
+        target = (layout.workspace_dir / subdir).resolve()
+        try:
+            target.relative_to(layout.workspace_dir)
+        except ValueError:
+            print(f"  path outside workspace: {subdir}")
+            return
+        if not target.exists():
+            print(f"  directory not found: {subdir}")
+            return
+        atomic_write(layout.workspace_focus, {"path": str(target)})
+        print(f"  workspace focus set: {target}")
+    elif sub == "clone" and len(args) > 1:
+        import subprocess
+        repo = args[1]
+        name = repo.rstrip("/").split("/")[-1].removesuffix(".git")
+        dest = layout.workspace_dir / name
+        r = subprocess.run(["git", "clone", repo, str(dest)], capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"  clone failed: {r.stderr.strip()}")
+            return
+        atomic_write(layout.workspace_focus, {"path": str(dest)})
+        print(f"  cloned and focus set: {dest}")
+    else:
+        print("  usage: /work set <subdir> | clone <repo>")
+
+
+# --- Skills & execution ---
+
+def _cmd_skill(layout: Layout, args: list[str]) -> None:
+    if not args:
+        print("  usage: /skill list | audit <name>")
+        return
+    sub = args[0].lower()
+    if sub == "list":
+        if layout.skills_index.exists():
+            idx = read_json(layout.skills_index)
+            for s in idx.get("skills", []):
+                print(f"  {s['name']} [{s.get('class', '?')}]")
+        else:
+            print("  skills/index.json not found")
+    elif sub == "audit" and len(args) > 1:
+        print(f"  audit {args[1]}: use /skill audit via EXEC dispatch during session")
+    else:
+        print("  usage: /skill list | audit <name>")
+
+
+# --- Model & endure ---
 
 def _cmd_model(layout: Layout, args: list[str]) -> None:
     if not args:
@@ -253,118 +344,95 @@ def _endure_list(layout: Layout) -> None:
 
 def _endure_sync(layout: Layout, remote: bool) -> None:
     import subprocess
-    cmd = ["git", "add", "-A"]
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(layout.root))
+    r = subprocess.run(["git", "add", "-A"], capture_output=True, text=True, cwd=str(layout.root))
     if r.returncode != 0:
         print(f"  git add failed: {r.stderr.strip()}")
         return
     ts = int(time.time())
     r2 = subprocess.run(
         ["git", "commit", "-m", f"endure sync {ts}"],
-        capture_output=True, text=True, cwd=str(layout.root)
+        capture_output=True, text=True, cwd=str(layout.root),
     )
     if r2.returncode != 0:
         print(f"  git commit: {r2.stderr.strip() or 'nothing to commit'}")
     else:
         print(f"  committed: {r2.stdout.strip()}")
     if remote:
-        r3 = subprocess.run(
-            ["git", "push", "origin"],
-            capture_output=True, text=True, cwd=str(layout.root)
-        )
+        r3 = subprocess.run(["git", "push", "origin"], capture_output=True, text=True, cwd=str(layout.root))
         print(f"  push: {'ok' if r3.returncode == 0 else r3.stderr.strip()}")
 
 
-def _cmd_inbox(layout: Layout) -> None:
-    if not layout.presession_dir.exists():
-        print("  inbox empty")
-        return
-    files = list(layout.presession_dir.iterdir())
-    if not files:
-        print("  inbox empty")
-        return
-    for f in sorted(files):
-        print(f"  {f.name}")
-
-
-def _cmd_work(layout: Layout, args: list[str]) -> None:
-    if not args:
-        print("  usage: /work set <subdir> | clone <repo>")
-        return
-    sub = args[0].lower()
-    if sub == "set" and len(args) > 1:
-        subdir = args[1]
-        target = (layout.workspace_dir / subdir).resolve()
-        try:
-            target.relative_to(layout.workspace_dir)
-        except ValueError:
-            print(f"  path outside workspace: {subdir}")
-            return
-        if not target.exists():
-            print(f"  directory not found: {subdir}")
-            return
-        atomic_write(layout.workspace_focus, {"path": str(target)})
-        print(f"  workspace focus set: {target}")
-    elif sub == "clone" and len(args) > 1:
-        import subprocess
-        repo = args[1]
-        name = repo.rstrip("/").split("/")[-1].removesuffix(".git")
-        dest = layout.workspace_dir / name
-        r = subprocess.run(["git", "clone", repo, str(dest)],
-                           capture_output=True, text=True)
-        if r.returncode != 0:
-            print(f"  clone failed: {r.stderr.strip()}")
-            return
-        atomic_write(layout.workspace_focus, {"path": str(dest)})
-        print(f"  cloned and focus set: {dest}")
-    else:
-        print("  usage: /work set <subdir> | clone <repo>")
-
-
-def _cmd_skill(layout: Layout, args: list[str]) -> None:
-    if not args:
-        print("  usage: /skill audit <name> | list")
-        return
-    sub = args[0].lower()
-    if sub == "list":
-        if layout.skills_index.exists():
-            idx = read_json(layout.skills_index)
-            for s in idx.get("skills", []):
-                print(f"  {s['name']} [{s.get('class', '?')}]")
-        else:
-            print("  skills/index.json not found")
-    elif sub == "audit" and len(args) > 1:
-        print(f"  audit {args[1]}: use /skill audit via EXEC dispatch during session")
-    else:
-        print("  usage: /skill audit <name> | list")
-
+# --- Debug ---
 
 def _cmd_verbose(layout: Layout, args: list[str]) -> None:
-    global _verbose
+    global _verbose, _debugger
     if args and args[0].lower() == "on":
         _verbose = True
     elif args and args[0].lower() == "off":
         _verbose = False
     else:
         _verbose = not _verbose
+    if _verbose and _debugger is not None:
+        _debugger = None
+        print("  debugger: off (switched to verbose)")
     print(f"  verbose: {'on' if _verbose else 'off'}")
+
+
+def _cmd_debugger(layout: Layout, args: list[str]) -> None:
+    global _verbose, _debugger
+    if not args or args[0].lower() == "off":
+        _debugger = None
+        print("  debugger: off")
+        return
+    if args[0].lower() == "on":
+        flag = next((a for a in args[1:] if a.startswith("--")), None)
+        mode = flag.lstrip("-") if flag else "chat"
+        if mode not in ("all", "chat", "boot"):
+            print("  usage: /debugger on [--all | --chat | --boot] | off")
+            return
+        _debugger = mode
+        if _verbose:
+            _verbose = False
+            print("  verbose: off (switched to debugger)")
+        print(f"  debugger: on --{mode}")
+        return
+    print("  usage: /debugger on [--all | --chat | --boot] | off")
 
 
 def _cmd_help() -> None:
     print("""
   Platform commands:
-    /status              — entity status overview
-    /doctor [--fix]      — check and optionally repair volatile dirs
-    /model               — show current CPE model
-    /endure list         — list pending Evolution Proposals
-    /endure sync [--remote] — commit entity root to version control
-    /inbox               — list pre-session buffer contents
-    /work set <subdir>   — set workspace focus
-    /work clone <repo>   — clone repo and set as workspace focus
-    /skill list          — list installed skills
-    /skill audit <name>  — audit a skill
-    /verbose             — toggle verbose mode
-    /help                — this message
+
+  Entity & session:
+    /status                      — entity status overview
+    /doctor [--fix]              — check and optionally repair integrity
+    /exit | /bye | /close        — close session
+
+  Memory & inbox:
+    /inbox                       — list pre-session buffer contents
+
+  Workspace:
+    /work set <subdir>           — set workspace focus
+    /work clone <repo>           — clone repo and set as workspace focus
+
+  Skills & execution:
+    /skill list                  — list installed skills
+    /skill audit <name>          — audit a skill
+
+  Model & endure:
+    /model                       — show current CPE model
+    /endure list                 — list pending Evolution Proposals
+    /endure sync [--remote]      — commit entity root to version control
+
+  Debug:
+    /verbose [on|off]            — toggle component message summary
+    /debugger on [--all|--chat|--boot] | off
+                                 — inspect CPE context (disables verbose)
+                                   --chat: session history only
+                                   --boot: system + instruction block only
+                                   --all:  full context
+
+    /help                        — this message
 """)
 
 

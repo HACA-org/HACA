@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .acp import make as acp_encode
-from .store import Layout, append_jsonl, atomic_write, read_json
+from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
 
 
 # ---------------------------------------------------------------------------
@@ -130,9 +130,19 @@ def memory_recall(layout: Layout, query: str, path: str) -> dict[str, Any]:
                     link.symlink_to(f)
         status = "found" if paths else "not_found"
 
+    # Include file contents so the CPE can read the recalled memory directly.
+    contents: list[dict[str, Any]] = []
+    for rel in paths:
+        p = layout.root / rel
+        try:
+            contents.append({"path": rel, "content": p.read_text(encoding="utf-8")})
+        except Exception:
+            contents.append({"path": rel, "content": ""})
+
     result_data: dict[str, Any] = {
         "query": query,
         "paths": paths,
+        "contents": contents,
         "status": status,
     }
     envelope = acp_encode(
@@ -142,6 +152,37 @@ def memory_recall(layout: Layout, query: str, path: str) -> dict[str, Any]:
     )
     _write_inbox(layout, envelope)
     return result_data
+
+
+# ---------------------------------------------------------------------------
+# Result recall — retrieve full tool result payload by timestamp
+# ---------------------------------------------------------------------------
+
+def result_recall(layout: Layout, ts: int) -> dict[str, Any]:
+    """Return the full tool result payload stored in session.jsonl for the given ts.
+
+    Matches by the numeric _ts_ms field embedded in the tool_result content,
+    which is set by session._return_tool_result().
+    """
+    for env in read_jsonl(layout.session_store):
+        raw = env.get("data", {})
+        if isinstance(raw, str):
+            try:
+                data = json.loads(raw)
+            except Exception:
+                continue
+        else:
+            data = raw
+        if not isinstance(data, dict):
+            continue
+        tr = data.get("tool_result", {})
+        content = tr.get("content", {})
+        if isinstance(content, dict) and int(content.get("_ts_ms", -1)) == ts:
+            # return payload without the internal _ts_ms marker
+            payload = {k: v for k, v in tr.items()}
+            payload["content"] = {k: v for k, v in content.items() if k != "_ts_ms"}
+            return {"ts": ts, "status": "found", "payload": payload}
+    return {"ts": ts, "status": "not_found"}
 
 
 # ---------------------------------------------------------------------------

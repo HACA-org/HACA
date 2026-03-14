@@ -14,8 +14,7 @@ import urllib.request
 from typing import Any
 
 from .base import (
-    CPEAuthError, CPEError, CPERateLimitError, CPEResponse, FCPContext, ToolUseCall, _trunc,
-    build_system, build_instruction_block, build_history,
+    CPEAuthError, CPEError, CPERateLimitError, CPEResponse, ToolUseCall, _trunc,
 )
 
 _API_URL = "https://api.anthropic.com/v1/messages"
@@ -31,38 +30,21 @@ class AnthropicAdapter:
         self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         self._model = model
 
-    def invoke(self, context: FCPContext) -> CPEResponse:
-        system, messages = _build_messages(context)
+    def invoke(
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> CPEResponse:
         payload: dict[str, Any] = {
             "model": self._model,
             "max_tokens": _MAX_TOKENS,
             "system": system,
             "messages": messages,
         }
-        if context.tools:
-            payload["tools"] = context.tools
+        if tools:
+            payload["tools"] = tools
         return _parse_response(_post(self._api_key, payload))
-
-
-# ---------------------------------------------------------------------------
-# Message formatting
-# ---------------------------------------------------------------------------
-
-def _build_messages(ctx: FCPContext) -> tuple[str, list[dict[str, Any]]]:
-    system = build_system(ctx)
-
-    messages: list[dict[str, Any]] = [
-        {"role": "user", "content": build_instruction_block(ctx)},
-        {"role": "assistant", "content": "Understood. I am ready."},
-    ]
-
-    for role, text in build_history(ctx):
-        messages.append({"role": role, "content": text})
-
-    if not build_history(ctx):
-        messages.append({"role": "user", "content": "(awaiting first message)"})
-
-    return system, messages
 
 
 # ---------------------------------------------------------------------------

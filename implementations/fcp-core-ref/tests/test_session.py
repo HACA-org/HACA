@@ -1,12 +1,12 @@
-"""Tests for session loop — context assembly and tool dispatch."""
+"""Tests for session loop — boot context assembly and tool dispatch."""
 
 import json
 import shutil
 import unittest
 from typing import Any
 
-from fcp_core.cpe.base import CPEResponse, FCPContext, ToolUseCall
-from fcp_core.session import assemble_context, dispatch_tool_use
+from fcp_core.cpe.base import CPEResponse, ToolUseCall
+from fcp_core.session import build_boot_context, dispatch_tool_use, _tool_declarations
 from fcp_core.store import Layout, atomic_write
 from fcp_core import mil
 from tests.helpers import make_layout
@@ -18,7 +18,12 @@ class MockAdapter:
         self._responses = responses
         self._index = 0
 
-    def invoke(self, context: FCPContext) -> CPEResponse:
+    def invoke(
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> CPEResponse:
         if self._index < len(self._responses):
             r = self._responses[self._index]
             self._index += 1
@@ -27,42 +32,47 @@ class MockAdapter:
                            output_tokens=0, stop_reason="end_turn")
 
 
-class TestAssembleContext(unittest.TestCase):
+class TestBuildBootContext(unittest.TestCase):
     def setUp(self) -> None:
         self.layout, self.tmp = make_layout()
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)
 
-    def test_persona_loaded(self) -> None:
-        ctx = assemble_context(self.layout, {})
-        self.assertGreater(len(ctx.persona), 0)
-        self.assertIn("assistant", ctx.persona[0].lower())
+    def test_persona_in_system(self) -> None:
+        system, _ = build_boot_context(self.layout, {})
+        self.assertGreater(len(system), 0)
+        self.assertIn("assistant", system.lower())
 
-    def test_boot_protocol_loaded(self) -> None:
-        ctx = assemble_context(self.layout, {})
-        self.assertIn("Boot Protocol", ctx.boot_protocol)
+    def test_boot_protocol_in_history(self) -> None:
+        _, history = build_boot_context(self.layout, {})
+        # first user message is the instruction block containing boot protocol
+        self.assertGreater(len(history), 0)
+        self.assertEqual(history[0]["role"], "user")
+        self.assertIn("Boot Protocol", history[0]["content"])
 
-    def test_memory_loaded(self) -> None:
+    def test_memory_in_instruction_block(self) -> None:
         mil.write_semantic(self.layout, "base", "base knowledge")
         atomic_write(self.layout.working_memory, {
             "entries": [{"priority": 1, "path": "memory/semantic/base.md"}]
         })
-        ctx = assemble_context(self.layout, {})
-        self.assertGreater(len(ctx.memory), 0)
-        self.assertIn("base knowledge", ctx.memory[0])
+        _, history = build_boot_context(self.layout, {})
+        instruction = history[0]["content"]
+        self.assertIn("base knowledge", instruction)
 
-    def test_session_records_loaded(self) -> None:
+    def test_session_tail_in_history(self) -> None:
         from fcp_core.store import append_jsonl
         from fcp_core.acp import make as acp_encode
         env = acp_encode(env_type="MSG", source="operator", data="hello")
         append_jsonl(self.layout.session_store, env)
-        ctx = assemble_context(self.layout, {})
-        self.assertGreater(len(ctx.session), 0)
+        _, history = build_boot_context(self.layout, {})
+        # should have instruction block + ack + session turn
+        contents = [m["content"] for m in history]
+        self.assertTrue(any("hello" in c for c in contents))
 
     def test_tools_declared(self) -> None:
-        ctx = assemble_context(self.layout, {})
-        tool_names = {t["name"] for t in ctx.tools}
+        tools = _tool_declarations()
+        tool_names = {t["name"] for t in tools}
         self.assertIn("fcp_exec", tool_names)
         self.assertIn("fcp_mil", tool_names)
         self.assertIn("fcp_sil", tool_names)

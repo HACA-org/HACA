@@ -17,8 +17,7 @@ import urllib.request
 from typing import Any
 
 from .base import (
-    CPEError, CPEResponse, FCPContext, ToolUseCall, _trunc,
-    build_system, build_instruction_block, build_history,
+    CPEError, CPEResponse, ToolUseCall, _trunc,
 )
 
 _DEFAULT_BASE_URL = "http://localhost:11434"
@@ -34,16 +33,20 @@ class OllamaAdapter:
         base = base_url or os.environ.get("OLLAMA_BASE_URL", _DEFAULT_BASE_URL)
         self._base_url = base.rstrip("/")
 
-    def invoke(self, context: FCPContext) -> CPEResponse:
-        messages = _build_messages(context)
+    def invoke(
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> CPEResponse:
         payload: dict[str, Any] = {
             "model": self._model,
-            "messages": messages,
+            "messages": [{"role": "system", "content": system}] + messages,
             "stream": False,
             "options": {"num_predict": _MAX_TOKENS},
         }
-        if context.tools:
-            payload["tools"] = context.tools
+        if tools:
+            payload["tools"] = tools
         return _parse_response(_post(self._base_url, payload))
 
     def is_available(self) -> bool:
@@ -53,27 +56,6 @@ class OllamaAdapter:
                 return True
         except (urllib.error.URLError, OSError):
             return False
-
-
-# ---------------------------------------------------------------------------
-# Message formatting  (Ollama follows OpenAI Chat format)
-# ---------------------------------------------------------------------------
-
-def _build_messages(ctx: FCPContext) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": build_system(ctx)},
-        {"role": "user", "content": build_instruction_block(ctx)},
-        {"role": "assistant", "content": "Understood. I am ready."},
-    ]
-
-    history = build_history(ctx)
-    for role, text in history:
-        messages.append({"role": role, "content": text})
-
-    if not history:
-        messages.append({"role": "user", "content": "(awaiting first message)"})
-
-    return messages
 
 
 # ---------------------------------------------------------------------------
