@@ -255,6 +255,9 @@ def _dispatch_exec(
             except SkillRejected as exc:
                 results.append({"type": "skill_request", "skill": skill_name,
                                  "error": str(exc)})
+        elif atype == "skill_info":
+            skill_name = str(action.get("skill", ""))
+            results.append(_skill_info(layout, skill_name, index))
         else:
             results.append({"type": atype, "error": "unknown exec action"})
     return {"results": results}, False
@@ -282,6 +285,28 @@ def _dispatch_sil(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _skill_info(
+    layout: Layout, skill_name: str, index: dict[str, Any]
+) -> dict[str, Any]:
+    """Return the markdown content of a skill's manifest, or an error."""
+    for entry in index.get("skills", []):
+        if entry.get("name") == skill_name:
+            rel = entry.get("manifest", "")
+            if rel:
+                mpath = layout.root / rel
+                # look for a README.md next to the manifest
+                readme = mpath.parent / "README.md"
+                if readme.exists():
+                    return {"type": "skill_info", "skill": skill_name,
+                            "content": readme.read_text(encoding="utf-8")}
+                # fall back to the manifest JSON itself
+                if mpath.exists():
+                    return {"type": "skill_info", "skill": skill_name,
+                            "content": mpath.read_text(encoding="utf-8")}
+            return {"type": "skill_info", "skill": skill_name, "error": "no manifest path"}
+    return {"type": "skill_info", "skill": skill_name, "error": "skill not in index"}
+
 
 def _drain_and_consolidate(layout: Layout) -> None:
     envelopes = drain_inbox(layout.inbox_dir)
@@ -339,7 +364,7 @@ def _tool_declarations() -> list[dict[str, Any]]:
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "type": {"type": "string", "enum": ["skill_request"]},
+                    "type": {"type": "string", "enum": ["skill_request", "skill_info"]},
                     "skill": {"type": "string"},
                     "params": {"type": "object"},
                 },
