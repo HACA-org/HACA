@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .acp import encode as acp_encode
+from .acp import make as acp_encode
 from .store import Layout, append_jsonl, atomic_write, read_json
 
 
@@ -46,6 +46,17 @@ def write_episodic(layout: Layout, slug: str, content: str) -> Path:
     ts = int(time.time() * 1000)
     filename = f"{ts}-{slug}.md"
     dest = layout.episodic_dir / filename
+    dest.write_text(content, encoding="utf-8")
+    return dest
+
+
+def write_semantic(layout: Layout, key: str, content: str) -> Path:
+    """Write *content* directly to memory/semantic/<key>.md.
+
+    Used during Stage 3 (Endure) and by the SIL when integrating
+    Operator-approved semantic content without a prior episodic file.
+    """
+    dest = layout.semantic_dir / f"{key}.md"
     dest.write_text(content, encoding="utf-8")
     return dest
 

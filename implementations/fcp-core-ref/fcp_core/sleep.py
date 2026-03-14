@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .acp import encode as acp_encode
+from .acp import make as acp_encode
 from .mil import (
     clean_stale_symlinks,
     process_closure,

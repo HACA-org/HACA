@@ -94,7 +94,7 @@ def _run_normal(layout: "Layout") -> None:
                 continue
             # check skill alias
             from .operator import resolve_alias
-            from .acp import encode as acp_encode
+            from .acp import make as acp_encode
             from .store import append_jsonl
             skill_name = resolve_alias(layout, user_input)
             if skill_name:
@@ -111,7 +111,7 @@ def _run_normal(layout: "Layout") -> None:
             continue
 
         # inject as MSG and run one cognitive cycle
-        from .acp import encode as acp_encode
+        from .acp import make as acp_encode
         from .store import append_jsonl
         envelope = acp_encode(env_type="MSG", source="operator", data=user_input)
         append_jsonl(layout.session_store, envelope)
@@ -140,7 +140,7 @@ def _run_normal(layout: "Layout") -> None:
 def _run_decommission(layout: "Layout", args: list[str]) -> None:
     from .boot import run_boot, BootError
     from .cpe.base import detect_adapter
-    from .acp import encode as acp_encode
+    from .acp import make as acp_encode
     from .operator import present_evolution_proposals
     from .session import run_session
     from .sleep import run_sleep_cycle

@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .acp import encode as acp_encode
+from .acp import make as acp_encode
 from .store import Layout, append_jsonl, read_json
 
 

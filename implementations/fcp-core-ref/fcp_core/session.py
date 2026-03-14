@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .acp import drain_inbox, encode as acp_encode
+from .acp import drain_inbox, make as acp_encode
 from .cpe.base import CPEAdapter, FCPContext
 from .mil import memory_recall, write_episodic
 from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl

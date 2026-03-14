@@ -99,6 +99,35 @@ def encode(env: ACPEnvelope) -> str:
     return json.dumps(env.to_dict(), separators=(",", ":"))
 
 
+_gseq: dict[str, int] = {}
+
+
+def make(*, env_type: str, source: str, data: Any) -> dict[str, Any]:
+    """Factory: build a single-frame envelope dict from high-level kwargs.
+
+    *data* may be any JSON-serialisable value; it is serialised to a string
+    before being stored in the ``data`` field.
+    Returns a plain dict suitable for ``append_jsonl`` / ``atomic_write``.
+    """
+    global _gseq
+    seq = _gseq.get(source, 0)
+    _gseq[source] = seq + 1
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tx = str(uuid.uuid4())
+    payload = data if isinstance(data, str) else json.dumps(data, separators=(",", ":"))
+    return {
+        "actor": source,
+        "gseq": seq,
+        "tx": tx,
+        "seq": 1,
+        "eof": True,
+        "type": env_type,
+        "ts": ts,
+        "data": payload,
+        "crc": crc32(payload),
+    }
+
+
 def decode(line: str) -> ACPEnvelope:
     """Deserialise a JSON line to ACPEnvelope and validate CRC.
 
