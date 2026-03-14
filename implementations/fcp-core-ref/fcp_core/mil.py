@@ -97,16 +97,38 @@ def memory_recall(layout: Layout, query: str, path: str) -> dict[str, Any]:
     of *path*.  Writes a MEMORY_RESULT ACP envelope to io/inbox/.
     Returns the result dict (also written synchronously to inbox).
     """
-    target = layout.root / path
-    status = "found" if target.exists() else "not_found"
-    paths: list[str] = [path] if status == "found" else []
+    paths: list[str] = []
+    status = "not_found"
 
-    if status == "found":
-        link_name = Path(path).name
-        link = layout.active_context_dir / link_name
-        if link.is_symlink() or link.exists():
-            link.unlink()
-        link.symlink_to(target)
+    if path:
+        target = layout.root / path
+        if target.exists() and target != layout.root:
+            status = "found"
+            paths = [path]
+            link_name = Path(path).name
+            link = layout.active_context_dir / link_name
+            if link.is_symlink():
+                link.unlink()
+            elif link.exists():
+                pass  # directory or regular file collision — skip symlink creation
+            else:
+                link.symlink_to(target)
+    else:
+        # query-only recall: search episodic memory for matching files
+        ep_dir = layout.episodic_dir
+        if ep_dir.exists():
+            q = query.lower()
+            for f in sorted(ep_dir.rglob("*.md")) + sorted(ep_dir.rglob("*.jsonl")):
+                if q and q not in f.name.lower():
+                    continue
+                rel = str(f.relative_to(layout.root))
+                paths.append(rel)
+                link = layout.active_context_dir / f.name
+                if link.is_symlink():
+                    link.unlink()
+                if not link.exists():
+                    link.symlink_to(f)
+        status = "found" if paths else "not_found"
 
     result_data: dict[str, Any] = {
         "query": query,

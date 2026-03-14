@@ -1,5 +1,54 @@
 {
-  "version": "1.0.0",
-  "skills": [],
+  "version": "1.0",
+  "skills": [
+    {
+      "name": "commit",
+      "desc": "Stage and record a version-control checkpoint within workspace_focus. Accepts --remote to push to origin.",
+      "manifest": "skills/lib/commit/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "file_reader",
+      "desc": "Read a file within workspace/. Rejects any path outside workspace/.",
+      "manifest": "skills/lib/file_reader/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "file_writer",
+      "desc": "Write a file within workspace/. Rejects any path outside workspace/.",
+      "manifest": "skills/lib/file_writer/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "shell_run",
+      "desc": "Execute a shell command within workspace_focus. Permitted commands declared as allowlist in this manifest.",
+      "manifest": "skills/lib/shell_run/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "skill_audit",
+      "desc": "Validate a skill's manifest, executable, and index consistency. Read-only.",
+      "manifest": "skills/lib/skill_audit/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "skill_create",
+      "desc": "Stage a new skill cartridge under workspace/stage/<name>/ for Endure installation. Optional --base <name> clones an existing skill as a starting point.",
+      "manifest": "skills/lib/skill_create/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "web_fetch",
+      "desc": "Fetch the content of a URL and return it as text. Permitted URL prefixes declared as allowlist in this manifest.",
+      "manifest": "skills/lib/web_fetch/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "worker_skill",
+      "desc": "Instantiate a Worker Skill sub-agent with a provided persona, context, and task.",
+      "manifest": "skills/lib/worker_skill/manifest.json",
+      "class": "builtin"
+    }
+  ],
   "aliases": {}
 }

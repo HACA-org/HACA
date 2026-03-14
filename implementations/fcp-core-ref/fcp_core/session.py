@@ -19,6 +19,7 @@ from typing import Any
 from .acp import drain_inbox, make as acp_encode
 from .cpe.base import CPEAdapter, FCPContext
 from .mil import memory_recall, write_episodic
+from .operator import is_verbose as _is_verbose
 from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
 
 
@@ -75,7 +76,11 @@ def run_session(
 
         session_closed = False
         for call in tool_calls:
+            if _is_verbose():
+                print(f"[tool_use] {call.tool} {json.dumps(call.input, ensure_ascii=False)}")
             result, closed = dispatch_tool_use(layout, call, index)
+            if _is_verbose():
+                print(f"[tool_result] {json.dumps(result, ensure_ascii=False)}")
             _return_tool_result(layout, call.id, call.tool, result)
             if closed:
                 close_reason = "session_close"

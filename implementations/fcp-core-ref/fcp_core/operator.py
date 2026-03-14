@@ -19,6 +19,19 @@ from typing import Any
 from .acp import make as acp_encode
 from .store import Layout, append_jsonl, atomic_write, read_json
 
+# ---------------------------------------------------------------------------
+# Verbose state — session-scoped, not persisted
+# ---------------------------------------------------------------------------
+
+_verbose: bool = False
+
+def is_verbose() -> bool:
+    return _verbose
+
+def set_verbose(value: bool) -> None:
+    global _verbose
+    _verbose = value
+
 
 # ---------------------------------------------------------------------------
 # Notification display
@@ -119,7 +132,7 @@ def handle_platform_command(layout: Layout, line: str) -> bool:
         _cmd_skill(layout, args)
         return True
     if cmd == "/verbose":
-        _cmd_verbose(layout)
+        _cmd_verbose(layout, args)
         return True
     if cmd == "/help":
         _cmd_help()
@@ -147,12 +160,15 @@ def _cmd_doctor(layout: Layout, args: list[str]) -> None:
     from .compliance import run_all, print_report
     fix = "--fix" in args
 
-    # Repair volatile dirs first if --fix requested
     if fix:
+        # Repair volatile dirs
         for d in layout.volatile_dirs():
             if not d.exists():
                 d.mkdir(parents=True, exist_ok=True)
                 print(f"  created: {d.relative_to(layout.root)}")
+
+        # Recalculate hashes for all tracked files in integrity.json
+        _fix_integrity_hashes(layout)
 
     findings = run_all(layout)
     print_report(findings)
@@ -160,6 +176,33 @@ def _cmd_doctor(layout: Layout, args: list[str]) -> None:
     failed = [f for f in findings if not f.passed]
     if failed:
         print(f"\n  {len(failed)} issue(s) found. Run /doctor --fix to repair volatile dirs.")
+
+
+def _fix_integrity_hashes(layout: Layout) -> None:
+    """Recalculate sha256 hashes for all files tracked in integrity.json."""
+    import hashlib
+    if not layout.integrity_doc.exists():
+        return
+    try:
+        doc = read_json(layout.integrity_doc)
+    except Exception:
+        return
+    files: dict[str, str] = doc.get("files", {})
+    updated = 0
+    for rel in list(files.keys()):
+        p = layout.root / rel
+        if p.exists() and p.is_file():
+            digest = hashlib.sha256(p.read_bytes()).hexdigest()
+            new_val = f"sha256:{digest}"
+            if files[rel] != new_val:
+                files[rel] = new_val
+                updated += 1
+    if updated:
+        doc["files"] = files
+        atomic_write(layout.integrity_doc, doc)
+        print(f"  integrity.json: updated {updated} hash(es)")
+    else:
+        print("  integrity.json: all hashes up to date")
 
 
 def _cmd_model(layout: Layout, args: list[str]) -> None:
@@ -296,8 +339,15 @@ def _cmd_skill(layout: Layout, args: list[str]) -> None:
         print("  usage: /skill audit <name> | list")
 
 
-def _cmd_verbose(layout: Layout) -> None:
-    print("  verbose mode toggled (no persistent state in this implementation)")
+def _cmd_verbose(layout: Layout, args: list[str]) -> None:
+    global _verbose
+    if args and args[0].lower() == "on":
+        _verbose = True
+    elif args and args[0].lower() == "off":
+        _verbose = False
+    else:
+        _verbose = not _verbose
+    print(f"  verbose: {'on' if _verbose else 'off'}")
 
 
 def _cmd_help() -> None:
