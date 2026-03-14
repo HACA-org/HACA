@@ -25,6 +25,7 @@ from .cpe.base import AdapterRef, CPEAdapter, CPEResponse
 from .mil import memory_recall, process_closure, result_recall, summarize_session, write_episodic
 from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger, is_compact_pending as _is_compact_pending, set_compact_pending as _set_compact_pending
 from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
+from . import vital as _vital
 
 
 # ---------------------------------------------------------------------------
@@ -71,9 +72,21 @@ def run_session(
     close_reason = "session_close"
     cycle = 0
     compact_in_progress = False
-    # True for the first cycle (SESSION_START already injected); False after that
-    # until the operator provides input or tool results arrive.
     stimulus_ready = bool(greeting or inject)
+    tokens_used = 0
+
+    # Vital Check state — triggers on cycle_threshold or interval_seconds
+    _baseline = None
+    _vital_state = None
+    try:
+        from .formats import StructuralBaseline
+        _baseline = StructuralBaseline.from_dict(read_json(layout.baseline))
+        _session_id = ""
+        if layout.session_token.exists():
+            _session_id = str(read_json(layout.session_token).get("session_id", ""))
+        _vital_state = _vital.VitalCheckState(session_id=_session_id)
+    except Exception:
+        pass  # no baseline — vital check disabled
 
     while True:
         # drain io/inbox/ → consolidate to session.jsonl
@@ -135,6 +148,7 @@ def run_session(
         # invoke CPE (adapter_ref.current may be swapped mid-session via /model)
         response = adapter_ref.current.invoke(system, chat_history, tools)
         _vlog_response(response)
+        tokens_used += response.input_tokens + response.output_tokens
 
         # add CPE response to chat history
         if response.text:
@@ -174,6 +188,12 @@ def run_session(
 
         if session_closed:
             break
+
+        # Vital Check — tick counter; run if either trigger threshold is reached
+        if _vital_state is not None and _baseline is not None:
+            _vital.tick(_vital_state)
+            if _vital.should_run(_vital_state, _baseline):
+                _vital.run(layout, _baseline, _vital_state, tokens_used)
 
         # compact: if closure_payload was written during this cycle, execute Stage 1
         # and rebuild chat_history with the condensed context
