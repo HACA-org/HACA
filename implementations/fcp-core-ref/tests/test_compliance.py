@@ -49,7 +49,7 @@ class TestCheckIntegrity(unittest.TestCase):
         import hashlib
         content = b"# Boot Protocol\n"
         self.layout.boot_md.write_bytes(content)
-        digest = hashlib.sha256(content).hexdigest()
+        digest = "sha256:" + hashlib.sha256(content).hexdigest()
         doc = json.loads(self.layout.integrity_doc.read_text(encoding="utf-8"))
         doc["files"]["boot.md"] = digest
         atomic_write(self.layout.integrity_doc, doc)

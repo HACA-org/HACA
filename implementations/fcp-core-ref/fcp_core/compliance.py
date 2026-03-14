@@ -341,7 +341,7 @@ def print_report(findings: list[Finding]) -> None:
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     h.update(path.read_bytes())
-    return h.hexdigest()
+    return f"sha256:{h.hexdigest()}"
 
 
 def _sha256_str(s: str) -> str:

@@ -285,6 +285,11 @@ def process_closure(layout: Layout) -> bool:
     max_entries = _working_memory_max(layout)
     valid: list[dict[str, Any]] = []
     for entry in wm_entries:
+        # CPE may send strings instead of {priority, path} dicts — normalize
+        if isinstance(entry, str):
+            entry = {"priority": 99, "path": entry}
+        if not isinstance(entry, dict):
+            continue
         rel = entry.get("path", "")
         if (layout.root / rel).exists():
             valid.append(entry)

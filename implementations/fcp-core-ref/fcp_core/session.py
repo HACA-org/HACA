@@ -22,8 +22,8 @@ from typing import Any
 
 from .acp import drain_inbox, make as acp_encode
 from .cpe.base import AdapterRef, CPEAdapter, CPEResponse
-from .mil import memory_recall, result_recall, write_episodic
-from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger
+from .mil import memory_recall, process_closure, result_recall, summarize_session, write_episodic
+from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger, is_compact_pending as _is_compact_pending, set_compact_pending as _set_compact_pending
 from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
 
 
@@ -70,6 +70,7 @@ def run_session(
 
     close_reason = "session_close"
     cycle = 0
+    compact_in_progress = False
     # True for the first cycle (SESSION_START already injected); False after that
     # until the operator provides input or tool results arrive.
     stimulus_ready = bool(greeting or inject)
@@ -108,6 +109,19 @@ def run_session(
                     if stripped.lower().split()[0] in ("/new", "/clear", "/reset"):
                         close_reason = "operator_reset"
                         break
+                    # check if /compact was just requested
+                    if _is_compact_pending():
+                        _set_compact_pending(False)
+                        compact_in_progress = True
+                        compact_msg = (
+                            "[COMPACT_REQUEST] The operator has requested session compaction. "
+                            "Generate a closure_payload now via fcp_mil to preserve your working context. "
+                            "The session will continue after compaction — use session_handoff.next_steps "
+                            "to describe where to resume."
+                        )
+                        _append_msg(layout, "fcp", compact_msg)
+                        chat_history.append({"role": "user", "content": compact_msg})
+                        stimulus_ready = True
                     continue  # back to top — wait for next input, no CPE call
             _vlog("operator", f"input: {stripped!r}")
             _append_msg(layout, "operator", user_input)
@@ -160,6 +174,17 @@ def run_session(
 
         if session_closed:
             break
+
+        # compact: if closure_payload was written during this cycle, execute Stage 1
+        # and rebuild chat_history with the condensed context
+        if compact_in_progress and layout.pending_closure.exists():
+            compact_in_progress = False
+            _vlog("fcp", "compact: processing closure payload")
+            process_closure(layout)
+            chat_history[:] = _rebuild_compact_history(layout, index, system)
+            summarize_session(layout)
+            _vlog("fcp", f"compact: done — history={len(chat_history)} msgs")
+            print("  [session compacted]")
 
     _vlog("fcp", f"session closed — reason: {close_reason}")
     return close_reason
@@ -476,6 +501,56 @@ def _skill_info(
                             "content": mpath.read_text(encoding="utf-8")}
             return {"type": "skill_info", "skill": skill_name, "error": "no manifest path"}
     return {"type": "skill_info", "skill": skill_name, "error": "skill not in index"}
+
+
+def _rebuild_compact_history(
+    layout: Layout,
+    index: dict[str, Any],
+    system: str,
+) -> list[dict[str, Any]]:
+    """Rebuild a minimal chat_history after session compaction.
+
+    Structure:
+      [0] user  — instruction block (boot protocol + skills)
+      [1] asst  — "Understood. I am ready."
+      [2] user  — working memory entries (freshly loaded from disk)
+      [3] asst  — "Noted."
+      [4] user  — [session compacted] + consolidation + handoff
+      [5] asst  — ""  (placeholder for next CPE turn)
+    """
+    # Re-use build_boot_context to get fresh instruction block + working memory
+    _, base_history = build_boot_context(layout, index)
+    # base_history = [instruction_block, ack, (optional presession), ...]
+    # We want only the first two (instruction block + ack) as the clean base.
+    new_history: list[dict[str, Any]] = list(base_history[:2])
+
+    # Load fresh working memory entries as context
+    wm_parts: list[str] = []
+    if layout.working_memory.exists():
+        wm = read_json(layout.working_memory)
+        for entry in sorted(wm.get("entries", []), key=lambda e: int(e.get("priority", 99))):
+            p = layout.root / entry.get("path", "")
+            if p.exists():
+                wm_parts.append(p.read_text(encoding="utf-8").strip())
+    if wm_parts:
+        new_history.append({"role": "user", "content": "## Working Memory\n\n" + "\n\n---\n\n".join(wm_parts)})
+        new_history.append({"role": "assistant", "content": "Noted."})
+
+    # Load consolidation + handoff from session_handoff.json
+    compact_parts: list[str] = ["[session compacted]"]
+    if layout.session_handoff.exists():
+        try:
+            handoff = read_json(layout.session_handoff)
+            if handoff.get("pending_tasks"):
+                compact_parts.append("Pending tasks:\n" + "\n".join(f"- {t}" for t in handoff["pending_tasks"]))
+            if handoff.get("next_steps"):
+                compact_parts.append(f"Next steps: {handoff['next_steps']}")
+        except Exception:
+            pass
+    new_history.append({"role": "user", "content": "\n\n".join(compact_parts)})
+    new_history.append({"role": "assistant", "content": ""})
+
+    return new_history
 
 
 def _drain_and_consolidate(layout: Layout) -> list[dict[str, Any]]:

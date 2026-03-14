@@ -26,6 +26,7 @@ from .store import Layout, append_jsonl, atomic_write, read_json
 
 _verbose: bool = False
 _debugger: str | None = None  # None | "all" | "chat" | "boot"
+_compact_pending: bool = False
 
 
 def is_verbose() -> bool:
@@ -39,6 +40,15 @@ def set_verbose(value: bool) -> None:
 
 def get_debugger() -> str | None:
     return _debugger
+
+
+def is_compact_pending() -> bool:
+    return _compact_pending
+
+
+def set_compact_pending(value: bool) -> None:
+    global _compact_pending
+    _compact_pending = value
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +160,11 @@ def handle_platform_command(layout: Layout, line: str, adapter_ref: Any = None) 
         return True
     if cmd == "/endure":
         _cmd_endure(layout, args)
+        return True
+
+    # --- Compact ---
+    if cmd == "/compact":
+        _cmd_compact()
         return True
 
     # --- Debug ---
@@ -478,6 +493,14 @@ def _endure_sync(layout: Layout, remote: bool) -> None:
         print(f"  push: {'ok' if r3.returncode == 0 else r3.stderr.strip()}")
 
 
+# --- Compact ---
+
+def _cmd_compact() -> None:
+    global _compact_pending
+    _compact_pending = True
+    print("  compact: session compaction requested — awaiting closure payload from CPE")
+
+
 # --- Debug ---
 
 def _cmd_verbose(layout: Layout, args: list[str]) -> None:
@@ -523,6 +546,8 @@ def _cmd_help() -> None:
     /status                      — entity status overview
     /doctor [--fix]              — check and optionally repair integrity
     /exit | /bye | /close        — close session
+    /new | /clear | /reset       — forced close + clean session restart
+    /compact                     — compress session context without closing
 
   Memory & inbox:
     /inbox [list]                — list system notifications
