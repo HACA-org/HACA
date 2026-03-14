@@ -125,6 +125,9 @@ def handle_platform_command(layout: Layout, line: str) -> bool:
     if cmd in ("/exit", "/bye", "/close"):
         print("  closing session...")
         return True
+    if cmd in ("/new", "/clear", "/reset"):
+        print("  resetting session...")
+        return True
 
     # --- Memory & inbox ---
     if cmd == "/inbox":

@@ -98,15 +98,33 @@ def _run_normal(layout: "Layout") -> None:
     present_notifications(layout)
     print("[FCP-Core] Entity ready. Type your message or /help.")
 
-    run_session(layout, adapter, index, greeting=True)
+    while True:
+        close_reason = run_session(layout, adapter, index, greeting=True)
 
-    present_evolution_proposals(layout)
+        present_evolution_proposals(layout)
 
-    print("[FCP-Core] Running Sleep Cycle...")
-    try:
-        run_sleep_cycle(layout)
-    except Exception as exc:
-        print(f"[SLEEP CYCLE ERROR] {exc}")
+        print("[FCP-Core] Running Sleep Cycle...")
+        try:
+            run_sleep_cycle(layout)
+        except Exception as exc:
+            print(f"[SLEEP CYCLE ERROR] {exc}")
+
+        if close_reason != "operator_reset":
+            break
+
+        print("[FCP-Core] Starting new session...")
+        # Clear session store for a clean context
+        if layout.session_store.exists():
+            layout.session_store.write_text("", encoding="utf-8")
+        # Re-run boot for fresh context
+        try:
+            boot_run(layout)
+        except (FAPError, BootError) as exc:
+            print(f"[BOOT FAILED] {exc}")
+            break
+        index = {}
+        if layout.skills_index.exists():
+            index = read_json(layout.skills_index)
 
     print("[FCP-Core] Session complete.")
 

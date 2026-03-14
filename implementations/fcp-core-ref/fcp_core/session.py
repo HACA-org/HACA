@@ -147,6 +147,9 @@ def run_session(
                     if stripped.lower().split()[0] in ("/exit", "/bye", "/close"):
                         close_reason = "operator_exit"
                         break
+                    if stripped.lower().split()[0] in ("/new", "/clear", "/reset"):
+                        close_reason = "operator_reset"
+                        break
                     continue
             _vlog("operator", f"input: {stripped!r}")
             _append_msg(layout, "operator", user_input)
@@ -393,7 +396,7 @@ def _dispatch_exec(
     inp: dict[str, Any],
     index: dict[str, Any],
 ) -> tuple[dict[str, Any], bool]:
-    from .exec_ import dispatch, SkillRejected
+    from .exec_ import dispatch, ExecError, SkillRejected
     actions: list[Any] = inp if isinstance(inp, list) else [inp]
     results: list[dict[str, Any]] = []
     for action in actions:
@@ -401,11 +404,19 @@ def _dispatch_exec(
         if atype == "skill_request":
             skill_name = str(action.get("skill", ""))
             params = action.get("params", {})
+            # Some models serialize params as a JSON string instead of an object.
+            if isinstance(params, str):
+                try:
+                    params = json.loads(params)
+                except Exception:
+                    params = {}
+            if not isinstance(params, dict):
+                params = {}
             try:
                 output = dispatch(layout, skill_name, params, index)
                 results.append({"type": "skill_request", "skill": skill_name,
                                  "status": "dispatched", "output": output})
-            except SkillRejected as exc:
+            except (SkillRejected, ExecError) as exc:
                 results.append({"type": "skill_request", "skill": skill_name,
                                  "error": str(exc)})
         elif atype == "skill_info":
