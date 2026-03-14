@@ -2,8 +2,9 @@
 CLI entry point — FCP-Core §12.1.
 
 Usage:
-  fcp-core <entity-root>
-  fcp-core <entity-root> --notifications
+  fcp-core init <entity-root>                    — create a new entity root skeleton
+  fcp-core <entity-root>                         — boot and run a session
+  fcp-core <entity-root> --notifications         — print pending notifications and exit
   fcp-core <entity-root> decommission --archive | --destroy
 """
 
@@ -17,8 +18,16 @@ from pathlib import Path
 def main() -> None:
     args = sys.argv[1:]
     if not args:
-        print("usage: fcp-core <entity-root> [--notifications] [decommission --archive|--destroy]")
+        print("usage: fcp-core init <entity-root> | fcp-core <entity-root> [--notifications] [decommission --archive|--destroy]")
         sys.exit(1)
+
+    # init subcommand — no entity root required to exist yet
+    if args[0] == "init":
+        if len(args) < 2:
+            print("usage: fcp-core init <entity-root>")
+            sys.exit(1)
+        _run_init(Path(args[1]).resolve())
+        return
 
     entity_root = Path(args[0]).resolve()
     rest = list(itertools.islice(args, 1, len(args)))
@@ -46,25 +55,36 @@ def main() -> None:
 # ---------------------------------------------------------------------------
 
 def _run_normal(layout: "Layout") -> None:
-    from .boot import run_boot, BootError
-    from .cpe.base import detect_adapter
+    from .boot import run as boot_run, BootError
+    from .cpe.base import make_adapter
     from .operator import (
         handle_platform_command,
         present_notifications,
         present_evolution_proposals,
     )
-    from .session import run_session, assemble_context
+    from .session import run_session
     from .sleep import run_sleep_cycle
     from .store import read_json
 
     # Boot
     try:
-        boot_result = run_boot(layout)
+        boot_result = boot_run(layout)
     except BootError as exc:
         print(f"[BOOT FAILED] {exc}")
         sys.exit(1)
 
-    adapter = detect_adapter(boot_result.model)
+    # Adapter from baseline
+    try:
+        baseline = read_json(layout.baseline)
+        cpe_cfg = baseline.get("cpe", {})
+        adapter = make_adapter(
+            backend=cpe_cfg.get("backend", "ollama"),
+            model=cpe_cfg.get("model", ""),
+            api_key="",
+        )
+    except Exception as exc:
+        print(f"[CPE ERROR] {exc}")
+        sys.exit(1)
 
     # Load sealed skill index
     index: dict = {}
@@ -74,15 +94,13 @@ def _run_normal(layout: "Layout") -> None:
     # Present pending notifications
     present_notifications(layout)
 
-    print(f"[FCP-Core] Entity ready. Type your message or /help.")
+    print("[FCP-Core] Entity ready. Type your message or /help.")
 
-    # Session loop
-    close_reason = "session_close"
+    # Session loop — each user message triggers one cognitive cycle
     while True:
         try:
             user_input = input("> ").strip()
         except (EOFError, KeyboardInterrupt):
-            close_reason = "operator_eof"
             break
 
         if not user_input:
@@ -92,13 +110,10 @@ def _run_normal(layout: "Layout") -> None:
         if user_input.startswith("/"):
             if handle_platform_command(layout, user_input):
                 continue
-            # check skill alias
             from .operator import resolve_alias
-            from .acp import make as acp_encode
-            from .store import append_jsonl
+            from .exec_ import dispatch, SkillRejected
             skill_name = resolve_alias(layout, user_input)
             if skill_name:
-                from .exec_ import dispatch, SkillRejected
                 parts = user_input.split()
                 params = {"args": list(itertools.islice(parts, 1, len(parts)))} if len(parts) > 1 else {}
                 try:
@@ -111,13 +126,13 @@ def _run_normal(layout: "Layout") -> None:
             continue
 
         # inject as MSG and run one cognitive cycle
-        from .acp import make as acp_encode
+        from .acp import make as acp_make
         from .store import append_jsonl
-        envelope = acp_encode(env_type="MSG", source="operator", data=user_input)
+        envelope = acp_make(env_type="MSG", source="operator", data=user_input)
         append_jsonl(layout.session_store, envelope)
 
         close_reason = run_session(layout, adapter, index)
-        if close_reason != "operator_eof":
+        if close_reason == "session_close":
             break
 
     # Pre-sleep: present evolution proposals
@@ -138,9 +153,9 @@ def _run_normal(layout: "Layout") -> None:
 # ---------------------------------------------------------------------------
 
 def _run_decommission(layout: "Layout", args: list[str]) -> None:
-    from .boot import run_boot, BootError
-    from .cpe.base import detect_adapter
-    from .acp import make as acp_encode
+    from .boot import run as boot_run, BootError
+    from .cpe.base import make_adapter
+    from .acp import make as acp_make
     from .operator import present_evolution_proposals
     from .session import run_session
     from .sleep import run_sleep_cycle
@@ -154,18 +169,23 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
         sys.exit(1)
 
     try:
-        boot_result = run_boot(layout)
+        boot_result = boot_run(layout)
     except BootError as exc:
         print(f"[BOOT FAILED] {exc}")
         sys.exit(1)
 
-    adapter = detect_adapter(boot_result.model)
+    baseline = read_json(layout.baseline)
+    cpe_cfg = baseline.get("cpe", {})
+    adapter = make_adapter(
+        backend=cpe_cfg.get("backend", "ollama"),
+        model=cpe_cfg.get("model", ""),
+        api_key="",
+    )
     index: dict = {}
     if layout.skills_index.exists():
         index = read_json(layout.skills_index)
 
-    # inject DECOMMISSION envelope
-    envelope = acp_encode(
+    envelope = acp_make(
         env_type="MSG",
         source="fcp",
         data={"type": "DECOMMISSION", "mode": "archive" if archive else "destroy"},
@@ -181,3 +201,111 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
         print("[FCP-Core] Entity destroyed.")
     else:
         print(f"[FCP-Core] Entity archived at {layout.root}.")
+
+
+# ---------------------------------------------------------------------------
+# Init — create a new entity root skeleton
+# ---------------------------------------------------------------------------
+
+def _run_init(entity_root: Path) -> None:
+    """Create a minimal entity root ready for FAP."""
+    import json
+    import os
+
+    if entity_root.exists() and any(entity_root.iterdir()):
+        print(f"[ERROR] {entity_root} already exists and is not empty.")
+        sys.exit(1)
+
+    dirs = [
+        entity_root / "persona",
+        entity_root / "skills" / "lib",
+        entity_root / "hooks",
+        entity_root / "workspace" / "stage",
+        entity_root / "io" / "inbox" / "presession",
+        entity_root / "io" / "spool",
+        entity_root / "memory" / "episodic",
+        entity_root / "memory" / "semantic",
+        entity_root / "memory" / "active_context",
+        entity_root / "state" / "sentinels",
+        entity_root / "state" / "snapshots",
+        entity_root / "state" / "operator_notifications",
+    ]
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+
+    # boot.md
+    (entity_root / "boot.md").write_text(
+        "# Boot Protocol\n\nYou are an FCP-Core cognitive entity.\n"
+        "Follow operator instructions. Use available tools when needed.\n",
+        encoding="utf-8",
+    )
+
+    # persona
+    (entity_root / "persona" / "00-base.md").write_text(
+        "You are a helpful, precise assistant.\n",
+        encoding="utf-8",
+    )
+
+    # baseline — prompts operator for backend/model
+    print("=== FCP-Core Init ===")
+    backend = input("CPE backend [ollama/anthropic/openai/google] (default: ollama): ").strip() or "ollama"
+    model_defaults = {
+        "ollama": "llama3.2",
+        "anthropic": "claude-sonnet-4-6",
+        "openai": "gpt-4o",
+        "google": "gemini-2.0-flash",
+    }
+    default_model = model_defaults.get(backend, "")
+    model = input(f"Model (default: {default_model}): ").strip() or default_model
+
+    baseline = {
+        "version": "1.0.0",
+        "entity_id": entity_root.name,
+        "profile": "HACA-Core",
+        "cpe": {"backend": backend, "model": model, "topology": "transparent"},
+        "context_window": {"budget_tokens": 200000, "critical_pct": 80},
+        "drift": {"comparison_mechanism": "hash", "threshold": 0.0},
+        "session_store": {"rotation_threshold_bytes": 1000000},
+        "working_memory": {"max_entries": 50},
+        "heartbeat": {"interval_seconds": 30, "cycle_threshold": 10},
+        "watchdog": {"sil_threshold_seconds": 25},
+        "fault": {"n_retry": 3, "n_boot": 3, "n_channel": 3},
+        "integrity_chain": {"checkpoint_interval": 10},
+        "pre_session_buffer": {"max_entries": 20},
+        "operator_channel": {"notifications_dir": "state/operator_notifications"},
+    }
+    _atomic_write(entity_root / "state" / "baseline.json", baseline)
+
+    # skills index (empty)
+    _atomic_write(entity_root / "skills" / "index.json", {
+        "version": "1.0.0", "skills": [], "aliases": {},
+    })
+
+    # integrity doc (empty — FAP will populate)
+    _atomic_write(entity_root / "state" / "integrity.json", {
+        "version": "1.0", "algorithm": "sha256",
+        "genesis_omega": None, "last_checkpoint": None, "files": {},
+    })
+
+    # empty files
+    for p in [
+        entity_root / "state" / "integrity_chain.jsonl",
+        entity_root / "state" / "integrity.log",
+        entity_root / "memory" / "session.jsonl",
+    ]:
+        p.write_text("", encoding="utf-8")
+
+    # working memory
+    _atomic_write(entity_root / "memory" / "working-memory.json", {"entries": []})
+
+    print(f"\n[FCP-Core] Entity root created at {entity_root}")
+    print(f"  Run: ./fcp-core {entity_root}")
+    print("  First boot will run the First Activation Protocol (FAP).")
+
+
+def _atomic_write(path: Path, data: object) -> None:
+    import json
+    import os
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp, path)

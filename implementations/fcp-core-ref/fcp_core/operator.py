@@ -144,29 +144,22 @@ def _cmd_status(layout: Layout) -> None:
 
 
 def _cmd_doctor(layout: Layout, args: list[str]) -> None:
-    from .sil import verify_structural_files
+    from .compliance import run_all, print_report
     fix = "--fix" in args
-    issues: list[str] = []
 
-    for d in layout.volatile_dirs():
-        if not d.exists():
-            issues.append(f"missing volatile dir: {d.relative_to(layout.root)}")
-            if fix:
+    # Repair volatile dirs first if --fix requested
+    if fix:
+        for d in layout.volatile_dirs():
+            if not d.exists():
                 d.mkdir(parents=True, exist_ok=True)
                 print(f"  created: {d.relative_to(layout.root)}")
 
-    if not layout.boot_md.exists():
-        issues.append("missing boot.md")
-    if not layout.baseline.exists():
-        issues.append("missing state/baseline.json")
-    if not layout.integrity_doc.exists():
-        issues.append("missing state/integrity.json")
+    findings = run_all(layout)
+    print_report(findings)
 
-    if issues:
-        for issue in issues:
-            print(f"  [issue] {issue}")
-    else:
-        print("  all checks passed")
+    failed = [f for f in findings if not f.passed]
+    if failed:
+        print(f"\n  {len(failed)} issue(s) found. Run /doctor --fix to repair volatile dirs.")
 
 
 def _cmd_model(layout: Layout, args: list[str]) -> None:
