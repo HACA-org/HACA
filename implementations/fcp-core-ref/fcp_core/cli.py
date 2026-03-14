@@ -103,6 +103,9 @@ def _run_normal(layout: "Layout") -> None:
 
         present_evolution_proposals(layout)
 
+        from .hooks import run_hook
+        run_hook(layout, "on_session_close", {"close_reason": close_reason})
+
         print("[FCP-Core] Running Sleep Cycle...")
         try:
             run_sleep_cycle(layout)

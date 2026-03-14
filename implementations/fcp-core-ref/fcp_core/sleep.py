@@ -62,6 +62,9 @@ def run_sleep_cycle(layout: Layout) -> None:
     # Stage 3 — Endure Execution
     _stage3_endure(layout)
 
+    from .hooks import run_hook
+    run_hook(layout, "post_endure", {})
+
     # Write SLEEP_COMPLETE
     _write_sleep_complete(layout)
 

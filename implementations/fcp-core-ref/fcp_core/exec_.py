@@ -66,6 +66,11 @@ def dispatch(
     timeout = int(manifest.get("timeout_seconds", 30))
     irreversible = bool(manifest.get("irreversible", False))
 
+    # pre_skill hook
+    from .hooks import pre_skill_hook, post_skill_hook
+    if not pre_skill_hook(layout, skill_name, params, irreversible):
+        raise SkillRejected(f"pre_skill hook aborted irreversible skill: {skill_name!r}")
+
     ledger_seq: int | None = None
     if irreversible and not sil_invoked:
         ledger_seq = _ledger_write_ahead(layout, skill_name, params)
@@ -77,6 +82,7 @@ def dispatch(
             _ledger_resolve(layout, ledger_seq, "failed")
         _write_skill_error(layout, skill_name, str(exc))
         _increment_failure(layout, skill_name)
+        post_skill_hook(layout, skill_name, params, str(exc), failed=True)
         raise
 
     if ledger_seq is not None:
@@ -84,6 +90,7 @@ def dispatch(
 
     _reset_failure(layout, skill_name)
     _write_skill_result(layout, skill_name, output)
+    post_skill_hook(layout, skill_name, params, output, failed=False)
     return output
 
 

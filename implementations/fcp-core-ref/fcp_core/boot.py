@@ -146,6 +146,10 @@ def run(layout: Layout) -> BootResult:
     # ------------------------------------------------------------------
     session_id = issue_session_token(layout)
 
+    # Phase 7 — on_boot hook
+    from .hooks import run_hook
+    run_hook(layout, "on_boot", {"session_id": session_id})
+
     return BootResult(
         session_id=session_id,
         crash_recovered=crash_recovered,
