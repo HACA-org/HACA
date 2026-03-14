@@ -101,28 +101,43 @@ def run_session(
 # Context assembly  §5.1
 # ---------------------------------------------------------------------------
 
+_HACA_ARCH_VERSION = "1.0.0"
+_HACA_PROFILE = "HACA-Core-1.0.0"
+
+
 def assemble_context(layout: Layout, index: dict[str, Any]) -> FCPContext:
-    """Assemble the CPE input context following the Boot Manifest order."""
-    # [PERSONA]
+    """Assemble the CPE input context following the Boot Manifest order.
+
+    boot_protocol is prefixed with a HACA compliance header so every adapter
+    carries version information without each adapter needing to know about it.
+
+    session records are returned oldest-first so adapters can reconstruct
+    a natural user/assistant turn sequence.
+    """
+    # [PERSONA] — identity, values, constraints; one file per concern
     persona: list[str] = []
     if layout.persona_dir.exists():
         for p in sorted(layout.persona_dir.iterdir()):
             if p.is_file():
-                persona.append(p.read_text(encoding="utf-8"))
+                persona.append(p.read_text(encoding="utf-8").strip())
 
-    # [BOOT PROTOCOL]
-    boot_protocol = ""
+    # [BOOT PROTOCOL] — prefixed with HACA version header for compliance
+    raw_boot = ""
     if layout.boot_md.exists():
-        boot_protocol = layout.boot_md.read_text(encoding="utf-8")
+        raw_boot = layout.boot_md.read_text(encoding="utf-8").strip()
+    boot_protocol = (
+        f"HACA-Arch: {_HACA_ARCH_VERSION}  |  Profile: {_HACA_PROFILE}\n\n"
+        + raw_boot
+    )
 
-    # [SKILLS INDEX] summary + [SKILL:<name>] blocks
+    # [SKILLS] — visible skills summary + per-skill detail blocks
     skills_index_str = ""
     skill_blocks: list[str] = []
     if layout.skills_index.exists():
         idx = read_json(layout.skills_index)
         visible = [s for s in idx.get("skills", []) if s.get("class") != "operator"]
         skills_index_str = json.dumps(
-            {"skills": [{"name": s["name"], "desc": s.get("desc", "")} for s in visible]},
+            {"skills": [{"name": s["name"], "description": s.get("desc", "")} for s in visible]},
             indent=2,
         )
         for skill in visible:
@@ -146,10 +161,10 @@ def assemble_context(layout: Layout, index: dict[str, Any]) -> FCPContext:
         for entry in sorted(wm.get("entries", []), key=lambda e: int(e.get("priority", 99))):
             p = layout.root / entry.get("path", "")
             if p.exists():
-                memory.append(p.read_text(encoding="utf-8"))
+                memory.append(p.read_text(encoding="utf-8").strip())
 
-    # [SESSION] — newest-first
-    session_records = list(reversed(read_jsonl(layout.session_store)))
+    # [SESSION] — oldest-first so adapters reconstruct natural turn order
+    session_records = read_jsonl(layout.session_store)
 
     # [PRESESSION]
     presession: list[dict[str, Any]] = []

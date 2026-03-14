@@ -13,7 +13,10 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from .base import CPEAuthError, CPEError, CPERateLimitError, CPEResponse, FCPContext, ToolUseCall, _trunc
+from .base import (
+    CPEAuthError, CPEError, CPERateLimitError, CPEResponse, FCPContext, ToolUseCall, _trunc,
+    build_system, build_instruction_block, build_history,
+)
 
 _API_URL = "https://api.anthropic.com/v1/messages"
 _API_VERSION = "2023-06-01"
@@ -46,27 +49,20 @@ class AnthropicAdapter:
 # ---------------------------------------------------------------------------
 
 def _build_messages(ctx: FCPContext) -> tuple[str, list[dict[str, Any]]]:
-    system_parts: list[str] = []
-    for p in ctx.persona:
-        system_parts.append(p)
-    system_parts.append(ctx.boot_protocol)
-    system_parts.append(f"[SKILLS INDEX]\n{ctx.skills_index}")
-    for block in ctx.skill_blocks:
-        system_parts.append(block)
-    system = "\n\n".join(system_parts)
+    system = build_system(ctx)
 
-    user_parts: list[str] = []
-    if ctx.memory:
-        user_parts.append("[MEMORY]\n" + "\n\n".join(ctx.memory))
-    if ctx.session:
-        lines = [json.dumps(e, separators=(",", ":")) for e in ctx.session]
-        user_parts.append("[SESSION]\n" + "\n".join(lines))
-    if ctx.presession:
-        lines = [json.dumps(e, separators=(",", ":")) for e in ctx.presession]
-        user_parts.append("[PRESESSION]\n" + "\n".join(lines))
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": build_instruction_block(ctx)},
+        {"role": "assistant", "content": "Understood. I am ready."},
+    ]
 
-    user_content = "\n\n".join(user_parts) if user_parts else "(no context)"
-    return system, [{"role": "user", "content": user_content}]
+    for role, text in build_history(ctx):
+        messages.append({"role": role, "content": text})
+
+    if not build_history(ctx):
+        messages.append({"role": "user", "content": "(awaiting first message)"})
+
+    return system, messages
 
 
 # ---------------------------------------------------------------------------

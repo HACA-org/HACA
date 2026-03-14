@@ -14,7 +14,10 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from .base import CPEAuthError, CPEError, CPERateLimitError, CPEResponse, FCPContext, ToolUseCall, _trunc
+from .base import (
+    CPEAuthError, CPEError, CPERateLimitError, CPEResponse, FCPContext, ToolUseCall, _trunc,
+    build_system, build_instruction_block, build_history,
+)
 
 _BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 _DEFAULT_MODEL = "gemini-2.0-flash"
@@ -45,27 +48,21 @@ class GoogleAdapter:
 # ---------------------------------------------------------------------------
 
 def _build_contents(ctx: FCPContext) -> tuple[str, list[dict[str, Any]]]:
-    system_parts: list[str] = []
-    for p in ctx.persona:
-        system_parts.append(p)
-    system_parts.append(ctx.boot_protocol)
-    system_parts.append(f"[SKILLS INDEX]\n{ctx.skills_index}")
-    for block in ctx.skill_blocks:
-        system_parts.append(block)
-    system_instruction = "\n\n".join(system_parts)
+    system_instruction = build_system(ctx)
 
-    user_parts: list[str] = []
-    if ctx.memory:
-        user_parts.append("[MEMORY]\n" + "\n\n".join(ctx.memory))
-    if ctx.session:
-        lines = [json.dumps(e, separators=(",", ":")) for e in ctx.session]
-        user_parts.append("[SESSION]\n" + "\n".join(lines))
-    if ctx.presession:
-        lines = [json.dumps(e, separators=(",", ":")) for e in ctx.presession]
-        user_parts.append("[PRESESSION]\n" + "\n".join(lines))
+    contents: list[dict[str, Any]] = [
+        {"role": "user", "parts": [{"text": build_instruction_block(ctx)}]},
+        {"role": "model", "parts": [{"text": "Understood. I am ready."}]},
+    ]
 
-    user_text = "\n\n".join(user_parts) if user_parts else "(no context)"
-    contents: list[dict[str, Any]] = [{"role": "user", "parts": [{"text": user_text}]}]
+    history = build_history(ctx)
+    for role, text in history:
+        g_role = "model" if role == "assistant" else "user"
+        contents.append({"role": g_role, "parts": [{"text": text}]})
+
+    if not history:
+        contents.append({"role": "user", "parts": [{"text": "(awaiting first message)"}]})
+
     return system_instruction, contents
 
 

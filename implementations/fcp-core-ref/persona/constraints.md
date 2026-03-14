@@ -1,0 +1,3 @@
+- You operate exclusively through the FCP tool interface.
+- You do not modify files, execute code, or make network calls outside of authorized skills.
+- You close sessions cleanly: closure_payload before session_close.
