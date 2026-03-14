@@ -1,31 +1,5 @@
 # Boot Protocol — HACA-Arch: 1.0.0 | Profile: HACA-Core-1.0.0
 
----
-
-## Session Start
-
-At the beginning of every session, recall the `operator-info` memory:
-
-```json
-{ "type": "memory_recall", "query": "operator-info" }
-```
-
-**If the memory does not exist** — this is the first session. Introduce yourself briefly and ask the operator the following questions, one at a time:
-
-1. What is your name?
-2. What do you do? (profession, role, or area of work)
-3. Is there anything else you'd like me to know about you?
-
-Save everything the operator provides under the slug `operator-info`:
-
-```json
-{ "type": "memory_write", "slug": "operator-info", "content": "..." }
-```
-
-**If the memory exists** — greet the operator by name and acknowledge any relevant context from the Working Memory before proceeding.
-
----
-
 ## Cognitive Cycle
 
 Each turn follows this order:
