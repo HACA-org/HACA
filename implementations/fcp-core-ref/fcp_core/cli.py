@@ -208,45 +208,46 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 def _run_init(entity_root: Path) -> None:
-    """Create a minimal entity root ready for FAP."""
-    import json
+    """Create runtime dirs (memory/, state/, io/, workspace/) inside entity_root.
+
+    Structural content (boot.md, persona/, skills/, hooks/) must already exist
+    in entity_root — they are committed to the repo and not generated here.
+    """
     import os
 
-    if entity_root.exists() and any(entity_root.iterdir()):
-        print(f"[ERROR] {entity_root} already exists and is not empty.")
+    # Validate structural prerequisites
+    missing = []
+    if not (entity_root / "boot.md").exists():
+        missing.append("boot.md")
+    if not (entity_root / "persona").is_dir() or not any((entity_root / "persona").iterdir()):
+        missing.append("persona/ (must have at least one file)")
+    if missing:
+        print(f"[ERROR] Missing structural content in {entity_root}: {', '.join(missing)}")
+        print("  These files belong in the repo and must exist before running init.")
         sys.exit(1)
 
-    dirs = [
-        entity_root / "persona",
-        entity_root / "skills" / "lib",
-        entity_root / "hooks",
-        entity_root / "workspace" / "stage",
-        entity_root / "io" / "inbox" / "presession",
-        entity_root / "io" / "spool",
+    # Check nothing was already initialised
+    if (entity_root / "state").exists() or (entity_root / "memory").exists():
+        print(f"[ERROR] {entity_root} appears already initialised (state/ or memory/ exists).")
+        print("  Remove those directories manually if you want to re-initialise.")
+        sys.exit(1)
+
+    # Runtime directories
+    runtime_dirs = [
         entity_root / "memory" / "episodic",
         entity_root / "memory" / "semantic",
         entity_root / "memory" / "active_context",
         entity_root / "state" / "sentinels",
         entity_root / "state" / "snapshots",
         entity_root / "state" / "operator_notifications",
+        entity_root / "io" / "inbox" / "presession",
+        entity_root / "io" / "spool",
+        entity_root / "workspace" / "stage",
     ]
-    for d in dirs:
+    for d in runtime_dirs:
         d.mkdir(parents=True, exist_ok=True)
 
-    # boot.md
-    (entity_root / "boot.md").write_text(
-        "# Boot Protocol\n\nYou are an FCP-Core cognitive entity.\n"
-        "Follow operator instructions. Use available tools when needed.\n",
-        encoding="utf-8",
-    )
-
-    # persona
-    (entity_root / "persona" / "00-base.md").write_text(
-        "You are a helpful, precise assistant.\n",
-        encoding="utf-8",
-    )
-
-    # baseline — prompts operator for backend/model
+    # baseline — ask for backend/model
     print("=== FCP-Core Init ===")
     backend = input("CPE backend [ollama/anthropic/openai/google] (default: ollama): ").strip() or "ollama"
     model_defaults = {
@@ -258,7 +259,7 @@ def _run_init(entity_root: Path) -> None:
     default_model = model_defaults.get(backend, "")
     model = input(f"Model (default: {default_model}): ").strip() or default_model
 
-    baseline = {
+    _atomic_write(entity_root / "state" / "baseline.json", {
         "version": "1.0.0",
         "entity_id": entity_root.name,
         "profile": "HACA-Core",
@@ -273,12 +274,6 @@ def _run_init(entity_root: Path) -> None:
         "integrity_chain": {"checkpoint_interval": 10},
         "pre_session_buffer": {"max_entries": 20},
         "operator_channel": {"notifications_dir": "state/operator_notifications"},
-    }
-    _atomic_write(entity_root / "state" / "baseline.json", baseline)
-
-    # skills index (empty)
-    _atomic_write(entity_root / "skills" / "index.json", {
-        "version": "1.0.0", "skills": [], "aliases": {},
     })
 
     # integrity doc (empty — FAP will populate)
@@ -287,7 +282,7 @@ def _run_init(entity_root: Path) -> None:
         "genesis_omega": None, "last_checkpoint": None, "files": {},
     })
 
-    # empty files
+    # empty runtime files
     for p in [
         entity_root / "state" / "integrity_chain.jsonl",
         entity_root / "state" / "integrity.log",
@@ -295,12 +290,11 @@ def _run_init(entity_root: Path) -> None:
     ]:
         p.write_text("", encoding="utf-8")
 
-    # working memory
     _atomic_write(entity_root / "memory" / "working-memory.json", {"entries": []})
 
-    print(f"\n[FCP-Core] Entity root created at {entity_root}")
+    print(f"\n[FCP-Core] Initialised: {entity_root}")
+    print("  First boot will run FAP (First Activation Protocol).")
     print(f"  Run: ./fcp-core {entity_root}")
-    print("  First boot will run the First Activation Protocol (FAP).")
 
 
 def _atomic_write(path: Path, data: object) -> None:
