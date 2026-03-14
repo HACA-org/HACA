@@ -197,6 +197,10 @@ class Layout:
     def distress_beacon(self) -> Path:
         return self.root / "state" / "distress.beacon"
 
+    @property
+    def decommission_flag(self) -> Path:
+        return self.root / "state" / "decommission.json"
+
     # -- helpers --
     def skill_manifest(self, name: str, builtin: bool = False) -> Path:
         if builtin:

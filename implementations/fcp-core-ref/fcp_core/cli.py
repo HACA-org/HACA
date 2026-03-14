@@ -183,17 +183,44 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
     from .operator import present_evolution_proposals
     from .session import run_session
     from .sleep import run_sleep_cycle
-    from .store import append_jsonl, read_json
+    from .store import read_json
+    from . import decommission as _decom
 
-    archive = "--archive" in args
-    destroy = "--destroy" in args
+    do_archive = "--archive" in args
+    do_destroy = "--destroy" in args
 
-    if not archive and not destroy:
+    if not do_archive and not do_destroy:
         print("decommission requires --archive or --destroy")
         sys.exit(1)
 
+    mode = "archive" if do_archive else "destroy"
+
+    # Check for partial decommission
+    partial = _decom.detect_partial(layout)
+    if partial:
+        print(f"[FCP-Core] Partial decommission detected (phase: {partial.get('phase')}, mode: {partial.get('mode')}).")
+        answer = input("Resume? [yes/no] ").strip().lower()
+        if answer != "yes":
+            print("Aborted.")
+            sys.exit(0)
+        mode = partial.get("mode", mode)
+        # Resume from where it stopped — skip boot and session
+        def _sleep_fn() -> None:
+            present_evolution_proposals(layout)
+            run_sleep_cycle(layout)
+        _decom.run(layout, mode, _sleep_fn, partial=partial)
+        return
+
+    # --destroy requires explicit confirmation
+    if do_destroy:
+        print(f"[FCP-Core] WARNING: This will permanently destroy the entity at {layout.root}.")
+        answer = input("Type 'yes' to confirm destruction: ").strip().lower()
+        if answer != "yes":
+            print("Aborted.")
+            sys.exit(0)
+
     try:
-        boot_result = boot_run(layout)
+        boot_run(layout)
     except FAPError as exc:
         print(f"[FAP FAILED] {exc}")
         sys.exit(1)
@@ -215,19 +242,15 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
     envelope = acp_make(
         env_type="MSG",
         source="fcp",
-        data={"type": "DECOMMISSION", "mode": "archive" if archive else "destroy"},
+        data={"type": "DECOMMISSION", "mode": mode},
     )
     run_session(layout, adapter, index, inject=[envelope])
 
-    present_evolution_proposals(layout)
-    run_sleep_cycle(layout)
+    def _sleep_fn() -> None:
+        present_evolution_proposals(layout)
+        run_sleep_cycle(layout)
 
-    if destroy:
-        import shutil
-        shutil.rmtree(layout.root)
-        print("[FCP-Core] Entity destroyed.")
-    else:
-        print(f"[FCP-Core] Entity archived at {layout.root}.")
+    _decom.run(layout, mode, _sleep_fn)
 
 
 # ---------------------------------------------------------------------------
