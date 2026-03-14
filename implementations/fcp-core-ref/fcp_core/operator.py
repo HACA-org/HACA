@@ -140,6 +140,9 @@ def handle_platform_command(layout: Layout, line: str, adapter_ref: Any = None) 
         return True
 
     # --- Memory & inbox ---
+    if cmd == "/memory":
+        _cmd_memory(layout, args)
+        return True
     if cmd == "/inbox":
         _cmd_inbox(layout, args)
         return True
@@ -244,6 +247,23 @@ def fix_integrity_hashes(layout: Layout) -> None:
 
 
 # --- Memory & inbox ---
+
+def _cmd_memory(layout: Layout, args: list[str]) -> None:
+    query = args[0].lower() if args else ""
+    found = False
+    for subdir in ("episodic", "semantic"):
+        d = layout.memory_dir / subdir
+        if not d.exists():
+            continue
+        files = sorted(f for f in d.rglob("*.md") if not query or query in f.name.lower())
+        if files:
+            print(f"  {subdir}/")
+            for f in files:
+                print(f"    {f.relative_to(layout.memory_dir)}")
+            found = True
+    if not found:
+        print("  memory store empty" if not query else f"  no results for '{query}'")
+
 
 def _cmd_inbox(layout: Layout, args: list[str]) -> None:
     sub = args[0].lower() if args else "list"
@@ -441,36 +461,69 @@ def _model_list(backend: str) -> None:
 
 def _cmd_endure(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /endure list | approve <seq> | reject <seq> | sync [--remote]")
+        print("  usage: /endure list | approve <n> | reject <n> | sync [--remote]")
         return
     sub = args[0].lower()
     if sub == "list":
         _endure_list(layout)
+    elif sub == "approve" and len(args) > 1:
+        _endure_decide(layout, args[1], approve=True)
+    elif sub == "reject" and len(args) > 1:
+        _endure_decide(layout, args[1], approve=False)
     elif sub == "sync":
         _endure_sync(layout, "--remote" in args)
     else:
         print(f"  unknown endure subcommand: {sub}")
 
 
-def _endure_list(layout: Layout) -> None:
+def _endure_proposals(layout: Layout) -> list[dict]:
+    """Return list of pending proposal dicts with 'file' and 'data' keys."""
     if not layout.operator_notifications_dir.exists():
-        print("  no pending proposals")
-        return
-    found = False
+        return []
+    proposals = []
     for f in sorted(layout.operator_notifications_dir.iterdir()):
-        if "proposal_pending" in f.name:
+        if "proposal_pending" in f.name and f.suffix == ".json":
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 inner = data.get("data", {})
-                seq = inner.get("ts", "?")
-                content = str(inner.get("content", ""))
-                preview = "".join(itertools.islice(content, 80)) + ("..." if len(content) > 80 else "")
-                print(f"  [{seq}] {preview}")
-                found = True
+                if isinstance(inner, dict) and inner.get("type") == "PROPOSAL_PENDING":
+                    proposals.append({"file": f, "data": inner})
             except Exception:
                 pass
-    if not found:
+    return proposals
+
+
+def _endure_list(layout: Layout) -> None:
+    proposals = _endure_proposals(layout)
+    if not proposals:
         print("  no pending proposals")
+        return
+    for i, p in enumerate(proposals):
+        content = str(p["data"].get("content", ""))
+        preview = content[:80] + ("..." if len(content) > 80 else "")
+        print(f"  [{i}] {preview}")
+
+
+def _endure_decide(layout: Layout, idx_str: str, approve: bool) -> None:
+    proposals = _endure_proposals(layout)
+    try:
+        idx = int(idx_str)
+        p = proposals[idx]
+    except (ValueError, IndexError):
+        print(f"  no proposal at index {idx_str}")
+        return
+    inner = p["data"]
+    content = str(inner.get("content", ""))
+    if approve:
+        auth_digest = _sha256_str(content)
+        _write_evolution_auth(layout, content, auth_digest)
+        print(f"  approved: [{idx}]")
+    else:
+        _write_evolution_rejected(layout, content)
+        print(f"  rejected: [{idx}]")
+    pfile = p["file"]
+    if isinstance(pfile, Path):
+        pfile.unlink(missing_ok=True)
 
 
 def _endure_sync(layout: Layout, remote: bool) -> None:
@@ -550,6 +603,7 @@ def _cmd_help() -> None:
     /compact                     — compress session context without closing
 
   Memory & inbox:
+    /memory [query]              — list memory store contents (episodic + semantic)
     /inbox [list]                — list system notifications
     /inbox view <n>              — view notification by index
     /inbox dismiss <n>           — remove notification by index
@@ -568,6 +622,8 @@ def _cmd_help() -> None:
     /model list                  — list known models for current backend
     /model <name>                — switch model mid-session (takes effect immediately)
     /endure list                 — list pending Evolution Proposals
+    /endure approve <n>          — approve proposal by index
+    /endure reject <n>           — reject proposal by index
     /endure sync [--remote]      — commit entity root to version control
 
   Debug:
