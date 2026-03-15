@@ -28,7 +28,8 @@ def _main() -> None:
     entity_root = Path.cwd()
 
     verbose = "--verbose" in args
-    args = [a for a in args if a != "--verbose"]
+    debugger = "--debugger" in args
+    args = [a for a in args if a not in ("--verbose", "--debugger")]
 
     if not args:
         # normal boot + session
@@ -36,6 +37,9 @@ def _main() -> None:
         if verbose:
             from .operator import set_verbose
             set_verbose(True)
+        if debugger:
+            from .operator import set_debugger
+            set_debugger("all")
         _run_normal(Layout(entity_root))
         return
 
