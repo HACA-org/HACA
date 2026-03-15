@@ -365,8 +365,21 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
             print(f"  path outside workspace: {subdir}")
             return
         if not target.exists():
-            print(f"  directory not found: {subdir}")
-            return
+            target.mkdir(parents=True)
+            print(f"  created: {target}")
+        if layout.workspace_focus.exists():
+            try:
+                current = str(read_json(layout.workspace_focus).get("path", ""))
+            except Exception:
+                current = ""
+            if current:
+                try:
+                    answer = input(f"  workspace focus already set to {current!r}. Overwrite? [y/N] ").strip().lower()
+                except EOFError:
+                    answer = "n"
+                if answer != "y":
+                    print("  aborted.")
+                    return
         atomic_write(layout.workspace_focus, {"path": str(target)})
         print(f"  workspace focus set: {target}")
     elif sub == "clone" and len(args) > 1:
