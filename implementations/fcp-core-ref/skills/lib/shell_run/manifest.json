@@ -6,13 +6,22 @@
   "background": false,
   "irreversible": true,
   "class": "builtin",
-  "permissions": ["workspace_write"],
-  "allowlist": [],
+  "permissions": [
+    "workspace_write"
+  ],
+  "allowlist": [
+    "ls", "cat", "pwd", "find", "grep"
+  ],
   "params": {
     "type": "object",
     "properties": {
-      "command": {"type": "string", "description": "Shell command to execute within workspace_focus."}
+      "command": {
+        "type": "string",
+        "description": "Shell command to execute within workspace_focus."
+      }
     },
-    "required": ["command"]
+    "required": [
+      "command"
+    ]
   }
 }
