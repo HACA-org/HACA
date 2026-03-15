@@ -797,15 +797,15 @@ _RESET = "\x1b[0m"
 _CYAN = "\x1b[96m"
 
 
+_WIDTH = 50
+
+
 def _print_cpe_block(text: str) -> None:
-    """Print a CPE response in a bordered block."""
+    """Print a CPE response with a top separator line only."""
     label = "CPE"
-    width = 50
-    border = "─" * (width - len(label) - 3)
-    print(f"\n{_CYAN}╭─ {label} {border}{_RESET}")
-    for line in text.splitlines():
-        print(f"{_DIM}│{_RESET} {line}")
-    print(f"{_CYAN}╰{'─' * width}{_RESET}")
+    border = "─" * (_WIDTH - len(label) - 3)
+    print(f"\n{_CYAN}─── {label} {border}{_RESET}")
+    print(text)
 
 
 def _vprint(text: str) -> None:
@@ -884,6 +884,7 @@ def _readline_with_history(prompt: str) -> str:
         import readline as _rl  # noqa: F401 — side-effect: enables arrow keys
     except ImportError:
         pass
+    print(f"{_DIM}{'─' * _WIDTH}{_RESET}")
     return input(prompt)
 
 

@@ -554,16 +554,18 @@ def _run_init(entity_root: Path) -> None:
     print("  Run: ./fcp-core")
 
 
-def _print_block(label: str, text: str, color: str = "\x1b[96m") -> None:
-    """Print a bordered block with a colored header label."""
-    RESET = "\x1b[0m"
-    DIM = "\x1b[2m"
-    width = 50
-    border = "─" * (width - len(label) - 3)
-    print(f"{color}╭─ {label} {border}{RESET}")
-    for line in text.splitlines():
-        print(f"{DIM}│{RESET} {line}")
-    print(f"{color}╰{'─' * width}{RESET}")
+_WIDTH = 50
+_RESET = "\x1b[0m"
+_DIM = "\x1b[2m"
+
+
+def _print_block(label: str, lines: list, color: str = "\x1b[96m") -> None:
+    """Print a bordered block with a colored header label and closing border."""
+    border = "─" * (_WIDTH - len(label) - 3)
+    print(f"{color}╭─ {label} {border}╮{_RESET}")
+    for line in lines:
+        print(f"{_DIM}│{_RESET} {line}")
+    print(f"{color}╰{'─' * _WIDTH}╯{_RESET}")
 
 
 def _print_boot_header(layout: "Layout", index: dict) -> None:
@@ -585,14 +587,12 @@ def _print_boot_header(layout: "Layout", index: dict) -> None:
         model_str = "?"
 
     notif_str = f" | {s['notifications']} notif" if s["notifications"] else ""
-    header_line = (
-        f"{model_str} | boot: {ctx_str} ctx | "
-        f"sessions: {s['sessions']} | cycles: {s['cycles']} | "
-        f"memories: {s['memories']} | evolutions: {evol_str} | "
-        f"skills: {s['skills']} | tools: {s['tools']}"
-        f"{notif_str}"
-    )
-    _print_block("FCP-Core", header_line, color="\x1b[90m")  # dark gray
+    header_lines = [
+        f"{model_str} | tools: {s['tools']}{notif_str}",
+        f"boot: {ctx_str} ctx | sessions: {s['sessions']} | cycles: {s['cycles']}",
+        f"memories: {s['memories']} | evolutions: {evol_str} | skills: {s['skills']}",
+    ]
+    _print_block("FCP-Core", header_lines, color="\x1b[90m")  # dark gray
     print("Type your message or /help.")
 
 
