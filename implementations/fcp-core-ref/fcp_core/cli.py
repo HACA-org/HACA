@@ -114,8 +114,7 @@ def _run_normal(layout: "Layout") -> None:
     if layout.skills_index.exists():
         index = read_json(layout.skills_index)
 
-    present_notifications(layout)
-    print("[FCP-Core] Entity ready. Type your message or /help.")
+    _print_boot_header(layout, index)
 
     while True:
         close_reason = run_session(layout, adapter, index, greeting=True)
@@ -553,6 +552,35 @@ def _run_init(entity_root: Path) -> None:
     print(f"\n[FCP-Core] Initialised: {entity_root}")
     print("  First boot will run FAP (First Activation Protocol).")
     print("  Run: ./fcp-core")
+
+
+def _print_boot_header(layout: "Layout", index: dict) -> None:
+    from .session import build_boot_context, build_boot_stats, _tool_declarations
+    from .store import read_json
+
+    system, chat_history = build_boot_context(layout, index)
+    tools = _tool_declarations(layout, index)
+    s = build_boot_stats(layout, index, system, chat_history, tools)
+
+    ctx_str = f"{s['ctx_pct']}%" if s["ctx_pct"] is not None else "?%"
+    evol_str = f"{s['evolutions_auth']}/{s['evolutions_total']}"
+
+    try:
+        baseline = read_json(layout.baseline)
+        cpe_cfg = baseline.get("cpe", {})
+        model_str = f"{cpe_cfg.get('backend', '?')}:{cpe_cfg.get('model', '?')}"
+    except Exception:
+        model_str = "?"
+
+    notif_str = f" | {s['notifications']} notifications" if s["notifications"] else ""
+    print(
+        f"[FCP-Core] {model_str} | boot: {ctx_str} ctx | "
+        f"sessions: {s['sessions']} | cycles: {s['cycles']} | "
+        f"memories: {s['memories']} | evolutions: {evol_str} | "
+        f"skills: {s['skills']} | tools: {s['tools']}"
+        f"{notif_str}"
+    )
+    print("Type your message or /help.")
 
 
 def _atomic_write(path: Path, data: object) -> None:

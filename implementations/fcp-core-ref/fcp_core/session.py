@@ -57,7 +57,7 @@ def run_session(
 
     # Inject greeting stimulus as first user message
     if greeting:
-        msg = "Session started. Greet the Operator and await input."
+        msg = "Session started. Greet the Operator briefly — one sentence — then await input."
         env = acp_encode(env_type="MSG", source="fcp",
                          data={"type": "SESSION_START", "msg": msg})
         append_jsonl(layout.session_store, env)
@@ -652,6 +652,94 @@ def _session_byte_size(layout: Layout) -> int:
     if not layout.session_store.exists():
         return 0
     return layout.session_store.stat().st_size
+
+
+def build_boot_stats(
+    layout: Layout,
+    index: dict[str, Any],
+    system: str,
+    chat_history: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Collect stats for the boot header printed before session starts."""
+    # context % — estimate tokens as chars / 4
+    total_chars = len(system) + sum(len(str(m.get("content", ""))) for m in chat_history)
+    total_tokens = total_chars // 4
+    baseline = _load_baseline(layout)
+    ctx_window = baseline.get("context_window", {}).get("budget_tokens", 0)
+    ctx_pct = round(total_tokens / ctx_window * 100, 1) if ctx_window else None
+
+    # sessions — count SLEEP_COMPLETE entries in integrity.log
+    sessions = 0
+    if layout.integrity_log.exists():
+        for line in layout.integrity_log.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+                raw = rec.get("data", "{}")
+                d = json.loads(raw) if isinstance(raw, str) else raw
+                if isinstance(d, dict) and d.get("type") == "SLEEP_COMPLETE":
+                    sessions += 1
+            except Exception:
+                pass
+
+    # cycles — count ENDURE_COMMIT entries in integrity_chain.jsonl
+    cycles = 0
+    if layout.integrity_chain.exists():
+        for line in layout.integrity_chain.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+                if rec.get("type") == "ENDURE_COMMIT":
+                    cycles += 1
+            except Exception:
+                pass
+
+    # memories — episodic + semantic files
+    memories = 0
+    for d in (layout.episodic_dir, layout.semantic_dir):
+        if d.exists():
+            memories += sum(1 for f in d.rglob("*") if f.is_file())
+
+    # evolutions — authorized vs total EVOLUTION_AUTH
+    evolutions_auth = 0
+    evolutions_total = 0
+    if layout.integrity_log.exists():
+        for line in layout.integrity_log.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+                raw = rec.get("data", "{}")
+                d = json.loads(raw) if isinstance(raw, str) else raw
+                if isinstance(d, dict) and d.get("type") == "EVOLUTION_AUTH":
+                    evolutions_total += 1
+                    evolutions_auth += 1
+                elif isinstance(d, dict) and d.get("type") == "ENDURE_COMMIT":
+                    evolutions_total += 1
+            except Exception:
+                pass
+
+    # skills and tools
+    n_skills = len(index.get("skills", []))
+    n_tools = len(tools)
+
+    # notifications
+    n_notif = 0
+    if layout.operator_notifications_dir.exists():
+        n_notif = sum(
+            1 for f in layout.operator_notifications_dir.iterdir()
+            if f.suffix == ".json" and not f.name.endswith(".tmp")
+        )
+
+    return {
+        "ctx_tokens": total_tokens,
+        "ctx_pct": ctx_pct,
+        "sessions": sessions,
+        "cycles": cycles,
+        "memories": memories,
+        "evolutions_auth": evolutions_auth,
+        "evolutions_total": evolutions_total,
+        "skills": n_skills,
+        "tools": n_tools,
+        "notifications": n_notif,
+    }
 
 
 def _load_baseline(layout: Layout) -> dict[str, Any]:
