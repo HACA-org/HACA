@@ -306,6 +306,9 @@ def _stage3_endure(layout: Layout) -> None:
                 continue
             if str(target).startswith(str((layout.root / "workspace").resolve())):
                 continue
+            # security: file ops cannot touch skills/ — use skill_install op instead
+            if str(target).startswith(str((layout.root / "skills").resolve())):
+                continue
 
             try:
                 if op == "json_merge":

@@ -810,11 +810,12 @@ _WIDTH = 50
 
 
 def _print_cpe_block(text: str) -> None:
-    """Print a CPE response with a top separator line only."""
+    """Print a CPE response with top and bottom separator lines."""
     label = "CPE"
     border = "─" * (_WIDTH - len(label) - 3)
     print(f"\n{_GRAY}─── {label} {border}{_RESET}")
     print(text)
+    print(f"{_GRAY}{'─' * _WIDTH}{_RESET}")
 
 
 def _vprint(text: str) -> None:
@@ -893,7 +894,6 @@ def _readline_with_history(prompt: str) -> str:
         import readline as _rl  # noqa: F401 — side-effect: enables arrow keys
     except ImportError:
         pass
-    print(f"{_DIM}{'─' * _WIDTH}{_RESET}")
     return input(prompt)
 
 
@@ -1019,7 +1019,7 @@ def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, 
                             "patch": {"type": "object", "description": "For json_merge: the fields to merge into the target JSON."},
                             "content": {"type": "string", "description": "For file_write: the full file content to write."},
                         },
-                        "required": ["op", "target"],
+                        "required": ["op"],
                     },
                 },
             },
