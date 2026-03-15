@@ -794,7 +794,7 @@ def _load_baseline(layout: Layout) -> dict[str, Any]:
 
 _DIM = "\x1b[2m"
 _RESET = "\x1b[0m"
-_CYAN = "\x1b[96m"
+_GRAY = "\x1b[90m"
 
 
 _WIDTH = 50
@@ -804,7 +804,7 @@ def _print_cpe_block(text: str) -> None:
     """Print a CPE response with a top separator line only."""
     label = "CPE"
     border = "─" * (_WIDTH - len(label) - 3)
-    print(f"\n{_CYAN}─── {label} {border}{_RESET}")
+    print(f"\n{_GRAY}─── {label} {border}{_RESET}")
     print(text)
 
 
