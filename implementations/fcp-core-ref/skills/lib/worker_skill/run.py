@@ -26,6 +26,15 @@ def main() -> None:
     persona = str(params.get("persona", "You are a focused sub-agent. Complete the given task concisely.")).strip()
     context = str(params.get("context", "")).strip()
 
+    # Append tool-boundary notice to persona so the worker is aware of its constraints.
+    persona += (
+        "\n\nIMPORTANT: You are a text-only sub-agent. You do NOT have access to any tools, "
+        "file system, or external resources. You can only reason and produce text output. "
+        "If asked to read, write, or modify files, describe what the result would be or "
+        "return the content as text — but make it explicit that the file operation was NOT "
+        "actually performed and must be executed by the calling agent."
+    )
+
     sys.path.insert(0, str(entity_root))
     from fcp_core.cpe.base import detect_adapter
 

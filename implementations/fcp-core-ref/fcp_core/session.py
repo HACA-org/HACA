@@ -92,6 +92,8 @@ def run_session(
     # cycle limit from baseline
     _baseline_cfg = _load_baseline(layout)
     _max_cycles = int(_baseline_cfg.get("fault", {}).get("max_cycles", 0))
+    _max_silent_cycles = int(_baseline_cfg.get("fault", {}).get("max_silent_cycles", 10))
+    _silent_cycles = 0  # consecutive cycles where CPE produced no text output
 
     # Vital Check state — triggers on cycle_threshold or interval_seconds
     _baseline = None
@@ -179,9 +181,11 @@ def run_session(
             _append_msg(layout, "cpe", response.text)
             print(response.text)
             chat_history.append({"role": "assistant", "content": response.text})
+            _silent_cycles = 0
         elif response.tool_use_calls:
             # assistant turn with tool use (no text) — still needs to be tracked
             chat_history.append({"role": "assistant", "content": ""})
+            _silent_cycles += 1
 
         # process tool_use calls — fcp_mil before fcp_exec before fcp_sil (per spec)
         tool_calls = sorted(
@@ -233,6 +237,18 @@ def run_session(
                 stimulus_ready = True
         else:
             _loop_window.clear()
+
+        # --- silent cycle limit: CPE producing only tool calls without reporting to Operator ---
+        if _max_silent_cycles and _silent_cycles >= _max_silent_cycles:
+            _silent_cycles = 0
+            intervention = (
+                f"[FCP] You have executed {_max_silent_cycles} consecutive tool-only cycles "
+                "without producing any text output. Stop, summarize what you have done so far, "
+                "and report your progress to the Operator before continuing."
+            )
+            _append_msg(layout, "fcp", intervention)
+            chat_history.append({"role": "user", "content": intervention})
+            stimulus_ready = True
 
         # --- cycle limit ---
         if _max_cycles and cycle >= _max_cycles:
