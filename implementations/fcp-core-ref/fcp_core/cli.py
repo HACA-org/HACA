@@ -586,7 +586,7 @@ def _print_boot_header(layout: "Layout", index: dict) -> None:
 
     notif_str = f" | {s['notifications']} notif" if s["notifications"] else ""
     header_line = (
-        f"[FCP-Core] {model_str} | boot: {ctx_str} ctx | "
+        f"{model_str} | boot: {ctx_str} ctx | "
         f"sessions: {s['sessions']} | cycles: {s['cycles']} | "
         f"memories: {s['memories']} | evolutions: {evol_str} | "
         f"skills: {s['skills']} | tools: {s['tools']}"
