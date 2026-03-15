@@ -121,6 +121,20 @@ def memory_recall(layout: Layout, query: str, path: str) -> dict[str, Any]:
 
     if path:
         target = layout.root / path
+        # If the path doesn't exist directly, try to resolve it as a slug:
+        # look for the most recent episodic file matching *-<path>.md
+        if not target.exists() or target == layout.root:
+            slug = Path(path).name
+            slug = re.sub(r"[^\w\-.]", "-", slug)
+            matches = sorted(
+                layout.episodic_dir.glob(f"*-{slug}.md"),
+                key=lambda p: p.name,
+                reverse=True,
+            )
+            if matches:
+                target = matches[0]
+                path = str(target.relative_to(layout.root))
+
         if target.exists() and target != layout.root:
             status = "found"
             paths = [path]
@@ -134,20 +148,29 @@ def memory_recall(layout: Layout, query: str, path: str) -> dict[str, Any]:
             else:
                 link.symlink_to(target)
     else:
-        # query-only recall: search episodic memory for matching files
-        ep_dir = layout.episodic_dir
-        if ep_dir.exists():
-            q = query.lower()
-            for f in sorted(ep_dir.rglob("*.md")) + sorted(ep_dir.rglob("*.jsonl")):
-                if q and q not in f.name.lower():
-                    continue
-                rel = str(f.relative_to(layout.root))
-                paths.append(rel)
-                link = layout.active_context_dir / f.name
-                if link.is_symlink():
-                    link.unlink()
-                if not link.exists():
-                    link.symlink_to(f)
+        # query-only recall: search episodic and semantic memory by filename and content
+        q = query.lower()
+        candidates: list[Path] = []
+        for search_dir in (layout.episodic_dir, layout.semantic_dir):
+            if search_dir.exists():
+                candidates.extend(sorted(search_dir.rglob("*.md")))
+                candidates.extend(sorted(search_dir.rglob("*.jsonl")))
+        for f in candidates:
+            name_match = not q or q in f.name.lower()
+            if not name_match:
+                try:
+                    name_match = q in f.read_text(encoding="utf-8").lower()
+                except Exception:
+                    pass
+            if not name_match:
+                continue
+            rel = str(f.relative_to(layout.root))
+            paths.append(rel)
+            link = layout.active_context_dir / f.name
+            if link.is_symlink():
+                link.unlink()
+            if not link.exists():
+                link.symlink_to(f)
         status = "found" if paths else "not_found"
 
     # Include file contents so the CPE can read the recalled memory directly.
