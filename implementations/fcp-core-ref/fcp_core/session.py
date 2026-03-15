@@ -439,9 +439,21 @@ def _dispatch_mil(
         elif atype == "memory_write":
             slug = str(action.get("slug", "")).strip()
             content = str(action.get("content", ""))
+            overwrite = bool(action.get("overwrite", False))
             if slug:
-                write_episodic(layout, slug, content)
-            results.append({"type": "memory_write", "status": "ok"})
+                outcome = write_episodic(layout, slug, content, overwrite=overwrite)
+                if isinstance(outcome, dict):
+                    results.append({
+                        "type": "memory_write",
+                        "status": "conflict",
+                        "slug": slug,
+                        "existing_content": outcome["existing_content"],
+                        "message": "A memory with this slug already exists. Call memory_write again with overwrite=true to replace it, or use a different slug.",
+                    })
+                else:
+                    results.append({"type": "memory_write", "status": "ok"})
+            else:
+                results.append({"type": "memory_write", "status": "ok"})
         elif atype == "closure_payload":
             atomic_write(layout.pending_closure, dict(action))
             results.append({"type": "closure_payload", "status": "acknowledged"})
@@ -749,8 +761,9 @@ def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, 
         "input_schema": {
             "type": "object",
             "properties": {
-                "slug": {"type": "string", "description": "Short, stable, kebab-case identifier. Writing to an existing slug replaces its content."},
+                "slug": {"type": "string", "description": "Short, stable, kebab-case identifier."},
                 "content": {"type": "string", "description": "Content to persist."},
+                "overwrite": {"type": "boolean", "description": "Set to true to overwrite an existing memory with this slug. If false (default) and the slug exists, the write is rejected and the existing content is returned for review."},
             },
             "required": ["slug", "content"],
         },

@@ -37,15 +37,29 @@ from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
 # Mid-session writes
 # ---------------------------------------------------------------------------
 
-def write_episodic(layout: Layout, slug: str, content: str) -> Path:
+def write_episodic(
+    layout: Layout, slug: str, content: str, overwrite: bool = False
+) -> Path | dict[str, str]:
     """Write CPE memory_write content to memory/episodic/<timestamp>-<slug>.md.
 
-    Returns the path written (relative to entity root) so the caller can
-    include it in the session record if needed.
+    If a file with the same slug already exists and overwrite is False, returns
+    a dict {"conflict": slug, "existing_content": <str>} instead of writing.
+    If overwrite is True, deletes all existing files for this slug before writing.
+
+    Returns the Path written on success.
     """
+    existing = sorted(
+        layout.episodic_dir.glob(f"*-{slug}.md"),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    if existing and not overwrite:
+        current = existing[0].read_text(encoding="utf-8")
+        return {"conflict": slug, "existing_content": current}
+    for f in existing:
+        f.unlink()
     ts = int(time.time() * 1000)
-    filename = f"{ts}-{slug}.md"
-    dest = layout.episodic_dir / filename
+    dest = layout.episodic_dir / f"{ts}-{slug}.md"
     dest.write_text(content, encoding="utf-8")
     return dest
 
