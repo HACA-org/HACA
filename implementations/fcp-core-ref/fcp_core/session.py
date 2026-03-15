@@ -173,13 +173,13 @@ def run_session(
         # add CPE response to chat history
         if response.text:
             _append_msg(layout, "cpe", response.text)
-            print(response.text)
+            _print_cpe_block(response.text)
             chat_history.append({"role": "assistant", "content": response.text})
         elif response.tool_use_calls:
             # assistant turn with tool use (no text) — still needs to be tracked
             chat_history.append({"role": "assistant", "content": ""})
             tools_repr = ", ".join(c.tool for c in response.tool_use_calls)
-            print(f"[fcp] working... cycle {cycle} — {tools_repr}")
+            print(f"\n{_DIM}  [fcp] working... cycle {cycle} — {tools_repr}{_RESET}")
 
         # process tool_use calls — fcp_mil before fcp_exec before fcp_sil (per spec)
         tool_calls = sorted(
@@ -794,6 +794,18 @@ def _load_baseline(layout: Layout) -> dict[str, Any]:
 
 _DIM = "\x1b[2m"
 _RESET = "\x1b[0m"
+_CYAN = "\x1b[96m"
+
+
+def _print_cpe_block(text: str) -> None:
+    """Print a CPE response in a bordered block."""
+    label = "CPE"
+    width = 50
+    border = "─" * (width - len(label) - 3)
+    print(f"\n{_CYAN}╭─ {label} {border}{_RESET}")
+    for line in text.splitlines():
+        print(f"{_DIM}│{_RESET} {line}")
+    print(f"{_CYAN}╰{'─' * width}{_RESET}")
 
 
 def _vprint(text: str) -> None:
