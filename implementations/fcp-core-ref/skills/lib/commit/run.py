@@ -29,16 +29,11 @@ def main() -> None:
 
     focus = json.loads(focus_file.read_text(encoding="utf-8"))
     focus_path = Path(str(focus.get("path", ""))).resolve()
-    workspace = entity_root / "workspace"
 
-    target = (workspace / path_param).resolve()
+    target = (focus_path / path_param).resolve()
     try:
-        target.relative_to(workspace)
+        target.relative_to(focus_path)
     except ValueError:
-        print(json.dumps({"error": f"path outside workspace: {path_param}"}))
-        sys.exit(1)
-
-    if not str(target).startswith(str(focus_path)):
         print(json.dumps({"error": f"path outside workspace_focus: {path_param}"}))
         sys.exit(1)
 

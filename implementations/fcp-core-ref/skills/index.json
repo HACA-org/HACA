@@ -3,7 +3,7 @@
   "skills": [
     {
       "name": "commit",
-      "desc": "Stage and record a version-control checkpoint within workspace_focus. Accepts --remote to push to origin.",
+      "desc": "Version-control checkpoint for workspace projects. This is the only git interface available to the CPE \u2014 direct git access is prohibited. Stages and commits the specified path within workspace_focus; optionally pushes to origin.",
       "manifest": "skills/lib/commit/manifest.json",
       "class": "builtin"
     },
