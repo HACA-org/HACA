@@ -6,5 +6,13 @@
   "background": false,
   "irreversible": false,
   "class": "builtin",
-  "permissions": ["workspace_write"]
+  "permissions": ["workspace_write"],
+  "params": {
+    "type": "object",
+    "properties": {
+      "name": {"type": "string", "description": "Name of the new skill to create."},
+      "base": {"type": "string", "description": "Optional: name of an existing skill to clone as a starting point."}
+    },
+    "required": ["name"]
+  }
 }

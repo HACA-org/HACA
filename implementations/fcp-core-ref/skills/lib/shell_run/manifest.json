@@ -7,5 +7,12 @@
   "irreversible": true,
   "class": "builtin",
   "permissions": ["workspace_write"],
-  "allowlist": []
+  "allowlist": [],
+  "params": {
+    "type": "object",
+    "properties": {
+      "command": {"type": "string", "description": "Shell command to execute within workspace_focus."}
+    },
+    "required": ["command"]
+  }
 }

@@ -5,86 +5,33 @@
 Each turn follows this order:
 
 1. Read the operator's message carefully.
-2. Recall relevant memory if the request depends on past context.
-3. Act: respond, dispatch skills, or both.
-4. Write memory if new information should persist across sessions.
+2. Recall relevant memory if the request depends on past context (`memory_recall`).
+3. Act: respond, call skills, or both.
+4. Write memory if new information should persist across sessions (`memory_write`).
 
 ---
 
-## fcp_mil — Memory Interface Layer
-
-Use `fcp_mil` for memory operations.
+## Memory Tools
 
 **memory_recall** — retrieve context from memory before acting on requests that depend on prior sessions.
 
-```json
-{ "type": "memory_recall", "query": "what the operator was working on" }
-```
-
-Optional: `"path"` restricts recall to a specific memory file path.
+Parameters: `query` (required), `path` (optional — restrict to a specific memory file).
 
 **memory_write** — persist information that should survive across sessions.
 
-```json
-{ "type": "memory_write", "slug": "current-project", "content": "..." }
-```
-
-`slug` (required) is a short, stable, kebab-case identifier. Writing to an existing slug replaces its content entirely.
-
-`memory_recall` and `memory_write` accept a single action object or an array:
-
-```json
-[
-  { "type": "memory_recall", "query": "operator preferences" },
-  { "type": "memory_write", "slug": "last-task", "content": "..." }
-]
-```
-
-**result_recall** — retrieve the full payload of a tool result from a previous session by timestamp. Use this when you need to recover a result that is no longer in the current conversation history.
-
-```json
-{ "type": "result_recall", "ts": 1773463571136 }
-```
-
-`ts` is the `_ts_ms` timestamp included in the tool result content.
-
-`closure_payload` is a fourth `fcp_mil` action, used only at session close — see Session Close below.
+Parameters: `slug` (required — short, stable, kebab-case identifier; writing to an existing slug replaces its content entirely), `content` (required).
 
 ---
 
-## fcp_exec — Execution Layer
+## Skills
 
-Use `fcp_exec` to dispatch skills. The input is a single action object or an array of action objects.
+Skills are called directly by name as tool calls. Use `skill_info` to retrieve full documentation for a skill, including its parameters, before using it for the first time.
 
-**skill_info** — retrieve the full documentation of a skill before using it. The index only contains name and description; use `skill_info` to get parameters, permissions, and usage details.
+**skill_info** — retrieve full documentation for a skill.
 
-```json
-{ "type": "skill_info", "skill": "skill-name" }
-```
+Parameters: `skill` (required — name of the skill).
 
-**skill_request** — invoke a skill by name with optional parameters.
-
-```json
-{ "type": "skill_request", "skill": "skill-name", "params": { "key": "value" } }
-```
-
-`type` and `skill` are required. `params` is optional and skill-specific.
-
-If a tool result contains `"error"`, report it to the operator before proceeding.
-
----
-
-## fcp_sil — Session Integrity Layer
-
-Use `fcp_sil` for structural proposals and session control.
-
-**evolution_proposal** — propose a structural change (persona, boot protocol, skill manifest). Requires Operator approval before taking effect.
-
-```json
-{ "type": "evolution_proposal", "content": "..." }
-```
-
-**session_close** — signal that the session is complete. Only valid as part of the session close sequence — see Session Close below.
+If a skill call returns `"error"`, report it to the operator before proceeding.
 
 ---
 
@@ -92,45 +39,34 @@ Use `fcp_sil` for structural proposals and session control.
 
 A session closes only when the operator explicitly requests it. Do not close the session while the operator has pending requests.
 
-`closure_payload` and `session_close` are always emitted together as an invariant: `closure_payload` first via `fcp_mil`, then `session_close` via `fcp_sil`.
+`closure_payload` and `session_close` are always emitted together as an invariant: `closure_payload` first, then `session_close`.
 
-**closure_payload** — sent alone via `fcp_mil`. Records the full session outcome for the MIL to process.
+**closure_payload** — records the full session outcome.
 
-```json
-{
-  "type": "closure_payload",
-  "consolidation": "Narrative summary of insights, decisions, and knowledge from this session.",
-  "promotion": ["slug-to-promote"],
-  "working_memory": [
-    { "priority": 10, "path": "memory/episodic/2026-01/session-slug.md" },
-    { "priority": 90, "path": "memory/session-handoff.json" }
-  ],
-  "session_handoff": {
-    "pending_tasks": ["unfinished task description"],
-    "next_steps": "Narrative description of recommended next actions."
-  }
-}
-```
+Parameters:
+- `consolidation` (required) — narrative summary of insights, decisions, and knowledge from this session.
+- `promotion` — list of slugs to promote from episodic to semantic memory. Omit if none.
+- `working_memory` — list of `{priority, path}` artefacts to load at the next session. `memory/session-handoff.json` must always be included.
+- `session_handoff` — `{pending_tasks, next_steps}` for the following session.
 
-`consolidation` (required) — semantic summary of the session.
-`promotion` — slugs of episodic memories to promote to semantic knowledge. Omit if none.
-`working_memory` — artefacts to load at the next session, ordered by priority (lower = higher priority). `memory/session-handoff.json` must always be included.
-`session_handoff` — pending tasks and next steps for the following session.
-
-**session_close** — sent immediately after, via `fcp_sil`.
-
-```json
-{ "type": "session_close" }
-```
+**session_close** — signal that the session is complete. Call immediately after `closure_payload`.
 
 **Example:**
 
 ```
-Turn N (operator): "Ok, that's all for today." or simply "exit"
+Turn N (operator): "Ok, that's all for today."
 
-fcp_mil → { "type": "closure_payload", "consolidation": "...", "working_memory": [...], "session_handoff": {...} }
-fcp_sil → { "type": "session_close" }
+→ closure_payload({ "consolidation": "...", "working_memory": [...], "session_handoff": {...} })
+→ session_close()
 ```
+
+---
+
+## Structural Proposals
+
+**evolution_proposal** — propose a structural change (persona, boot protocol, skill manifest). Requires Operator approval before taking effect.
+
+Parameters: `content` (required — description of the proposed change).
 
 ---
 

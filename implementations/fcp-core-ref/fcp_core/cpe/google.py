@@ -61,10 +61,10 @@ def _build_contents(
 ) -> list[dict[str, Any]]:
     """Convert chat_history to Gemini contents format.
 
-    The chat_history alternates user/assistant. When an assistant turn had
-    tool_use (content=="") the following user turn contains the tool results
-    as JSON. We detect this pattern and emit functionResponse parts instead
-    of text, using last_function_calls to map results to function names.
+    When an assistant turn had tool_use (content==""), the following user turn
+    contains tool results in the format "[tool_name] {json}\\n[tool_name] {json}".
+    We detect this pattern and emit functionResponse parts, using
+    last_function_calls to map results to function names.
     """
     contents: list[dict[str, Any]] = []
     i = 0
@@ -75,31 +75,30 @@ def _build_contents(
 
         if role == "assistant":
             if not content:
-                # Tool-use turn — will be reconstructed from last_function_calls
-                # on the *previous* iteration. Here we emit an empty model turn
-                # as placeholder so the functionResponse follows correctly.
-                # Actually we need to emit the functionCall parts.
-                # Look ahead: next user msg is the tool result.
-                # We emit model turn with functionCall parts from last_function_calls
-                # only when this is the last assistant turn before a user result turn.
-                # Simpler approach: emit a minimal model turn with text placeholder
-                # and let the functionResponse user turn follow.
-                contents.append({"role": "model", "parts": [{"text": ""}]})
+                # Tool-use turn — emit as model turn with functionCall parts
+                # if we have last_function_calls, otherwise empty placeholder.
+                if last_function_calls:
+                    fc_parts = [
+                        {"functionCall": {"name": fc["name"], "args": fc.get("args", {})}}
+                        for fc in last_function_calls
+                    ]
+                    contents.append({"role": "model", "parts": fc_parts})
+                else:
+                    contents.append({"role": "model", "parts": [{"text": ""}]})
             else:
                 contents.append({"role": "model", "parts": [{"text": content}]})
             i += 1
             continue
 
-        # user turn — check if it's a tool result (JSON with "results" key)
-        if role == "user" and last_function_calls and i > 0 and messages[i - 1]["role"] == "assistant" and not messages[i - 1].get("content", ""):
-            # Try to parse as tool result
-            parsed = _try_parse_tool_result(content)
-            if parsed is not None:
-                # Build functionResponse parts, one per function call
+        # user turn — check if it follows an empty assistant turn (tool result)
+        if (role == "user" and last_function_calls and i > 0
+                and messages[i - 1]["role"] == "assistant"
+                and not messages[i - 1].get("content", "")):
+            tool_results = _parse_tool_results(content)
+            if tool_results is not None:
                 parts: list[dict[str, Any]] = []
-                results = parsed.get("results", [parsed])
                 for j, fc in enumerate(last_function_calls):
-                    resp = results[j] if j < len(results) else {}
+                    resp = tool_results[j] if j < len(tool_results) else {}
                     parts.append({
                         "functionResponse": {
                             "name": fc["name"],
@@ -117,17 +116,38 @@ def _build_contents(
     return contents
 
 
-def _try_parse_tool_result(text: str) -> dict[str, Any] | None:
-    """Return parsed dict if text is a tool result JSON, else None."""
-    if not text:
+def _parse_tool_results(text: str) -> list[dict[str, Any]] | None:
+    """Parse a tool result turn from chat_history into a list of result dicts.
+
+    Tool result turns have the format:
+      [tool_name] {json}
+      [tool_name] {json}
+
+    Returns a list of parsed dicts (one per line), or None if the text does
+    not look like a tool result turn.
+    """
+    if not text or not text.startswith("["):
         return None
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict) and "results" in data:
-            return data
-    except (json.JSONDecodeError, ValueError):
-        pass
-    return None
+    results: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if not line.startswith("["):
+            return None  # not a tool result format
+        # extract: "[tool_name] {json}"
+        bracket_end = line.find("]")
+        if bracket_end == -1:
+            return None
+        json_part = line[bracket_end + 1:].strip()
+        try:
+            data = json.loads(json_part)
+            if not isinstance(data, dict):
+                return None
+            results.append(data)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    return results if results else None
 
 
 def _convert_tool(tool: dict[str, Any]) -> dict[str, Any]:

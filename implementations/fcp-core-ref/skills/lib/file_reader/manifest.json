@@ -6,5 +6,12 @@
   "background": false,
   "irreversible": false,
   "class": "builtin",
-  "permissions": ["workspace_read"]
+  "permissions": ["workspace_read"],
+  "params": {
+    "type": "object",
+    "properties": {
+      "path": {"type": "string", "description": "Path relative to workspace/ to read."}
+    },
+    "required": ["path"]
+  }
 }

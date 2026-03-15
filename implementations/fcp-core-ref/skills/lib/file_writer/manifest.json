@@ -6,5 +6,13 @@
   "background": false,
   "irreversible": false,
   "class": "builtin",
-  "permissions": ["workspace_write"]
+  "permissions": ["workspace_write"],
+  "params": {
+    "type": "object",
+    "properties": {
+      "path": {"type": "string", "description": "Path relative to workspace/ to write."},
+      "content": {"type": "string", "description": "Content to write to the file."}
+    },
+    "required": ["path", "content"]
+  }
 }

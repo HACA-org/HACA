@@ -39,6 +39,7 @@ def run_session(
     *,
     inject: list[dict[str, Any]] | None = None,
     greeting: bool = False,
+    tools: list[dict[str, Any]] | None = None,
 ) -> str:
     """Run the cognitive session loop until session close.
 
@@ -46,7 +47,8 @@ def run_session(
     greeting: if True, inject a SESSION_START stimulus so the CPE wakes and greets.
     Returns the close reason string.
     """
-    tools = _tool_declarations()
+    if tools is None:
+        tools = _tool_declarations(layout, index)
     adapter_ref = adapter if isinstance(adapter, AdapterRef) else AdapterRef(adapter)
 
     # --- Build system prompt and initial chat history once at session start ---
@@ -257,34 +259,9 @@ def build_boot_context(
             if p.is_file():
                 memory_parts.append(p.read_text(encoding="utf-8").strip())
 
-    skill_blocks: list[str] = []
-    if layout.skills_index.exists():
-        idx = read_json(layout.skills_index)
-        visible = [s for s in idx.get("skills", []) if s.get("class") != "operator"]
-        for skill in visible:
-            mrel = skill.get("manifest", "")
-            if mrel:
-                mpath = layout.root / mrel
-                if mpath.exists():
-                    m = read_json(mpath)
-                    block = {k: m[k] for k in (
-                        "name", "version", "description",
-                        "timeout_seconds", "permissions",
-                    ) if k in m}
-                    skill_blocks.append(
-                        f"[SKILL:{skill['name']}]\n{json.dumps(block, indent=2)}"
-                    )
-
     instruction_parts: list[str] = [boot_protocol]
     if memory_parts:
         instruction_parts.append("## Active Memory\n\n" + "\n\n---\n\n".join(memory_parts))
-    if skill_blocks:
-        instruction_parts.append(
-            "## Available Skills\n\n"
-            "Use these via fcp_exec → skill_request. "
-            "They are NOT direct tools — never call them as tool_use.\n\n"
-            + "\n\n".join(skill_blocks)
-        )
 
     instruction_block = "\n\n".join(instruction_parts)
 
@@ -410,12 +387,37 @@ def dispatch_tool_use(
         except Exception:
             pass
 
+    # --- MIL tools ---
+    if tool in ("memory_recall", "memory_write", "result_recall", "closure_payload"):
+        action = dict(inp)
+        action["type"] = tool
+        return _dispatch_mil(layout, action)
+
+    # --- SIL tools ---
+    if tool in ("session_close", "evolution_proposal"):
+        action = dict(inp)
+        action["type"] = tool
+        return _dispatch_sil(layout, action)
+
+    # --- skill_info ---
+    if tool == "skill_info":
+        skill_name = str(inp.get("skill", ""))
+        return _skill_info(layout, skill_name, index), False
+
+    # --- skills by name ---
+    skill_names = {s.get("name") for s in index.get("skills", [])}
+    if tool in skill_names:
+        exec_inp = {"type": "skill_request", "skill": tool, "params": inp}
+        return _dispatch_exec(layout, exec_inp, index)
+
+    # --- legacy fcp_* names (backwards compat during transition) ---
     if tool == "fcp_mil":
         return _dispatch_mil(layout, inp)
     if tool == "fcp_exec":
         return _dispatch_exec(layout, inp, index)
     if tool == "fcp_sil":
         return _dispatch_sil(layout, inp)
+
     return {"error": f"unknown tool: {tool}"}, False
 
 
@@ -720,49 +722,124 @@ def _stage_evolution_proposal(layout: Layout, content: str) -> None:
     os.replace(tmp, dest)
 
 
-def _tool_declarations() -> list[dict[str, Any]]:
-    return [
-        {
-            "name": "fcp_exec",
-            "description": "Dispatch skill requests to the execution layer.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "type": {"type": "string", "enum": ["skill_request", "skill_info"]},
-                    "skill": {"type": "string"},
-                    "params": {"type": "object"},
-                },
-                "required": ["type", "skill"],
+def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build the tool declarations sent to the CPE each cycle.
+
+    Generates one tool per visible skill (class != 'operator') plus fixed
+    system tools for memory, session control, and skill documentation.
+    """
+    tools: list[dict[str, Any]] = []
+
+    # --- memory tools ---
+    tools.append({
+        "name": "memory_recall",
+        "description": "Retrieve context from memory before acting on requests that depend on prior sessions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What to look for in memory."},
+                "path": {"type": "string", "description": "Optional: restrict recall to a specific memory file path."},
             },
+            "required": ["query"],
         },
-        {
-            "name": "fcp_mil",
-            "description": "Memory operations: recall, write, or closure payload.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "type": {"type": "string",
-                             "enum": ["memory_recall", "memory_write", "closure_payload", "result_recall"]},
-                    "query": {"type": "string"},
-                    "path": {"type": "string"},
-                    "slug": {"type": "string"},
-                    "content": {"type": "string"},
-                    "ts": {"type": "integer", "description": "Timestamp (_ts_ms) from a previous session's tool result, for result_recall."},
-                },
-                "required": ["type"],
+    })
+    tools.append({
+        "name": "memory_write",
+        "description": "Persist information that should survive across sessions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "slug": {"type": "string", "description": "Short, stable, kebab-case identifier. Writing to an existing slug replaces its content."},
+                "content": {"type": "string", "description": "Content to persist."},
             },
+            "required": ["slug", "content"],
         },
-        {
-            "name": "fcp_sil",
-            "description": "Integrity and session control signals.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "type": {"type": "string",
-                             "enum": ["evolution_proposal", "session_close"]},
-                    "content": {"type": "string"},
+    })
+
+    # --- session control tools ---
+    tools.append({
+        "name": "session_close",
+        "description": (
+            "Signal that the session is complete. Always call closure_payload via memory_write "
+            "first to record the session outcome, then call this tool."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    })
+    tools.append({
+        "name": "closure_payload",
+        "description": (
+            "Record the full session outcome before closing. Call this immediately before session_close. "
+            "Fields: consolidation (required), promotion (list of slugs), working_memory (list of {priority, path}), "
+            "session_handoff ({pending_tasks, next_steps})."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "consolidation": {"type": "string", "description": "Narrative summary of insights and decisions from this session."},
+                "promotion": {"type": "array", "items": {"type": "string"}, "description": "Slugs of episodic memories to promote to semantic knowledge."},
+                "working_memory": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Artefacts to load at the next session, ordered by priority.",
                 },
-                "required": ["type"],
+                "session_handoff": {
+                    "type": "object",
+                    "description": "Pending tasks and next steps for the following session.",
+                },
             },
+            "required": ["consolidation"],
         },
-    ]
+    })
+    tools.append({
+        "name": "evolution_proposal",
+        "description": "Propose a structural change (persona, boot protocol, skill manifest). Requires Operator approval before taking effect.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Description of the proposed structural change."},
+            },
+            "required": ["content"],
+        },
+    })
+
+    # --- skill_info ---
+    tools.append({
+        "name": "skill_info",
+        "description": "Retrieve the full documentation of a skill, including parameters and usage details.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "skill": {"type": "string", "description": "Name of the skill to inspect."},
+            },
+            "required": ["skill"],
+        },
+    })
+
+    # --- one tool per visible skill ---
+    if layout.skills_index.exists():
+        idx = index if index else read_json(layout.skills_index)
+        for skill in idx.get("skills", []):
+            if skill.get("class") == "operator":
+                continue
+            name = skill.get("name", "")
+            if not name:
+                continue
+            # load manifest for description and params schema
+            mrel = skill.get("manifest", "")
+            manifest: dict[str, Any] = {}
+            if mrel:
+                mpath = layout.root / mrel
+                if mpath.exists():
+                    try:
+                        manifest = read_json(mpath)
+                    except Exception:
+                        pass
+            description = manifest.get("description", f"Skill: {name}")
+            params_schema = manifest.get("params", {"type": "object", "properties": {}})
+            tools.append({
+                "name": name,
+                "description": description,
+                "input_schema": params_schema,
+            })
+
+    return tools
