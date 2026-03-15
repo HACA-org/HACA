@@ -285,11 +285,13 @@ def _pick_ollama_model(default: str) -> str:
         return input(f"Model (default: {default}): ").strip() or default
 
     selected = 0
+    first_render = True
 
     def _render(idx: int) -> None:
-        # move cursor up to redraw
-        if idx > 0:
+        nonlocal first_render
+        if not first_render:
             sys.stdout.write(f"\033[{len(models)}A")
+        first_render = False
         for i, name in enumerate(models):
             prefix = " > " if i == idx else "   "
             sys.stdout.write(f"\r{prefix}{name}\033[K\n")
