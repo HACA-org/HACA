@@ -166,20 +166,29 @@ def run_session(
         _vlog_request(system, chat_history, tools)
 
         # invoke CPE (adapter_ref.current may be swapped mid-session via /model)
-        response = adapter_ref.current.invoke(system, chat_history, tools)
+        try:
+            response = adapter_ref.current.invoke(system, chat_history, tools)
+        except Exception as exc:
+            from .cpe.base import CPEError
+            err_msg = str(exc)
+            print(f"\n{_DIM}  [fcp] CPE error: {err_msg}{_RESET}")
+            _append_msg(layout, "fcp", f"CPE error: {err_msg}")
+            stimulus_ready = False
+            continue
         _vlog_response(response)
         tokens_used += response.input_tokens + response.output_tokens
 
         # add CPE response to chat history
+        if response.tool_use_calls:
+            tools_repr = ", ".join(c.tool for c in response.tool_use_calls)
+            print(f"\n{_DIM}  [fcp] working... cycle {cycle} — {tools_repr}{_RESET}")
         if response.text:
             _append_msg(layout, "cpe", response.text)
             _print_cpe_block(response.text)
             chat_history.append({"role": "assistant", "content": response.text})
-        elif response.tool_use_calls:
-            # assistant turn with tool use (no text) — still needs to be tracked
+        if response.tool_use_calls and not response.text:
+            # assistant turn with tool use only — needs empty content tracked
             chat_history.append({"role": "assistant", "content": ""})
-            tools_repr = ", ".join(c.tool for c in response.tool_use_calls)
-            print(f"\n{_DIM}  [fcp] working... cycle {cycle} — {tools_repr}{_RESET}")
 
         # process tool_use calls — fcp_mil before fcp_exec before fcp_sil (per spec)
         tool_calls = sorted(
