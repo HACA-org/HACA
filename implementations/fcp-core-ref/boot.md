@@ -1,4 +1,4 @@
-# Boot Protocol — HACA-Arch: 1.0.0 | Profile: HACA-Core-1.0.0
+# Boot Protocol
 
 ## Cognitive Cycle
 

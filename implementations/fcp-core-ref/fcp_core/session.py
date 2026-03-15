@@ -118,6 +118,8 @@ def run_session(
                 from .operator import handle_platform_command
                 handled = handle_platform_command(layout, stripped, adapter_ref=adapter_ref)
                 if handled:
+                    if stripped.lower().split()[0] in ("/verbose", "/debugger"):
+                        _vlog_request(system, chat_history, tools)
                     if stripped.lower().split()[0] in ("/exit", "/bye", "/close"):
                         close_reason = "operator_exit"
                         break
@@ -235,13 +237,33 @@ def build_boot_context(
 
     Each cognitive cycle appends only the new stimulus to chat_history.
     """
-    # --- system prompt: persona ---
+    # --- system prompt: [IDENTITY] = persona + imprint line ---
     persona_parts: list[str] = []
     if layout.persona_dir.exists():
         for p in sorted(layout.persona_dir.iterdir()):
             if p.is_file():
                 persona_parts.append(p.read_text(encoding="utf-8").strip())
-    system_persona = "\n\n".join(persona_parts) if persona_parts else "You are a helpful assistant."
+    persona_text = "\n\n".join(persona_parts) if persona_parts else "You are a helpful assistant."
+
+    imprint_line = ""
+    imprint_path = layout.root / "memory" / "imprint.json"
+    if imprint_path.exists():
+        try:
+            imp = json.loads(imprint_path.read_text(encoding="utf-8"))
+            ob = imp.get("operator_bound", {})
+            activated = imp.get("activated_at", "")
+            profile = imp.get("haca_profile", "")
+            op_name = ob.get("operator_name", "")
+            op_email = ob.get("operator_email", "")
+            op_str = f"{op_name} <{op_email}>" if op_email else op_name
+            imprint_line = f"Activated: {activated} | Profile: {profile} | Operator: {op_str}"
+        except Exception:
+            pass
+
+    identity_parts = ["[IDENTITY]", persona_text]
+    if imprint_line:
+        identity_parts.append(imprint_line)
+    system_persona = "\n\n".join(identity_parts)
 
     # --- instruction block: boot protocol + memory + skills ---
     boot_protocol = ""
