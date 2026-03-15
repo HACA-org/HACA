@@ -85,8 +85,8 @@ def run_session(
     stimulus_ready = bool(greeting or inject or first_stimuli_injected)
     tokens_used = 0
 
-    # loop detection: track last N (tool, input_json, result_json) tuples
-    _loop_window: list[tuple[str, str, str]] = []
+    # loop detection: track last N cycle fingerprints (each a frozenset of (tool, input_json, result) tuples)
+    _loop_window: list[Any] = []
     _LOOP_THRESHOLD = 3
 
     # cycle limit from baseline
@@ -211,21 +211,20 @@ def run_session(
         if session_closed:
             break
 
-        # --- loop detection: same (tool, input, result) repeated >= threshold ---
-        if tool_calls and len(tool_calls) == 1:
-            call = tool_calls[0]
-            fingerprint = (
-                call.tool,
-                json.dumps(call.input, sort_keys=True),
-                tool_results[0] if tool_results else "",
-            )
-            _loop_window.append(fingerprint)
+        # --- loop detection: same set of (tool, input, result) tuples repeated >= threshold ---
+        if tool_calls:
+            cycle_fingerprint = tuple(sorted(
+                (c.tool, json.dumps(c.input, sort_keys=True), tr)
+                for c, tr in zip(tool_calls, tool_results)
+            ))
+            _loop_window.append(cycle_fingerprint)
             if len(_loop_window) > _LOOP_THRESHOLD:
                 _loop_window.pop(0)
             if len(_loop_window) == _LOOP_THRESHOLD and len(set(_loop_window)) == 1:
                 _loop_window.clear()
+                tools_repr = ", ".join(c.tool for c in tool_calls)
                 intervention = (
-                    f"[FCP] Loop detected: the same tool call ({call.tool}) returned "
+                    f"[FCP] Loop detected: the same tool call(s) ({tools_repr}) returned "
                     f"identical results {_LOOP_THRESHOLD} times in a row. "
                     "Stop and report the situation to the Operator. Do not retry."
                 )
