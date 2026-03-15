@@ -87,6 +87,11 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 inner = data.get("data", data)
+                if isinstance(inner, str):
+                    try:
+                        inner = json.loads(inner)
+                    except Exception:
+                        inner = {}
                 if isinstance(inner, dict) and inner.get("type") == "PROPOSAL_PENDING":
                     proposals.append({"file": f, "data": inner})
             except Exception:
@@ -614,6 +619,11 @@ def _endure_proposals(layout: Layout) -> list[dict]:
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 inner = data.get("data", {})
+                if isinstance(inner, str):
+                    try:
+                        inner = json.loads(inner)
+                    except Exception:
+                        inner = {}
                 if isinstance(inner, dict) and inner.get("type") == "PROPOSAL_PENDING":
                     proposals.append({"file": f, "data": inner})
             except Exception:
