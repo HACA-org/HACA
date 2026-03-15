@@ -60,8 +60,13 @@ def _main() -> None:
         _run_decommission(Layout(entity_root), rest)
         return
 
+    if cmd == "model":
+        from .store import Layout
+        _run_model(Layout(entity_root))
+        return
+
     print(f"unknown command: {cmd}")
-    print("usage: ./fcp-core [init | doctor [--fix] | decommission --archive|--destroy]")
+    print("usage: ./fcp-core [init | model | doctor [--fix] | decommission --archive|--destroy]")
     sys.exit(1)
 
 
@@ -268,6 +273,69 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Model — select provider/model and update API key outside of a session
+# ---------------------------------------------------------------------------
+
+def _run_model(layout: "Layout") -> None:
+    import os
+    from .cpe.base import BACKENDS, KNOWN_MODELS
+    from .store import read_json, atomic_write
+
+    try:
+        baseline = read_json(layout.baseline)
+    except Exception:
+        print("[ERROR] Could not read baseline.json — run ./fcp-core init first.")
+        sys.exit(1)
+
+    cpe_cfg = baseline.get("cpe", {})
+    current_backend = cpe_cfg.get("backend", "ollama")
+    current_model = cpe_cfg.get("model", "")
+
+    # Build flat list of "backend:model" labels
+    items: list[str] = []
+    pairs: list[tuple[str, str]] = []  # (backend, model) parallel to items
+
+    for backend in BACKENDS:
+        models = _fetch_ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
+        for m in models:
+            marker = " ✓" if backend == current_backend and m == current_model else ""
+            items.append(f"{backend}:{m}{marker}")
+            pairs.append((backend, m))
+
+    if not items:
+        print("[ERROR] No models available.")
+        sys.exit(1)
+
+    default_idx = next(
+        (i for i, (b, m) in enumerate(pairs) if b == current_backend and m == current_model),
+        0,
+    )
+    chosen_label = _pick_from_list("Select provider and model", items, default_idx)
+    # find the pair that matches the chosen label (strip marker)
+    chosen_idx = next(i for i, lbl in enumerate(items) if lbl == chosen_label)
+    backend, model = pairs[chosen_idx]
+
+    # API key (skip for ollama)
+    if backend != "ollama":
+        env_var = _API_KEY_ENV.get(backend, "")
+        if env_var:
+            current_key_hint = "set" if os.environ.get(env_var) else "not set"
+            try:
+                api_key = input(f"{env_var} [{current_key_hint}] (leave blank to keep): ").strip()
+            except EOFError:
+                api_key = ""
+            if api_key:
+                _save_api_key(layout.root.name, env_var, api_key)
+                _load_env_file()
+
+    cpe_cfg["backend"] = backend
+    cpe_cfg["model"] = model
+    baseline["cpe"] = cpe_cfg
+    atomic_write(layout.baseline, baseline)
+    print(f"[FCP-Core] Model set to {backend}:{model}")
+
+
+# ---------------------------------------------------------------------------
 # Init helpers
 # ---------------------------------------------------------------------------
 
@@ -285,29 +353,6 @@ def _fetch_ollama_models() -> list[str]:
 # ---------------------------------------------------------------------------
 # Init
 # ---------------------------------------------------------------------------
-
-_BACKEND_MODELS: dict[str, list[str]] = {
-    "ollama": [],  # populated dynamically
-    "anthropic": [
-        "claude-opus-4-6",
-        "claude-sonnet-4-6",
-        "claude-haiku-4-5-20251001",
-    ],
-    "openai": [
-        "gpt-4o",
-        "gpt-4o-mini",
-        "o3-mini",
-    ],
-    "google": [
-        "gemini-3.1-flash-lite-preview",
-        "gemini-3-flash-preview",
-        "gemini-3.1-pro-preview",
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-    ],
-}
-
-_BACKENDS = ["ollama", "anthropic", "openai", "google"]
 
 _API_KEY_ENV: dict[str, str] = {
     "anthropic": "ANTHROPIC_API_KEY",
@@ -451,7 +496,8 @@ def _run_init(entity_root: Path) -> None:
 
     print("=== FCP-Core Init ===")
 
-    backend = _pick_from_list("CPE backend", _BACKENDS)
+    from .cpe.base import BACKENDS, KNOWN_MODELS
+    backend = _pick_from_list("CPE backend", BACKENDS)
 
     if backend == "ollama":
         ollama_models = _fetch_ollama_models()
@@ -460,7 +506,7 @@ def _run_init(entity_root: Path) -> None:
         else:
             model = input("Model (default: llama3.2): ").strip() or "llama3.2"
     else:
-        model_list = _BACKEND_MODELS[backend]
+        model_list = KNOWN_MODELS[backend]
         model = _pick_from_list("Model", model_list)
 
         env_var = _API_KEY_ENV[backend]

@@ -434,34 +434,54 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
         print("  could not read baseline")
         return
 
+    current_backend = cpe_cfg.get("backend", "ollama")
+    current_model = cpe_cfg.get("model", "")
+
     if not args:
-        print(f"  current model  : {cpe_cfg.get('model', '(not set)')}")
-        print(f"  backend        : {cpe_cfg.get('backend', '(not set)')}")
+        # Interactive picker
+        selected = _pick_model_interactive(current_backend, current_model)
+        if selected is None:
+            return
+        backend, new_model = selected
+        if backend == current_backend and new_model == current_model:
+            print(f"  no change ({current_backend}:{current_model})")
+            return
+        if adapter_ref is None:
+            print("  /model is only available during an active session")
+            return
+        from .cpe.base import make_adapter
+        try:
+            new_adapter = make_adapter(backend=backend, model=new_model, api_key="")
+        except Exception as exc:
+            print(f"  failed to create adapter: {exc}")
+            return
+        adapter_ref.current = new_adapter
+        cpe_cfg["backend"] = backend
+        cpe_cfg["model"] = new_model
+        baseline["cpe"] = cpe_cfg
+        from .store import atomic_write
+        atomic_write(layout.baseline, baseline)
+        print(f"  switched → {backend}:{new_model}")
         return
 
     sub = args[0].lower()
 
     if sub == "list":
-        _model_list(cpe_cfg.get("backend", ""))
+        _model_list_print(current_backend)
         return
 
-    # /model <name> — swap adapter mid-session
+    # /model <name> — direct switch within current backend
     new_model = args[0]
     if adapter_ref is None:
         print("  /model <name> is only available during an active session")
         return
     from .cpe.base import make_adapter
     try:
-        new_adapter = make_adapter(
-            backend=cpe_cfg.get("backend", "ollama"),
-            model=new_model,
-            api_key="",
-        )
+        new_adapter = make_adapter(backend=current_backend, model=new_model, api_key="")
     except Exception as exc:
         print(f"  failed to create adapter: {exc}")
         return
     adapter_ref.current = new_adapter
-    # persist to baseline
     cpe_cfg["model"] = new_model
     baseline["cpe"] = cpe_cfg
     from .store import atomic_write
@@ -469,20 +489,99 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
     print(f"  model switched : {new_model}")
 
 
-def _model_list(backend: str) -> None:
-    known: dict[str, list[str]] = {
-        "anthropic": ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
-        "openai": ["gpt-4o", "gpt-4o-mini", "o1", "o3-mini"],
-        "google": ["gemini-2.0-flash", "gemini-2.0-pro", "gemini-1.5-pro"],
-        "ollama": ["llama3.2", "llama3.1", "mistral", "qwen2.5", "phi4"],
-    }
-    models = known.get(backend, [])
-    if not models:
-        print(f"  no model list available for backend: {backend or '(unknown)'}")
-        return
+def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[str, str] | None:
+    """Interactive arrow-key picker organised by provider. Returns (backend, model) or None."""
+    import sys, tty, termios
+    from .cpe.base import KNOWN_MODELS, BACKENDS
+
+    # Build flat list of (backend, model) entries with section headers
+    entries: list[tuple[str, str] | None] = []  # None = header separator
+    labels: list[str] = []
+    selectable: list[tuple[int, str, str]] = []  # (flat_idx, backend, model)
+
+    def _ollama_models() -> list[str]:
+        try:
+            import urllib.request, json as _j
+            with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2) as r:
+                return [m["name"] for m in _j.loads(r.read().decode()).get("models", [])]
+        except Exception:
+            return []
+
+    for backend in BACKENDS:
+        models = _ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
+        if not models:
+            continue
+        labels.append(f"── {backend} ──")
+        entries.append(None)
+        for m in models:
+            marker = " ✓" if backend == current_backend and m == current_model else ""
+            labels.append(f"  {m}{marker}")
+            selectable.append((len(labels) - 1, backend, m))
+            entries.append((backend, m))
+
+    if not selectable:
+        print("  no models available")
+        return None
+
+    # Find initial selection
+    sel_idx = 0
+    for i, (_, b, m) in enumerate(selectable):
+        if b == current_backend and m == current_model:
+            sel_idx = i
+            break
+
+    first_render = True
+
+    def _render(sidx: int) -> None:
+        nonlocal first_render
+        if not first_render:
+            sys.stdout.write(f"\033[{len(labels)}A")
+        first_render = False
+        active_flat = selectable[sidx][0]
+        for i, label in enumerate(labels):
+            prefix = " > " if i == active_flat else "   "
+            sys.stdout.write(f"\r{prefix}{label}\033[K\n")
+        sys.stdout.flush()
+
+    print("Select model (↑↓ to move, Enter to confirm, Ctrl+C to cancel):")
+    _render(sel_idx)
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                break
+            if ch == "\x03":
+                print()
+                return None
+            if ch == "\x1b":
+                ch2 = sys.stdin.read(1)
+                ch3 = sys.stdin.read(1)
+                if ch2 == "[":
+                    if ch3 == "A" and sel_idx > 0:
+                        sel_idx -= 1
+                    elif ch3 == "B" and sel_idx < len(selectable) - 1:
+                        sel_idx += 1
+            _render(sel_idx)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    print()
+    _, backend, model = selectable[sel_idx]
+    return backend, model
+
+
+def _model_list_print(backend: str) -> None:
+    from .cpe.base import KNOWN_MODELS
     print(f"  backend: {backend}")
-    for m in models:
-        print(f"    {m}")
+    for b, models in KNOWN_MODELS.items():
+        marker = " (current)" if b == backend else ""
+        print(f"  ── {b}{marker}")
+        for m in models:
+            print(f"       {m}")
 
 
 def _cmd_endure(layout: Layout, args: list[str]) -> None:

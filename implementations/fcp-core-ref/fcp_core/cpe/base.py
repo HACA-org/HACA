@@ -107,6 +107,34 @@ class CPERateLimitError(CPEError):
 
 
 # ---------------------------------------------------------------------------
+# Known models registry
+# ---------------------------------------------------------------------------
+
+KNOWN_MODELS: dict[str, list[str]] = {
+    "anthropic": [
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
+    ],
+    "openai": [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "o3-mini",
+    ],
+    "google": [
+        "gemini-3.1-flash-lite-preview",
+        "gemini-3-flash-preview",
+        "gemini-3.1-pro-preview",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+    ],
+    "ollama": [],  # populated dynamically via OllamaAdapter or CLI
+}
+
+BACKENDS: list[str] = ["ollama", "anthropic", "openai", "google"]
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
