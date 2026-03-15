@@ -938,7 +938,7 @@ def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, 
     tools.append({
         "name": "session_close",
         "description": (
-            "Signal that the session is complete. Always call closure_payload via memory_write "
+            "Signal that the session is complete. Always call closure_payload "
             "first to record the session outcome, then call this tool."
         ),
         "input_schema": {"type": "object", "properties": {}},

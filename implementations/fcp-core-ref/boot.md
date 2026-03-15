@@ -77,7 +77,7 @@ Session close tools signal the end of a session and record its outcome. They are
 **Example:**
 
 ```
-→ closure_payload({ "consolidation": "...", "promotion": [...], "working_memory": { "handoff": "...", "artefacts": [...] } })
+→ closure_payload({ "consolidation": "...", "promotion": [...], "working_memory": [{...}, {...}], "session_handoff": { "pending_tasks": [...], "next_steps": [...] } })
 → session_close()
 ```
 
@@ -86,7 +86,8 @@ Session close tools signal the end of a session and record its outcome. They are
 Parameters:
 - `consolidation` (required) — narrative summary of insights, decisions, and knowledge from this session.
 - `promotion` (optional) — list of slugs to promote from episodic to semantic memory.
-- `working_memory` (required) — `{handoff: "<brief context message>", artefacts: [{priority, path}, ...]}` — keep both fields concise; this is loaded at boot and must remain compact.
+- `working_memory` (required) — `[{priority, path}, ...]` — list of memory artefacts to preload at the next session; keep concise, loaded at boot.
+- `session_handoff` (optional) — `{pending_tasks, next_steps}` for the following session.
 
 **session_close** — signals that the session is complete. Call immediately after `closure_payload`.
 
