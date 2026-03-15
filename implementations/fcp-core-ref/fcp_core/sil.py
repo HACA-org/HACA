@@ -196,6 +196,44 @@ def verify_integrity_chain(layout: Layout, integrity_doc: IntegrityDocument) -> 
         if actual_digest != cp_final.digest:
             return False
 
+    # P7 — Evolutionary Drift: every ENDURE_COMMIT's evolution_auth_digest must
+    # correspond to an actual EVOLUTION_AUTH record in the integrity log.
+    if not _verify_evolution_auth_coverage(layout, entries):
+        return False
+
+    return True
+
+
+def _verify_evolution_auth_coverage(layout: Layout, chain_entries: list[dict]) -> bool:
+    """Check that each ENDURE_COMMIT in the chain has a matching EVOLUTION_AUTH
+    in integrity.log, and that each EVOLUTION_AUTH references the previous chain entry.
+
+    Returns True if all ENDURE_COMMITs are covered, False otherwise.
+    """
+    # Collect auth_digests from EVOLUTION_AUTH records in integrity.log
+    auth_digests: set[str] = set()
+    if layout.integrity_log.exists():
+        for log_entry in read_jsonl(layout.integrity_log):
+            if log_entry.get("type") != "EVOLUTION_AUTH":
+                continue
+            try:
+                data = json.loads(log_entry.get("data", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            digest = data.get("auth_digest", "")
+            if digest:
+                auth_digests.add(digest)
+
+    # Every ENDURE_COMMIT must have its evolution_auth_digest covered
+    for raw_entry in chain_entries:
+        entry = ChainEntry.from_dict(raw_entry)
+        if entry.type != ChainEntryType.ENDURE_COMMIT:
+            continue
+        if not entry.evolution_auth_digest:
+            return False
+        if entry.evolution_auth_digest not in auth_digests:
+            return False
+
     return True
 
 
