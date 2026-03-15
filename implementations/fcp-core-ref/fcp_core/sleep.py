@@ -15,6 +15,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -293,7 +294,6 @@ def _stage3_endure(layout: Layout) -> None:
         append_endure_commit(layout, seq, files_written)
 
         # clean up snapshot (no crash occurred)
-        import shutil
         shutil.rmtree(snapshot_dir, ignore_errors=True)
 
 
@@ -308,7 +308,8 @@ def _collect_authorized_proposals(layout: Layout) -> list[dict[str, Any]]:
             continue
         try:
             rec = json.loads(line)
-            data = rec.get("data", {})
+            raw_data = rec.get("data", "{}")
+            data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
             if isinstance(data, dict) and data.get("type") == "EVOLUTION_AUTH":
                 proposals.append(data)
         except Exception:

@@ -11,6 +11,8 @@ Also handles cold-start detection and FAP delegation (§4).
 from __future__ import annotations
 
 import json
+import shutil
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -208,8 +210,6 @@ def _crash_recovery(layout: Layout, baseline: StructuralBaseline) -> None:
 
 def _restore_partial_endure(layout: Layout) -> None:
     """Restore pre-mutation snapshot for any partial ENDURE_COMMIT.  §5.2 step 2."""
-    import shutil
-
     log_entries = read_jsonl(layout.integrity_log)
 
     # Find the last ENDURE_COMMIT and last SLEEP_COMPLETE seqs.
@@ -456,7 +456,6 @@ def _try_resolve_sil_unresponsive(
     last_hb = last_heartbeat_ts_fn(layout)
     if last_hb is None:
         return False
-    import time
     elapsed = time.time() - last_hb
     if elapsed <= threshold:
         log_cleared(layout, seq)
