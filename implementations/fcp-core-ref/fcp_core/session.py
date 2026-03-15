@@ -55,6 +55,7 @@ def run_session(
     system, chat_history = build_boot_context(layout, index)
     _vlog("fcp", f"boot context: system={len(system)} chars, history={len(chat_history)} msgs")
 
+    first_stimuli_injected = False
     # Consume first_stimuli if present (e.g. FAP onboarding, post-evolution notice)
     if layout.first_stimuli.exists():
         try:
@@ -65,6 +66,7 @@ def run_session(
                                  data={"type": "FIRST_STIMULI", "source": fs.get("source", "fcp"), "msg": msg})
                 append_jsonl(layout.session_store, env)
                 chat_history.append({"role": "user", "content": msg})
+                first_stimuli_injected = True
                 _vlog("fcp", f"first_stimuli injected (source={fs.get('source')})")
         except Exception:
             pass
@@ -80,7 +82,7 @@ def run_session(
     close_reason = "session_close"
     cycle = 0
     compact_in_progress = False
-    stimulus_ready = bool(greeting or inject)
+    stimulus_ready = bool(greeting or inject or first_stimuli_injected)
     tokens_used = 0
 
     # loop detection: track last N (tool, input_json, result_json) tuples
