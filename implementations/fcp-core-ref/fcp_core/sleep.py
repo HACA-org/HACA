@@ -35,7 +35,6 @@ from .sil import (
     last_chain_seq,
     write_notification,
     log_critical,
-    revoke_session_token,
 )
 from .formats import ChainEntry, ChainEntryType
 from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
@@ -176,8 +175,7 @@ def _promote_severance_pending(layout: Layout) -> None:
     for i, entry in enumerate(entries):
         if entry.get("type") == "CRITICAL_CLEARED":
             try:
-                import json as _json
-                data = _json.loads(entry.get("data", "{}"))
+                data = json.loads(entry.get("data", "{}"))
                 cleared_seqs.add(int(data.get("clears_seq", -1)))
             except Exception:
                 pass
@@ -186,9 +184,8 @@ def _promote_severance_pending(layout: Layout) -> None:
         if entry.get("type") == "SEVERANCE_COMMIT":
             seq = i + 1  # 1-indexed
             if seq not in cleared_seqs:
-                import json as _json
                 try:
-                    detail = _json.loads(entry.get("data", "{}"))
+                    detail = json.loads(entry.get("data", "{}"))
                 except Exception:
                     detail = {}
                 log_critical(layout, "SEVERANCE_PENDING", detail)

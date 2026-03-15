@@ -110,7 +110,10 @@ def _check_workspace_focus(layout: Layout) -> list[str]:
         return []
     try:
         wf = read_json(layout.workspace_focus)
-        focus_path = Path(str(wf.get("path", ""))).resolve()
+        raw_path = wf.get("path", "")
+        if not raw_path:
+            return []
+        focus_path = Path(str(raw_path)).resolve()
         workspace = layout.workspace_dir.resolve()
         focus_path.relative_to(workspace)
     except ValueError:
