@@ -276,28 +276,61 @@ def _fetch_ollama_models() -> list[str]:
         return []
 
 
-def _pick_ollama_model(default: str) -> str:
-    """Interactive arrow-key model picker for Ollama. Falls back to text input on error."""
+# ---------------------------------------------------------------------------
+# Init
+# ---------------------------------------------------------------------------
+
+_BACKEND_MODELS: dict[str, list[str]] = {
+    "ollama": [],  # populated dynamically
+    "anthropic": [
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
+    ],
+    "openai": [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "o3-mini",
+    ],
+    "google": [
+        "gemini-3.1-flash-lite-preview",
+        "gemini-3-flash-preview",
+        "gemini-3.1-pro-preview",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+    ],
+}
+
+_BACKENDS = ["ollama", "anthropic", "openai", "google"]
+
+_API_KEY_ENV: dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "google": "GOOGLE_API_KEY",
+}
+
+
+def _pick_from_list(prompt: str, items: list[str], default_idx: int = 0) -> str:
+    """Generic interactive arrow-key picker. Falls back to text input on error."""
     import tty, termios
 
-    models = _fetch_ollama_models()
-    if not models:
-        return input(f"Model (default: {default}): ").strip() or default
+    if not items:
+        return input(f"{prompt}: ").strip()
 
-    selected = 0
+    selected = default_idx
     first_render = True
 
     def _render(idx: int) -> None:
         nonlocal first_render
         if not first_render:
-            sys.stdout.write(f"\033[{len(models)}A")
+            sys.stdout.write(f"\033[{len(items)}A")
         first_render = False
-        for i, name in enumerate(models):
+        for i, name in enumerate(items):
             prefix = " > " if i == idx else "   "
             sys.stdout.write(f"\r{prefix}{name}\033[K\n")
         sys.stdout.flush()
 
-    print(f"Select Ollama model (↑↓ to move, Enter to confirm):")
+    print(f"{prompt} (↑↓ to move, Enter to confirm):")
     _render(selected)
 
     fd = sys.stdin.fileno()
@@ -306,9 +339,9 @@ def _pick_ollama_model(default: str) -> str:
         tty.setraw(fd)
         while True:
             ch = sys.stdin.read(1)
-            if ch == "\r" or ch == "\n":
+            if ch in ("\r", "\n"):
                 break
-            if ch == "\x03":  # Ctrl+C
+            if ch == "\x03":
                 raise KeyboardInterrupt
             if ch == "\x1b":
                 ch2 = sys.stdin.read(1)
@@ -316,26 +349,48 @@ def _pick_ollama_model(default: str) -> str:
                 if ch2 == "[":
                     if ch3 == "A" and selected > 0:
                         selected -= 1
-                    elif ch3 == "B" and selected < len(models) - 1:
+                    elif ch3 == "B" and selected < len(items) - 1:
                         selected += 1
             _render(selected)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
-    print()  # newline after selection
-    return models[selected]
+    print()
+    return items[selected]
 
 
-# ---------------------------------------------------------------------------
-# Init
-# ---------------------------------------------------------------------------
+def _save_api_key(entity_name: str, env_var: str, api_key: str) -> None:
+    """Append or update KEY=value in ~/.fcp-core.env."""
+    import os
+    env_file = Path.home() / ".fcp-core.env"
+    lines: list[str] = []
+    if env_file.exists():
+        lines = env_file.read_text(encoding="utf-8").splitlines()
+
+    prefix = f"{env_var}="
+    updated = False
+    for i, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[i] = f"{prefix}{api_key}"
+            updated = True
+            break
+    if not updated:
+        lines.append(f"{prefix}{api_key}")
+
+    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.chmod(env_file, 0o600)
+    print(f"  API key saved to {env_file} (export {env_var} or source it before running ./fcp-core)")
+
 
 def _run_init(entity_root: Path) -> None:
     """Create runtime dirs inside entity_root (cwd).
 
     Structural content (boot.md, persona/, skills/, hooks/) must already exist
     in entity_root — they are committed to the repo and not generated here.
+    workspace/ is never touched (operator may have projects there).
     """
+    import shutil
+
     missing = []
     if not (entity_root / "boot.md").exists():
         missing.append("boot.md")
@@ -353,8 +408,7 @@ def _run_init(entity_root: Path) -> None:
             answer = "n"
         if answer != "y":
             sys.exit(0)
-        import shutil
-        for d in ["state", "memory", "io", "workspace"]:
+        for d in ["state", "memory", "io"]:
             p = entity_root / d
             if p.exists():
                 shutil.rmtree(p)
@@ -374,18 +428,26 @@ def _run_init(entity_root: Path) -> None:
         d.mkdir(parents=True, exist_ok=True)
 
     print("=== FCP-Core Init ===")
-    backend = input("CPE backend [ollama/anthropic/openai/google] (default: ollama): ").strip() or "ollama"
-    model_defaults = {
-        "ollama": "llama3.2",
-        "anthropic": "claude-sonnet-4-6",
-        "openai": "gpt-4o",
-        "google": "gemini-2.0-flash",
-    }
+
+    backend = _pick_from_list("CPE backend", _BACKENDS)
+
     if backend == "ollama":
-        model = _pick_ollama_model(model_defaults["ollama"])
+        ollama_models = _fetch_ollama_models()
+        if ollama_models:
+            model = _pick_from_list("Model", ollama_models)
+        else:
+            model = input("Model (default: llama3.2): ").strip() or "llama3.2"
     else:
-        default_model = model_defaults.get(backend, "")
-        model = input(f"Model (default: {default_model}): ").strip() or default_model
+        model_list = _BACKEND_MODELS[backend]
+        model = _pick_from_list("Model", model_list)
+
+        env_var = _API_KEY_ENV[backend]
+        try:
+            api_key = input(f"{env_var}: ").strip()
+        except EOFError:
+            api_key = ""
+        if api_key:
+            _save_api_key(entity_root.name, env_var, api_key)
 
     _atomic_write(entity_root / "state" / "baseline.json", {
         "version": "1.0.0",
