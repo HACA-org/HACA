@@ -520,7 +520,6 @@ def _run_init(entity_root: Path) -> None:
     _atomic_write(entity_root / "state" / "baseline.json", {
         "version": "1.0.0",
         "entity_id": entity_root.name,
-        "profile": "HACA-Core",
         "cpe": {"backend": backend, "model": model, "topology": "transparent"},
         "context_window": {"budget_tokens": 200000, "critical_pct": 80},
         "drift": {"comparison_mechanism": "hash", "threshold": 0.0},
@@ -536,7 +535,7 @@ def _run_init(entity_root: Path) -> None:
 
     _atomic_write(entity_root / "state" / "integrity.json", {
         "version": "1.0", "algorithm": "sha256",
-        "genesis_omega": None, "last_checkpoint": None, "files": {},
+        "last_checkpoint": None, "files": {},
     })
 
     for p in [
