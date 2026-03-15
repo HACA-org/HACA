@@ -266,8 +266,37 @@ def _stage3_endure(layout: Layout) -> None:
         changes: list[dict[str, Any]] = content.get("changes", []) if isinstance(content, dict) else []
         for change in changes:
             op = change.get("op", "")
+            if not op:
+                continue
+
+            # skill_install: moves workspace/stage/<name>/ → skills/<name>/
+            # path is determined by FCP, not by the proposal
+            if op == "skill_install":
+                skill_name = change.get("name", "").strip()
+                if not skill_name:
+                    continue
+                source = (layout.root / "workspace" / "stage" / skill_name).resolve()
+                dest = (layout.root / "skills" / skill_name).resolve()
+                stage_manifest = source / "manifest.json"
+                if not stage_manifest.exists():
+                    continue
+                try:
+                    m = json.loads(stage_manifest.read_text(encoding="utf-8"))
+                    if m.get("class") == "builtin":
+                        continue
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.copytree(source, dest)
+                    shutil.rmtree(source)
+                    for f in dest.rglob("*"):
+                        if f.is_file():
+                            files_written[str(f.relative_to(layout.root))] = sha256_file(f)
+                except Exception:
+                    continue
+                continue
+
             target_rel = change.get("target", "")
-            if not target_rel or not op:
+            if not target_rel:
                 continue
             target = (layout.root / target_rel).resolve()
             # security: must stay within entity root, never in workspace/
