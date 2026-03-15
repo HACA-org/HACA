@@ -26,7 +26,7 @@ def main() -> None:
     persona = str(params.get("persona", "You are a focused sub-agent. Complete the given task concisely.")).strip()
     context = str(params.get("context", "")).strip()
 
-    sys.path.insert(0, str(entity_root.parent))
+    sys.path.insert(0, str(entity_root))
     from fcp_core.cpe.base import detect_adapter
 
     try:

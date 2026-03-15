@@ -202,7 +202,7 @@ def _run_skill(
     )
 
     if result.returncode != 0:
-        raise ExecError(result.stderr.strip() or f"skill exited {result.returncode}")
+        raise ExecError(result.stdout.strip() or result.stderr.strip() or f"skill exited {result.returncode}")
 
     return result.stdout
 
