@@ -317,6 +317,13 @@ def log_critical(layout: Layout, type_: str, detail: dict[str, Any]) -> None:
     _log_envelope(layout, "sil", type_, json.dumps(detail))
 
 
+def log_severance_commit(layout: Layout, skill_name: str, issues: list[str]) -> None:
+    _log_envelope(layout, "sil", "SEVERANCE_COMMIT", json.dumps({
+        "skill": skill_name,
+        "issues": issues,
+    }))
+
+
 def log_cleared(layout: Layout, original_seq: int) -> None:
     _log_envelope(
         layout, "sil", "CRITICAL_CLEARED",

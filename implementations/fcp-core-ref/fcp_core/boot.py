@@ -340,21 +340,31 @@ def _increment_crash_counter(layout: Layout) -> int:
 def _check_critical_conditions(layout: Layout) -> list[dict]:
     """Scan integrity.log for unresolved Critical conditions.
 
-    Returns list of pending Evolution Proposals (for Phase 6 terminal prompt).
-    Raises BootError if any unresolved Critical condition is found.
+    Attempts automatic resolution for DRIFT_FAULT and SIL_UNRESPONSIVE.
+    Presents SEVERANCE_PENDING to the Operator for manual resolution.
+    Raises BootError if any condition remains unresolved after resolution attempts.
+    Returns list of pending Evolution Proposals.
     """
+    from .sil import log_cleared, sha256_file
+    from .exec_ import _last_heartbeat_ts, _sil_threshold
+
     entries = read_jsonl(layout.integrity_log)
 
     critical_seqs: dict[int, str] = {}   # seq → type
+    critical_data: dict[int, dict] = {}  # seq → parsed data
     cleared_seqs: set[int] = set()
     pending_proposals: list[dict] = []
 
     for i, entry in enumerate(entries):
         t = entry.get("type", "")
-        seq = i + 1  # 1-indexed position in log
+        seq = i + 1
 
-        if t in ("DRIFT_FAULT", "IDENTITY_DRIFT", "SEVERANCE_PENDING"):
+        if t in ("DRIFT_FAULT", "IDENTITY_DRIFT", "SEVERANCE_PENDING", "SIL_UNRESPONSIVE"):
             critical_seqs[seq] = t
+            try:
+                critical_data[seq] = json.loads(entry.get("data", "{}"))
+            except Exception:
+                critical_data[seq] = {}
 
         elif t == "CRITICAL_CLEARED":
             try:
@@ -372,10 +382,178 @@ def _check_critical_conditions(layout: Layout) -> list[dict]:
                 pass
 
     unresolved = {s: t for s, t in critical_seqs.items() if s not in cleared_seqs}
-    if unresolved:
-        descriptions = [f"seq={s} type={t}" for s, t in unresolved.items()]
+
+    still_unresolved: dict[int, str] = {}
+
+    for seq, ctype in unresolved.items():
+        data = critical_data.get(seq, {})
+
+        if ctype == "DRIFT_FAULT":
+            if _try_resolve_drift_fault(layout, seq, data, sha256_file, log_cleared):
+                continue
+
+        elif ctype == "SIL_UNRESPONSIVE":
+            if _try_resolve_sil_unresponsive(layout, seq, _last_heartbeat_ts, _sil_threshold, log_cleared):
+                continue
+
+        elif ctype == "SEVERANCE_PENDING":
+            if _try_resolve_severance(layout, seq, data, log_cleared):
+                continue
+
+        still_unresolved[seq] = ctype
+
+    if still_unresolved:
+        descriptions = [f"seq={s} type={t}" for s, t in still_unresolved.items()]
         raise BootError(
             f"Phase 6: unresolved Critical condition(s): {'; '.join(descriptions)}"
         )
 
     return pending_proposals
+
+
+def _try_resolve_drift_fault(
+    layout: Layout, seq: int, data: dict, sha256_file, log_cleared
+) -> bool:
+    """Re-run the drift probe for the faulted target. Clear if it passes now."""
+    target_rel = data.get("target", "")
+    if not target_rel:
+        return False
+    target = layout.root / target_rel
+    if not target.exists():
+        return False
+
+    # Load probe reference from drift-probes.jsonl
+    probes = read_jsonl(layout.drift_probes) if layout.drift_probes.exists() else []
+    probe = next((p for p in probes if p.get("target") == target_rel), None)
+    if probe is None:
+        return False
+
+    reference = probe.get("reference", "")
+    probe_type = probe.get("type", "hash")
+
+    passed = False
+    if probe_type == "hash":
+        passed = sha256_file(target) == reference
+    elif probe_type == "contains":
+        passed = reference in target.read_text(encoding="utf-8", errors="replace")
+    elif probe_type == "not_contains":
+        passed = reference not in target.read_text(encoding="utf-8", errors="replace")
+
+    if passed:
+        log_cleared(layout, seq)
+        print(f"  [Phase 6] DRIFT_FAULT seq={seq} resolved: probe passes.")
+        return True
+
+    print(f"  [Phase 6] DRIFT_FAULT seq={seq} still active: probe fails for '{target_rel}'.")
+    return False
+
+
+def _try_resolve_sil_unresponsive(
+    layout: Layout, seq: int, last_heartbeat_ts_fn, sil_threshold_fn, log_cleared
+) -> bool:
+    """Clear SIL_UNRESPONSIVE if SIL heartbeat is now within threshold."""
+    threshold = sil_threshold_fn(layout)
+    last_hb = last_heartbeat_ts_fn(layout)
+    if last_hb is None:
+        return False
+    import time
+    elapsed = time.time() - last_hb
+    if elapsed <= threshold:
+        log_cleared(layout, seq)
+        print(f"  [Phase 6] SIL_UNRESPONSIVE seq={seq} resolved: heartbeat within threshold.")
+        return True
+    print(f"  [Phase 6] SIL_UNRESPONSIVE seq={seq} still active: elapsed={elapsed:.0f}s > threshold={threshold}s.")
+    return False
+
+
+def _try_resolve_severance(
+    layout: Layout, seq: int, data: dict, log_cleared
+) -> bool:
+    """Present SEVERANCE_PENDING to Operator. On approve → clear. On reject → re-audit hash."""
+    skill_name = data.get("skill", "<unknown>")
+    issues = data.get("issues", [])
+
+    print(f"\n[SEVERANCE PENDING] Skill '{skill_name}' was removed mid-session.")
+    if issues:
+        print("  Issues detected:")
+        for issue in issues:
+            print(f"    - {issue}")
+    print("  Options: approve (keep removed) | reject (re-audit and restore if clean)")
+    try:
+        answer = input("  Decision [approve/reject]: ").strip().lower()
+    except EOFError:
+        answer = "approve"
+
+    if answer == "approve":
+        log_cleared(layout, seq)
+        print(f"  Severance approved. Skill '{skill_name}' remains removed.")
+        return True
+
+    # reject: re-audit hash
+    if not layout.integrity_doc.exists() or not layout.skills_index.exists():
+        print(f"  Cannot re-audit: integrity doc or skill index missing.")
+        return False
+
+    try:
+        doc = read_json(layout.integrity_doc)
+        tracked: dict = doc.get("files", {})
+        index = read_json(layout.skills_index)
+    except Exception:
+        return False
+
+    # Find the skill's exe path from tracked files or manifest
+    from .store import atomic_write
+    skills: list[dict] = index.get("skills", [])
+    # Try to find in a disabled/backup list or by scanning manifests
+    skill_entry = _find_skill_manifest(layout, skill_name)
+    if skill_entry is None:
+        print(f"  Cannot locate manifest for '{skill_name}' — severance maintained.")
+        return False
+
+    exe_rel = skill_entry.get("exe", "")
+    exe_path = layout.root / exe_rel if exe_rel else None
+    if not exe_path or not exe_path.is_file():
+        print(f"  Skill executable not found — severance maintained.")
+        return False
+
+    expected = tracked.get(exe_rel)
+    if expected is None:
+        print(f"  Skill not tracked in Integrity Document — severance maintained.")
+        return False
+
+    from .sil import sha256_file as _sha
+    actual = _sha(exe_path)
+    if actual == expected:
+        # Restore to index
+        skills.append(skill_entry)
+        index["skills"] = skills
+        atomic_write(layout.skills_index, index)
+        log_cleared(layout, seq)
+        print(f"  Re-audit passed. Skill '{skill_name}' restored to index.")
+        return True
+
+    print(f"  Re-audit failed: hash mismatch. Severance maintained.")
+    return False
+
+
+def _find_skill_manifest(layout: Layout, skill_name: str) -> dict | None:
+    """Locate a skill entry by scanning manifest files under skills/."""
+    for mdir in [layout.skills_lib_dir, layout.skills_dir]:
+        if not mdir.exists():
+            continue
+        candidate = mdir / skill_name / "manifest.json"
+        if candidate.exists():
+            try:
+                m = read_json(candidate)
+                if m.get("name") == skill_name or mdir == layout.skills_lib_dir:
+                    # Build a minimal index entry
+                    exe = m.get("exe", f"skills/lib/{skill_name}/run.py" if mdir == layout.skills_lib_dir else f"skills/{skill_name}/run.py")
+                    return {
+                        "name": skill_name,
+                        "exe": exe,
+                        "class": m.get("class", "builtin"),
+                        "manifest": str(candidate.relative_to(layout.root)),
+                    }
+            except Exception:
+                pass
+    return None

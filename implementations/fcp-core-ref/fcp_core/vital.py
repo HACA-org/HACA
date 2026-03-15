@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Any
 
 from .formats import StructuralBaseline
-from .sil import log_critical, log_heartbeat, write_notification
-from .store import Layout, read_json
+from .sil import log_critical, log_heartbeat, log_severance_commit, write_notification
+from .store import Layout, atomic_write, read_json
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +66,7 @@ def run(
     criticals += _check_workspace_focus(layout)
     _check_presession_buffer(layout, baseline)
     criticals += _check_identity_drift(layout)
+    _check_skill_audit(layout)
 
     log_heartbeat(layout, state.session_id)
 
@@ -141,6 +142,60 @@ def _check_presession_buffer(layout: Layout, baseline: StructuralBaseline) -> No
             "type": "PRESESSION_BUFFER_OVERFLOW",
             "detail": {"count": count, "max_entries": max_entries},
         })
+
+
+# ---------------------------------------------------------------------------
+# Check 5 — Skill audit (hash vs Integrity Document)
+# ---------------------------------------------------------------------------
+
+def _check_skill_audit(layout: Layout) -> None:
+    """Check skill executables against the Integrity Document.
+
+    For each tracked skill file whose hash diverges:
+      - Remove the skill entry from skills/index.json
+      - Emit SEVERANCE_COMMIT to integrity.log
+      - Notify Operator
+    """
+    if not layout.integrity_doc.exists() or not layout.skills_index.exists():
+        return
+    try:
+        doc = read_json(layout.integrity_doc)
+        tracked: dict[str, str] = doc.get("files", {})
+        index = read_json(layout.skills_index)
+    except Exception:
+        return
+
+    skills: list[dict] = index.get("skills", [])
+    removed: list[str] = []
+
+    for entry in list(skills):
+        skill_name = entry.get("name", "")
+        exe_rel = entry.get("exe", "")
+        if not exe_rel:
+            continue
+        exe_path = layout.root / exe_rel
+        if not exe_path.is_file():
+            continue
+        expected = tracked.get(exe_rel)
+        if expected is None:
+            continue  # not tracked — skip
+        actual = _sha256_file(exe_path)
+        if actual != expected:
+            issues = [f"hash mismatch: expected {expected}, got {actual}"]
+            # Remove from index
+            skills.remove(entry)
+            removed.append(skill_name)
+            # Log and notify
+            log_severance_commit(layout, skill_name, issues)
+            write_notification(layout, "warning", {
+                "type": "SEVERANCE_COMMIT",
+                "skill": skill_name,
+                "issues": issues,
+            })
+
+    if removed:
+        index["skills"] = skills
+        atomic_write(layout.skills_index, index)
 
 
 # ---------------------------------------------------------------------------

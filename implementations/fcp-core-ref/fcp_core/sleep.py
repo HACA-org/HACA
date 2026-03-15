@@ -31,6 +31,7 @@ from .sil import (
     verify_structural_files,
     write_chain_entry,
     write_notification,
+    log_critical,
     revoke_session_token,
 )
 from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
@@ -71,9 +72,8 @@ def run_sleep_cycle(layout: Layout) -> None:
     # Remove session token (last act)
     _remove_session_token(layout)
 
-    if drift_fault:
-        # DRIFT_FAULT was logged; next session will be blocked at Phase 6
-        pass
+    # Convert any unresolved SEVERANCE_COMMIT entries to SEVERANCE_PENDING
+    _promote_severance_pending(layout)
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +153,45 @@ def _update_semantic_digest(layout: Layout, fault: bool) -> None:
     existing["last_run"] = ts
     existing["last_fault"] = fault
     atomic_write(layout.semantic_digest, existing)
+
+
+# ---------------------------------------------------------------------------
+# Severance promotion — SEVERANCE_COMMIT → SEVERANCE_PENDING
+# ---------------------------------------------------------------------------
+
+def _promote_severance_pending(layout: Layout) -> None:
+    """At end of Sleep Cycle, promote any unresolved SEVERANCE_COMMIT to SEVERANCE_PENDING.
+
+    A SEVERANCE_COMMIT is considered unresolved if no subsequent CRITICAL_CLEARED
+    references its log position. Each unresolved commit becomes a SEVERANCE_PENDING
+    that will block the next boot until the Operator resolves it via /endure.
+    """
+    entries = read_jsonl(layout.integrity_log)
+    cleared_seqs: set[int] = set()
+
+    for i, entry in enumerate(entries):
+        if entry.get("type") == "CRITICAL_CLEARED":
+            try:
+                import json as _json
+                data = _json.loads(entry.get("data", "{}"))
+                cleared_seqs.add(int(data.get("clears_seq", -1)))
+            except Exception:
+                pass
+
+    for i, entry in enumerate(entries):
+        if entry.get("type") == "SEVERANCE_COMMIT":
+            seq = i + 1  # 1-indexed
+            if seq not in cleared_seqs:
+                import json as _json
+                try:
+                    detail = _json.loads(entry.get("data", "{}"))
+                except Exception:
+                    detail = {}
+                log_critical(layout, "SEVERANCE_PENDING", detail)
+                write_notification(layout, "critical", {
+                    "type": "SEVERANCE_PENDING",
+                    "detail": detail,
+                })
 
 
 # ---------------------------------------------------------------------------
