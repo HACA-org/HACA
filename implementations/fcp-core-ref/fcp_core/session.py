@@ -173,7 +173,7 @@ def run_session(
             result, closed = dispatch_tool_use(layout, call, index)
             _vlog_json(f"{call.tool}→fcp", result)
             _return_tool_result(layout, call.id, call.tool, result)
-            tool_results.append(json.dumps(result, ensure_ascii=False))
+            tool_results.append(f"[{call.tool}] {json.dumps(result, ensure_ascii=False)}")
             if closed:
                 close_reason = "session_close"
                 session_closed = True

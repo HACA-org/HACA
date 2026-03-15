@@ -87,6 +87,8 @@ def _run_normal(layout: "Layout") -> None:
         print(f"[BOOT FAILED] {exc}")
         sys.exit(1)
 
+    _load_env_file()
+
     try:
         baseline = read_json(layout.baseline)
         cpe_cfg = baseline.get("cpe", {})
@@ -357,6 +359,22 @@ def _pick_from_list(prompt: str, items: list[str], default_idx: int = 0) -> str:
 
     print()
     return items[selected]
+
+
+def _load_env_file() -> None:
+    """Load KEY=value pairs from ~/.fcp-core.env into os.environ (no-op if absent)."""
+    import os
+    env_file = Path.home() / ".fcp-core.env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if key and key not in os.environ:
+            os.environ[key] = val.strip()
 
 
 def _save_api_key(entity_name: str, env_var: str, api_key: str) -> None:

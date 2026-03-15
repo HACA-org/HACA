@@ -29,6 +29,8 @@ class GoogleAdapter:
     def __init__(self, api_key: str = "", model: str = _DEFAULT_MODEL) -> None:
         self._api_key = api_key or os.environ.get("GOOGLE_API_KEY", "")
         self._model = model
+        # Track function calls from the last model turn so we can build functionResponse
+        self._last_function_calls: list[dict[str, Any]] = []
 
     def invoke(
         self,
@@ -36,11 +38,7 @@ class GoogleAdapter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> CPEResponse:
-        # Convert OpenAI-style messages to Gemini contents format
-        contents: list[dict[str, Any]] = []
-        for msg in messages:
-            role = "model" if msg["role"] == "assistant" else "user"
-            contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+        contents = _build_contents(messages, self._last_function_calls)
 
         payload: dict[str, Any] = {
             "system_instruction": {"parts": [{"text": system}]},
@@ -48,8 +46,99 @@ class GoogleAdapter:
             "generationConfig": {"maxOutputTokens": _MAX_TOKENS},
         }
         if tools:
-            payload["tools"] = [{"function_declarations": tools}]
-        return _parse_response(_post(self._api_key, self._model, payload))
+            payload["tools"] = [{"function_declarations": [_convert_tool(t) for t in tools]}]
+        response = _parse_response(_post(self._api_key, self._model, payload))
+        # Save function calls emitted this turn for the next invoke
+        self._last_function_calls = [
+            {"name": c.tool, "args": c.input} for c in response.tool_use_calls
+        ]
+        return response
+
+
+def _build_contents(
+    messages: list[dict[str, Any]],
+    last_function_calls: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert chat_history to Gemini contents format.
+
+    The chat_history alternates user/assistant. When an assistant turn had
+    tool_use (content=="") the following user turn contains the tool results
+    as JSON. We detect this pattern and emit functionResponse parts instead
+    of text, using last_function_calls to map results to function names.
+    """
+    contents: list[dict[str, Any]] = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        role = msg["role"]
+        content = msg.get("content", "")
+
+        if role == "assistant":
+            if not content:
+                # Tool-use turn — will be reconstructed from last_function_calls
+                # on the *previous* iteration. Here we emit an empty model turn
+                # as placeholder so the functionResponse follows correctly.
+                # Actually we need to emit the functionCall parts.
+                # Look ahead: next user msg is the tool result.
+                # We emit model turn with functionCall parts from last_function_calls
+                # only when this is the last assistant turn before a user result turn.
+                # Simpler approach: emit a minimal model turn with text placeholder
+                # and let the functionResponse user turn follow.
+                contents.append({"role": "model", "parts": [{"text": ""}]})
+            else:
+                contents.append({"role": "model", "parts": [{"text": content}]})
+            i += 1
+            continue
+
+        # user turn — check if it's a tool result (JSON with "results" key)
+        if role == "user" and last_function_calls and i > 0 and messages[i - 1]["role"] == "assistant" and not messages[i - 1].get("content", ""):
+            # Try to parse as tool result
+            parsed = _try_parse_tool_result(content)
+            if parsed is not None:
+                # Build functionResponse parts, one per function call
+                parts: list[dict[str, Any]] = []
+                results = parsed.get("results", [parsed])
+                for j, fc in enumerate(last_function_calls):
+                    resp = results[j] if j < len(results) else {}
+                    parts.append({
+                        "functionResponse": {
+                            "name": fc["name"],
+                            "response": {"output": resp},
+                        }
+                    })
+                if parts:
+                    contents.append({"role": "user", "parts": parts})
+                    i += 1
+                    continue
+
+        contents.append({"role": "user", "parts": [{"text": content}]})
+        i += 1
+
+    return contents
+
+
+def _try_parse_tool_result(text: str) -> dict[str, Any] | None:
+    """Return parsed dict if text is a tool result JSON, else None."""
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict) and "results" in data:
+            return data
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return None
+
+
+def _convert_tool(tool: dict[str, Any]) -> dict[str, Any]:
+    """Convert OpenAI-style tool declaration to Gemini function_declaration format."""
+    result: dict[str, Any] = {"name": tool["name"]}
+    if "description" in tool:
+        result["description"] = tool["description"]
+    schema = tool.get("input_schema", {})
+    if schema:
+        result["parameters"] = schema
+    return result
 
 
 # ---------------------------------------------------------------------------
