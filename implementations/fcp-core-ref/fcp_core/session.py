@@ -55,14 +55,20 @@ def run_session(
     system, chat_history = build_boot_context(layout, index)
     _vlog("fcp", f"boot context: system={len(system)} chars, history={len(chat_history)} msgs")
 
-    # Inject greeting stimulus as first user message
-    if greeting:
-        msg = "Session started. Greet the Operator briefly — one sentence — then await input."
-        env = acp_encode(env_type="MSG", source="fcp",
-                         data={"type": "SESSION_START", "msg": msg})
-        append_jsonl(layout.session_store, env)
-        chat_history.append({"role": "user", "content": msg})
-        _vlog("fcp", "SESSION_START stimulus injected")
+    # Consume first_stimuli if present (e.g. FAP onboarding, post-evolution notice)
+    if layout.first_stimuli.exists():
+        try:
+            fs = read_json(layout.first_stimuli)
+            msg = str(fs.get("message", ""))
+            if msg:
+                env = acp_encode(env_type="MSG", source="fcp",
+                                 data={"type": "FIRST_STIMULI", "source": fs.get("source", "fcp"), "msg": msg})
+                append_jsonl(layout.session_store, env)
+                chat_history.append({"role": "user", "content": msg})
+                _vlog("fcp", f"first_stimuli injected (source={fs.get('source')})")
+        except Exception:
+            pass
+        layout.first_stimuli.unlink(missing_ok=True)
 
     if inject:
         for env in inject:

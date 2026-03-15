@@ -198,6 +198,10 @@ class Layout:
         return self.root / "state" / "operator_notifications"
 
     @property
+    def first_stimuli(self) -> Path:
+        return self.root / "state" / "first-stimuli.json"
+
+    @property
     def distress_beacon(self) -> Path:
         return self.root / "state" / "distress.beacon"
 

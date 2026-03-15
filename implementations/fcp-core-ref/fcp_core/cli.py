@@ -117,7 +117,7 @@ def _run_normal(layout: "Layout") -> None:
     _print_boot_header(layout, index)
 
     while True:
-        close_reason = run_session(layout, adapter, index, greeting=True)
+        close_reason = run_session(layout, adapter, index)
 
         present_evolution_proposals(layout)
 

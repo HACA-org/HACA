@@ -164,6 +164,27 @@ def run(layout: Layout) -> str:
         session_id = issue_session_token(layout)
         written.append(layout.session_token)
 
+        # ------------------------------------------------------------------
+        # Step 9 — First stimuli: onboarding message for the CPE
+        # ------------------------------------------------------------------
+        atomic_write(layout.first_stimuli, {
+            "source": "fap",
+            "message": (
+                "[FIRST SESSION] You have just been activated for the first time. "
+                "Begin by introducing yourself to the Operator: your name, your profile (HACA-Core), "
+                "your available skills, and your operational boundaries (including what requires "
+                "Operator authorization).\n\n"
+                "Then ask the Operator for the following information to personalize your collaboration:\n"
+                "- Preferred language for communication\n"
+                "- Area of work or project context\n"
+                "- Preferred communication style (concise, detailed, formal, informal)\n"
+                "- Any other preferences or constraints you should know\n\n"
+                "Save everything the Operator shares in structured memory "
+                "(slugs: operator-profile, session-preferences)."
+            ),
+        })
+        written.append(layout.first_stimuli)
+
         return session_id
 
     except FAPError:
