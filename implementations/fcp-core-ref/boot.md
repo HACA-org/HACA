@@ -103,6 +103,20 @@ Parameters: use `skill_info({ "skill": "commit" })` for full details.
 
 Parameters: use `skill_info({ "skill": "shell_run" })` for full details.
 
+**worker_skill** — instantiate a text-only sub-agent to offload tasks that would otherwise bloat the main context window.
+
+Use worker_skill when the task is:
+- Summarizing a large document whose full content you already have in context.
+- Cross-referencing or classifying content across multiple documents.
+- Isolated analysis that produces a compact result (a summary, a list, a decision).
+
+Do NOT use worker_skill when:
+- The task requires reading, writing, or listing files — use `file_reader`/`file_writer` directly.
+- The task is a simple sequential operation you can do in one or two tool calls.
+- You want to avoid doing work — delegation is not a shortcut.
+
+The worker has no access to tools or the filesystem. It can only reason over the text you provide and return text. If you ask it to write a file, it will not — you must do it yourself with `file_writer`.
+
 ---
 
 ## Session Close
