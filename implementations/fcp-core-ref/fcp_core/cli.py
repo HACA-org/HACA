@@ -131,10 +131,13 @@ def _run_normal(layout: "Layout") -> None:
         except Exception as exc:
             print(f"[SLEEP CYCLE ERROR] {exc}")
 
-        if close_reason != "operator_reset":
+        if close_reason not in ("operator_reset", "endure_approved"):
             break
 
-        print("[FCP-Core] Starting new session...")
+        if close_reason == "endure_approved":
+            print("[FCP-Core] Evolution approved. Rebooting...")
+        else:
+            print("[FCP-Core] Starting new session...")
         # Clear session store for a clean context
         if layout.session_store.exists():
             layout.session_store.write_text("", encoding="utf-8")

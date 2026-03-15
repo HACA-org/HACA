@@ -23,7 +23,7 @@ from typing import Any
 from .acp import drain_inbox, make as acp_encode
 from .cpe.base import AdapterRef, CPEAdapter, CPEResponse
 from .mil import memory_recall, process_closure, result_recall, summarize_session, write_episodic
-from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger, is_compact_pending as _is_compact_pending, set_compact_pending as _set_compact_pending
+from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger, is_compact_pending as _is_compact_pending, set_compact_pending as _set_compact_pending, is_endure_approved as _is_endure_approved, set_endure_approved as _set_endure_approved
 from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
 from . import vital as _vital
 
@@ -120,6 +120,10 @@ def run_session(
                 if handled:
                     if stripped.lower().split()[0] in ("/verbose", "/debugger"):
                         _vlog_request(system, chat_history, tools)
+                    if _is_endure_approved():
+                        _set_endure_approved(False)
+                        close_reason = "endure_approved"
+                        break
                     if stripped.lower().split()[0] in ("/exit", "/bye", "/close"):
                         close_reason = "operator_exit"
                         break

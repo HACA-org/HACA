@@ -28,6 +28,7 @@ from .store import Layout, append_jsonl, atomic_write, read_json
 _verbose: bool = False
 _debugger: str | None = None  # None | "all" | "chat" | "boot"
 _compact_pending: bool = False
+_endure_approved: bool = False
 
 
 def is_verbose() -> bool:
@@ -55,6 +56,15 @@ def is_compact_pending() -> bool:
 def set_compact_pending(value: bool) -> None:
     global _compact_pending
     _compact_pending = value
+
+
+def is_endure_approved() -> bool:
+    return _endure_approved
+
+
+def set_endure_approved(value: bool) -> None:
+    global _endure_approved
+    _endure_approved = value
 
 
 # ---------------------------------------------------------------------------
@@ -655,7 +665,8 @@ def _endure_decide(layout: Layout, idx_str: str, approve: bool) -> None:
     if approve:
         auth_digest = _sha256_str(content)
         _write_evolution_auth(layout, content, auth_digest)
-        print(f"  approved: [{idx}]")
+        print(f"  approved: [{idx}] — session will close for Sleep Cycle and reboot")
+        set_endure_approved(True)
         from .hooks import run_hook
         run_hook(layout, "on_evolution_authorized", {"content": content[:256], "auth_digest": auth_digest})
     else:
