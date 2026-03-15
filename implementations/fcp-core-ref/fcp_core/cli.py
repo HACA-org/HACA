@@ -586,14 +586,14 @@ def _print_boot_header(layout: "Layout", index: dict) -> None:
     except Exception:
         model_str = "?"
 
-    notif_str = f" | {s['notifications']} notif" if s["notifications"] else ""
     header_lines = [
-        f"{model_str} | tools: {s['tools']}{notif_str}",
+        f"{model_str} | tools: {s['tools']}",
         f"boot: {ctx_str} ctx | sessions: {s['sessions']} | cycles: {s['cycles']}",
         f"memories: {s['memories']} | evolutions: {evol_str} | skills: {s['skills']}",
     ]
     _print_block("FCP-Core", header_lines, color="\x1b[90m")  # dark gray
-    print("Type your message or /help.")
+    notif_str = f" You have {s['notifications']} new notifications in /inbox." if s["notifications"] else ""
+    print(f"Type your message or /help.{notif_str}")
 
 
 def _atomic_write(path: Path, data: object) -> None:
