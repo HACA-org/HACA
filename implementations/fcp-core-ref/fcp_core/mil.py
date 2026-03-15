@@ -25,6 +25,7 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,10 @@ def write_episodic(
 
     Returns the Path written on success.
     """
+    # Sanitize slug: keep only alphanumerics, hyphens, underscores, and dots.
+    # Prevents glob wildcard injection and path traversal.
+    slug = re.sub(r"[^\w\-.]", "-", slug)
+
     existing = sorted(
         layout.episodic_dir.glob(f"*-{slug}.md"),
         key=lambda p: p.name,
@@ -123,6 +128,7 @@ def memory_recall(layout: Layout, query: str, path: str) -> dict[str, Any]:
             link = layout.active_context_dir / link_name
             if link.is_symlink():
                 link.unlink()
+                link.symlink_to(target)
             elif link.exists():
                 pass  # directory or regular file collision — skip symlink creation
             else:
@@ -153,19 +159,12 @@ def memory_recall(layout: Layout, query: str, path: str) -> dict[str, Any]:
         except Exception:
             contents.append({"path": rel, "content": ""})
 
-    result_data: dict[str, Any] = {
+    return {
         "query": query,
         "paths": paths,
         "contents": contents,
         "status": status,
     }
-    envelope = acp_encode(
-        env_type="MEMORY_RESULT",
-        source="mil",
-        data=result_data,
-    )
-    _write_inbox(layout, envelope)
-    return result_data
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +239,11 @@ def seed_active_context(layout: Layout) -> list[str]:
             continue
         link_name = Path(rel).name
         link = layout.active_context_dir / link_name
-        if link.is_symlink() or link.exists():
+        if link.is_symlink():
+            link.unlink()
+        elif link.is_dir():
+            continue  # directory collision — skip
+        elif link.exists():
             link.unlink()
         link.symlink_to(target)
 
@@ -390,12 +393,3 @@ def _working_memory_max(layout: Layout) -> int:
     except (FileNotFoundError, KeyError, ValueError):
         return 50
 
-
-def _write_inbox(layout: Layout, envelope: dict[str, Any]) -> None:
-    """Write a single ACP envelope as a timestamped .json file to io/inbox/."""
-    ts = int(time.time() * 1000)
-    env_type = str(envelope.get("type", "msg")).lower()
-    dest = layout.inbox_dir / f"{ts}_{env_type}.json"
-    tmp = dest.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
-    os.replace(tmp, dest)

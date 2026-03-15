@@ -505,8 +505,9 @@ def _dispatch_mil(
     for action in actions:
         atype = action.get("type", "")
         if atype == "memory_recall":
+            raw_path = action.get("path") or ""
             result = memory_recall(layout, str(action.get("query", "")),
-                                   str(action.get("path", "")))
+                                   str(raw_path) if raw_path else "")
             results.append({"type": "memory_recall", "result": result})
         elif atype == "result_recall":
             ts = int(action.get("ts", 0))
@@ -516,7 +517,9 @@ def _dispatch_mil(
             slug = str(action.get("slug", "")).strip()
             content = str(action.get("content", ""))
             overwrite = bool(action.get("overwrite", False))
-            if slug:
+            if not slug:
+                results.append({"type": "memory_write", "status": "error", "message": "slug is required and must not be empty."})
+            else:
                 outcome = write_episodic(layout, slug, content, overwrite=overwrite)
                 if isinstance(outcome, dict):
                     results.append({
@@ -528,10 +531,9 @@ def _dispatch_mil(
                     })
                 else:
                     results.append({"type": "memory_write", "status": "ok"})
-            else:
-                results.append({"type": "memory_write", "status": "ok"})
         elif atype == "closure_payload":
-            atomic_write(layout.pending_closure, dict(action))
+            payload = {k: v for k, v in action.items() if k != "type"}
+            atomic_write(layout.pending_closure, payload)
             results.append({"type": "closure_payload", "status": "acknowledged"})
         else:
             results.append({"type": atype, "error": "unknown mil action"})
@@ -931,6 +933,18 @@ def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, 
                 "overwrite": {"type": "boolean", "description": "Set to true to overwrite an existing memory with this slug. If false (default) and the slug exists, the write is rejected and the existing content is returned for review."},
             },
             "required": ["slug", "content"],
+        },
+    })
+
+    tools.append({
+        "name": "result_recall",
+        "description": "Retrieve the full payload of a truncated tool result from a previous cycle, by its timestamp.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ts": {"type": "integer", "description": "The _ts_ms timestamp embedded in the truncated tool result."},
+            },
+            "required": ["ts"],
         },
     })
 
