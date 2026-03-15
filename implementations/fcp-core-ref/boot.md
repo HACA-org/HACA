@@ -106,7 +106,7 @@ Parameters: use `skill_info({ "skill": "shell_run" })` for full details.
 **worker_skill** — instantiate a text-only sub-agent to offload tasks that would otherwise bloat the main context window.
 
 Use worker_skill when the task is:
-- Summarizing a large document whose full content you already have in context.
+- Analisar arquivos muito grandes para evitar o consumo de tokens na sua janela de contexto.
 - Cross-referencing or classifying content across multiple documents.
 - Isolated analysis that produces a compact result (a summary, a list, a decision).
 
