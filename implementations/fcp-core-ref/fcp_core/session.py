@@ -89,10 +89,6 @@ def run_session(
     _loop_window: list[Any] = []
     _LOOP_THRESHOLD = 3
 
-    # cycle limit from baseline
-    _baseline_cfg = _load_baseline(layout)
-    _max_cycles = int(_baseline_cfg.get("fault", {}).get("max_cycles", 0))
-
     # Vital Check state — triggers on cycle_threshold or interval_seconds
     _baseline = None
     _vital_state = None
@@ -235,16 +231,6 @@ def run_session(
                 stimulus_ready = True
         else:
             _loop_window.clear()
-
-        # --- cycle limit ---
-        if _max_cycles and cycle >= _max_cycles:
-            intervention = (
-                f"[FCP] Session cycle limit reached ({_max_cycles}). "
-                "Use session_close or await operator input."
-            )
-            _append_msg(layout, "fcp", intervention)
-            chat_history.append({"role": "user", "content": intervention})
-            stimulus_ready = False  # force operator input
 
         # Vital Check — tick counter; run if either trigger threshold is reached
         if _vital_state is not None and _baseline is not None:
