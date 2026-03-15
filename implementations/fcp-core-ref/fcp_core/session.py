@@ -166,24 +166,22 @@ def run_session(
         )
 
         session_closed = False
-        tool_summaries: list[str] = []
+        tool_results: list[str] = []
         for call in tool_calls:
             _vlog("fcp", f"dispatch → {call.tool}")
             _vlog_json(f"fcp→{call.tool}", call.input)
             result, closed = dispatch_tool_use(layout, call, index)
             _vlog_json(f"{call.tool}→fcp", result)
-            ts = _return_tool_result(layout, call.id, call.tool, result)
-            status = "error" if "error" in result else "ok"
-            action = call.input.get("type", call.tool) if isinstance(call.input, dict) else call.tool
-            tool_summaries.append(f"[{call.tool}:{action} ts:{ts} — {status}]")
+            _return_tool_result(layout, call.id, call.tool, result)
+            tool_results.append(json.dumps(result, ensure_ascii=False))
             if closed:
                 close_reason = "session_close"
                 session_closed = True
 
-        # tool results go into chat history as compact summaries.
-        # use result_recall to retrieve the full payload if needed.
-        if tool_summaries:
-            chat_history.append({"role": "user", "content": "\n".join(tool_summaries)})
+        # tool results go into chat history as full payloads.
+        # result_recall remains available as fallback for results from previous sessions.
+        if tool_results:
+            chat_history.append({"role": "user", "content": "\n".join(tool_results)})
             stimulus_ready = True  # tool results need a follow-up CPE cycle
 
         if session_closed:
@@ -744,7 +742,7 @@ def _tool_declarations() -> list[dict[str, Any]]:
                     "path": {"type": "string"},
                     "slug": {"type": "string"},
                     "content": {"type": "string"},
-                    "ts": {"type": "integer", "description": "Timestamp from a previous tool result summary, for result_recall."},
+                    "ts": {"type": "integer", "description": "Timestamp (_ts_ms) from a previous session's tool result, for result_recall."},
                 },
                 "required": ["type"],
             },
