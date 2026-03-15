@@ -16,6 +16,14 @@ from pathlib import Path
 
 
 def main() -> None:
+    try:
+        _main()
+    except KeyboardInterrupt:
+        print("\n[interrupted]")
+        sys.exit(0)
+
+
+def _main() -> None:
     args = sys.argv[1:]
     entity_root = Path.cwd()
 
@@ -254,6 +262,69 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Init helpers
+# ---------------------------------------------------------------------------
+
+def _fetch_ollama_models() -> list[str]:
+    """Return list of model names from the local Ollama instance. Empty on failure."""
+    try:
+        import urllib.request, json as _json
+        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as resp:
+            data = _json.loads(resp.read().decode())
+        return [m["name"] for m in data.get("models", [])]
+    except Exception:
+        return []
+
+
+def _pick_ollama_model(default: str) -> str:
+    """Interactive arrow-key model picker for Ollama. Falls back to text input on error."""
+    import tty, termios
+
+    models = _fetch_ollama_models()
+    if not models:
+        return input(f"Model (default: {default}): ").strip() or default
+
+    selected = 0
+
+    def _render(idx: int) -> None:
+        # move cursor up to redraw
+        if idx > 0:
+            sys.stdout.write(f"\033[{len(models)}A")
+        for i, name in enumerate(models):
+            prefix = " > " if i == idx else "   "
+            sys.stdout.write(f"\r{prefix}{name}\033[K\n")
+        sys.stdout.flush()
+
+    print(f"Select Ollama model (↑↓ to move, Enter to confirm):")
+    _render(selected)
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch == "\r" or ch == "\n":
+                break
+            if ch == "\x03":  # Ctrl+C
+                raise KeyboardInterrupt
+            if ch == "\x1b":
+                ch2 = sys.stdin.read(1)
+                ch3 = sys.stdin.read(1)
+                if ch2 == "[":
+                    if ch3 == "A" and selected > 0:
+                        selected -= 1
+                    elif ch3 == "B" and selected < len(models) - 1:
+                        selected += 1
+            _render(selected)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    print()  # newline after selection
+    return models[selected]
+
+
+# ---------------------------------------------------------------------------
 # Init
 # ---------------------------------------------------------------------------
 
@@ -308,8 +379,11 @@ def _run_init(entity_root: Path) -> None:
         "openai": "gpt-4o",
         "google": "gemini-2.0-flash",
     }
-    default_model = model_defaults.get(backend, "")
-    model = input(f"Model (default: {default_model}): ").strip() or default_model
+    if backend == "ollama":
+        model = _pick_ollama_model(model_defaults["ollama"])
+    else:
+        default_model = model_defaults.get(backend, "")
+        model = input(f"Model (default: {default_model}): ").strip() or default_model
 
     _atomic_write(entity_root / "state" / "baseline.json", {
         "version": "1.0.0",
