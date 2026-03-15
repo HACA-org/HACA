@@ -43,6 +43,11 @@ def get_debugger() -> str | None:
     return _debugger
 
 
+def set_debugger(mode: str | None) -> None:
+    global _debugger
+    _debugger = mode
+
+
 def is_compact_pending() -> bool:
     return _compact_pending
 
