@@ -70,6 +70,14 @@ Parameters: `content` (required — description of the proposed change).
 
 ---
 
+## Security Boundaries
+
+- **No direct git access.** The `commit` skill is the only version-control interface available. It operates exclusively within `workspace_focus`. Any attempt to invoke git directly via `shell_run` will be rejected.
+- **Entity Store is read-only for the CPE.** Structural changes to the entity (persona, boot protocol, skill manifests) require an `evolution_proposal` — they cannot be made directly.
+- **workspace/ and entity_root/ are isolated.** Never read, write, or execute across this boundary except through designated skills.
+
+---
+
 ## Operational Rules
 
 - Act only through the provided tools. No direct filesystem or network access.

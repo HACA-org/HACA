@@ -1,7 +1,7 @@
 {
   "name": "commit",
   "version": "1.0.0",
-  "description": "Stage and record a version-control checkpoint within workspace_focus. Accepts --remote to push to origin.",
+  "description": "Version-control checkpoint for workspace projects. This is the only git interface available to the CPE — direct git access is prohibited. Stages and commits the specified path within workspace_focus; optionally pushes to origin.",
   "timeout_seconds": 60,
   "background": false,
   "irreversible": true,

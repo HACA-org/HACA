@@ -529,7 +529,7 @@ def _run_init(entity_root: Path) -> None:
         "working_memory": {"max_entries": 50},
         "heartbeat": {"interval_seconds": 30, "cycle_threshold": 10},
         "watchdog": {"sil_threshold_seconds": 25},
-        "fault": {"n_retry": 3, "n_boot": 3, "n_channel": 3},
+        "fault": {"n_retry": 3, "n_boot": 3, "n_channel": 3, "max_cycles": 50},
         "integrity_chain": {"checkpoint_interval": 10},
         "pre_session_buffer": {"max_entries": 20},
         "operator_channel": {"notifications_dir": "state/operator_notifications"},

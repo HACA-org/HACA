@@ -77,6 +77,14 @@ def run_session(
     stimulus_ready = bool(greeting or inject)
     tokens_used = 0
 
+    # loop detection: track last N (tool, input_json, result_json) tuples
+    _loop_window: list[tuple[str, str, str]] = []
+    _LOOP_THRESHOLD = 3
+
+    # cycle limit from baseline
+    _baseline_cfg = _load_baseline(layout)
+    _max_cycles = int(_baseline_cfg.get("fault", {}).get("max_cycles", 0))
+
     # Vital Check state — triggers on cycle_threshold or interval_seconds
     _baseline = None
     _vital_state = None
@@ -194,6 +202,40 @@ def run_session(
 
         if session_closed:
             break
+
+        # --- loop detection: same (tool, input, result) repeated >= threshold ---
+        if tool_calls and len(tool_calls) == 1:
+            call = tool_calls[0]
+            fingerprint = (
+                call.tool,
+                json.dumps(call.input, sort_keys=True),
+                tool_results[0] if tool_results else "",
+            )
+            _loop_window.append(fingerprint)
+            if len(_loop_window) > _LOOP_THRESHOLD:
+                _loop_window.pop(0)
+            if len(_loop_window) == _LOOP_THRESHOLD and len(set(_loop_window)) == 1:
+                _loop_window.clear()
+                intervention = (
+                    f"[FCP] Loop detected: the same tool call ({call.tool}) returned "
+                    f"identical results {_LOOP_THRESHOLD} times in a row. "
+                    "Stop and report the situation to the Operator. Do not retry."
+                )
+                _append_msg(layout, "fcp", intervention)
+                chat_history.append({"role": "user", "content": intervention})
+                stimulus_ready = True
+        else:
+            _loop_window.clear()
+
+        # --- cycle limit ---
+        if _max_cycles and cycle >= _max_cycles:
+            intervention = (
+                f"[FCP] Session cycle limit reached ({_max_cycles}). "
+                "Use session_close or await operator input."
+            )
+            _append_msg(layout, "fcp", intervention)
+            chat_history.append({"role": "user", "content": intervention})
+            stimulus_ready = False  # force operator input
 
         # Vital Check — tick counter; run if either trigger threshold is reached
         if _vital_state is not None and _baseline is not None:
