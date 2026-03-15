@@ -27,7 +27,7 @@
     },
     {
       "name": "skill_audit",
-      "desc": "Validate a skill's manifest, executable, and index consistency. Read-only.",
+      "desc": "Validate a skill manifest, executable, and index consistency.",
       "manifest": "skills/lib/skill_audit/manifest.json",
       "class": "builtin"
     },
