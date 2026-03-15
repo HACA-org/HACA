@@ -494,10 +494,9 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
     import sys, tty, termios
     from .cpe.base import KNOWN_MODELS, BACKENDS
 
-    # Build flat list of (backend, model) entries with section headers
-    entries: list[tuple[str, str] | None] = []  # None = header separator
+    # Build flat list of "backend:model" labels
     labels: list[str] = []
-    selectable: list[tuple[int, str, str]] = []  # (flat_idx, backend, model)
+    pairs: list[tuple[str, str]] = []
 
     def _ollama_models() -> list[str]:
         try:
@@ -509,26 +508,19 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
 
     for backend in BACKENDS:
         models = _ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
-        if not models:
-            continue
-        labels.append(f"── {backend} ──")
-        entries.append(None)
         for m in models:
             marker = " ✓" if backend == current_backend and m == current_model else ""
-            labels.append(f"  {m}{marker}")
-            selectable.append((len(labels) - 1, backend, m))
-            entries.append((backend, m))
+            labels.append(f"{backend}:{m}{marker}")
+            pairs.append((backend, m))
 
-    if not selectable:
+    if not labels:
         print("  no models available")
         return None
 
-    # Find initial selection
-    sel_idx = 0
-    for i, (_, b, m) in enumerate(selectable):
-        if b == current_backend and m == current_model:
-            sel_idx = i
-            break
+    sel_idx = next(
+        (i for i, (b, m) in enumerate(pairs) if b == current_backend and m == current_model),
+        0,
+    )
 
     first_render = True
 
@@ -537,9 +529,8 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
         if not first_render:
             sys.stdout.write(f"\033[{len(labels)}A")
         first_render = False
-        active_flat = selectable[sidx][0]
         for i, label in enumerate(labels):
-            prefix = " > " if i == active_flat else "   "
+            prefix = " > " if i == sidx else "   "
             sys.stdout.write(f"\r{prefix}{label}\033[K\n")
         sys.stdout.flush()
 
@@ -563,15 +554,14 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
                 if ch2 == "[":
                     if ch3 == "A" and sel_idx > 0:
                         sel_idx -= 1
-                    elif ch3 == "B" and sel_idx < len(selectable) - 1:
+                    elif ch3 == "B" and sel_idx < len(labels) - 1:
                         sel_idx += 1
             _render(sel_idx)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
     print()
-    _, backend, model = selectable[sel_idx]
-    return backend, model
+    return pairs[sel_idx]
 
 
 def _model_list_print(backend: str) -> None:
