@@ -29,7 +29,9 @@ class GoogleAdapter:
     def __init__(self, api_key: str = "", model: str = _DEFAULT_MODEL) -> None:
         self._api_key = api_key or os.environ.get("GOOGLE_API_KEY", "")
         self._model = model
-        # Track function calls from the last model turn so we can build functionResponse
+        # Track the last model turn's parts verbatim (required for thought_signature)
+        self._last_model_parts: list[dict[str, Any]] = []
+        # Track only the functionCall parts for building functionResponse
         self._last_function_calls: list[dict[str, Any]] = []
 
     def invoke(
@@ -38,7 +40,7 @@ class GoogleAdapter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> CPEResponse:
-        contents = _build_contents(messages, self._last_function_calls)
+        contents = _build_contents(messages, self._last_model_parts, self._last_function_calls)
 
         payload: dict[str, Any] = {
             "system_instruction": {"parts": [{"text": system}]},
@@ -47,16 +49,16 @@ class GoogleAdapter:
         }
         if tools:
             payload["tools"] = [{"function_declarations": [_convert_tool(t) for t in tools]}]
-        response = _parse_response(_post(self._api_key, self._model, payload))
-        # Save function calls emitted this turn for the next invoke
-        self._last_function_calls = [
-            {"name": c.tool, "args": c.input} for c in response.tool_use_calls
-        ]
+        raw = _post(self._api_key, self._model, payload)
+        response, raw_model_parts, raw_fc_parts = _parse_response(raw)
+        self._last_model_parts = raw_model_parts
+        self._last_function_calls = raw_fc_parts
         return response
 
 
 def _build_contents(
     messages: list[dict[str, Any]],
+    last_model_parts: list[dict[str, Any]],
     last_function_calls: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Convert chat_history to Gemini contents format.
@@ -75,14 +77,9 @@ def _build_contents(
 
         if role == "assistant":
             if not content:
-                # Tool-use turn — emit as model turn with functionCall parts
-                # if we have last_function_calls, otherwise empty placeholder.
-                if last_function_calls:
-                    fc_parts = [
-                        {"functionCall": {"name": fc["name"], "args": fc.get("args", {})}}
-                        for fc in last_function_calls
-                    ]
-                    contents.append({"role": "model", "parts": fc_parts})
+                # Tool-use turn — emit verbatim model parts (preserves thought_signature)
+                if last_model_parts:
+                    contents.append({"role": "model", "parts": last_model_parts})
                 else:
                     contents.append({"role": "model", "parts": [{"text": ""}]})
             else:
@@ -101,7 +98,7 @@ def _build_contents(
                     resp = tool_results[j] if j < len(tool_results) else {}
                     parts.append({
                         "functionResponse": {
-                            "name": fc["name"],
+                            "name": fc["functionCall"]["name"],
                             "response": {"output": resp},
                         }
                     })
@@ -195,15 +192,18 @@ def _post(api_key: str, model: str, payload: dict[str, Any]) -> dict[str, Any]:
 # Response parsing
 # ---------------------------------------------------------------------------
 
-def _parse_response(data: dict[str, Any]) -> CPEResponse:
+def _parse_response(data: dict[str, Any]) -> tuple[CPEResponse, list[dict[str, Any]], list[dict[str, Any]]]:
     candidate = data.get("candidates", [{}])[0]
     content = candidate.get("content", {})
     text = ""
     tool_calls: list[ToolUseCall] = []
-    for part in content.get("parts", []):
-        if "text" in part:
+    raw_model_parts: list[dict[str, Any]] = list(content.get("parts", []))
+    raw_fc_parts: list[dict[str, Any]] = []
+    for part in raw_model_parts:
+        if "text" in part and not part.get("thought"):
             text = part["text"]
         elif "functionCall" in part:
+            raw_fc_parts.append(part)
             fc = part["functionCall"]
             tool_calls.append(ToolUseCall(
                 id="",
@@ -217,4 +217,4 @@ def _parse_response(data: dict[str, Any]) -> CPEResponse:
         input_tokens=int(usage.get("promptTokenCount", 0)),
         output_tokens=int(usage.get("candidatesTokenCount", 0)),
         stop_reason=candidate.get("finishReason", ""),
-    )
+    ), raw_model_parts, raw_fc_parts
