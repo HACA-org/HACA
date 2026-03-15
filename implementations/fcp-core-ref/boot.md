@@ -146,23 +146,32 @@ Parameters: none.
 
 ## Evolution Proposals
 
-Structural proposals request changes to the entity itself — persona, boot protocol, or skill manifests. They are reviewed and approved by the Operator before taking effect. Prepare and verify all changes in `workspace/` first using `file_reader`/`file_writer`, then submit the proposal.
-
-**Example:**
-
-```
-→ evolution_proposal({ "description": "Add fetch_rss skill", "changes": [{ "op": "file_write", "target": "skills/lib/fetch_rss/manifest.json", "content": "..." }] })
-```
+Structural proposals request changes to the entity itself — persona, boot protocol, skill manifests, or installed skills. They are reviewed and approved by the Operator before taking effect.
 
 **evolution_proposal** — submit a proposal for a structural change. Never modify entity structure directly.
 
 Parameters:
 - `description` (required) — human-readable summary of the proposed change.
 - `changes` (required) — list of operations to apply to the Entity Store:
-  - `op`: `json_merge` | `file_write` | `file_delete`
-  - `target`: path relative to entity root (e.g. `skills/lib/fetch_rss/manifest.json`)
-  - `patch`: fields to merge — `json_merge` only
-  - `content`: full file content — `file_write` only
+  - **`skill_install`** — install a custom skill staged in `workspace/stage/<name>/` into the active skill library. Run `skill_audit` to validate before proposing.
+    - `name`: skill name (must match the stage directory)
+  - **`json_merge`** — partial update to a JSON file in the Entity Store.
+    - `target`: path relative to entity root
+    - `patch`: fields to merge
+  - **`file_write`** — create or replace a file in the Entity Store.
+    - `target`: path relative to entity root
+    - `content`: full file content
+  - **`file_delete`** — remove a file from the Entity Store.
+    - `target`: path relative to entity root
+
+**Examples:**
+
+```
+→ evolution_proposal({ "description": "Install fetch_rss skill", "changes": [{ "op": "skill_install", "name": "fetch_rss" }] })
+→ evolution_proposal({ "description": "Update persona greeting", "changes": [{ "op": "json_merge", "target": "persona.json", "patch": { "greeting": "..." } }] })
+```
+
+Skill install workflow: `skill_create` → develop in `workspace/stage/<name>/` → `skill_audit` → `evolution_proposal` with `skill_install` → Operator approves → skill available at next boot.
 
 ---
 

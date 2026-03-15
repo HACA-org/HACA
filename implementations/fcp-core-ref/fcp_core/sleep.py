@@ -291,6 +291,8 @@ def _stage3_endure(layout: Layout) -> None:
                     for f in dest.rglob("*"):
                         if f.is_file():
                             files_written[str(f.relative_to(layout.root))] = sha256_file(f)
+                    # add to skills/index.json
+                    _index_skill(layout, skill_name, m)
                 except Exception:
                     continue
                 continue
@@ -372,6 +374,28 @@ def _stage3_endure(layout: Layout) -> None:
 
         # clean up snapshot (no crash occurred)
         shutil.rmtree(snapshot_dir, ignore_errors=True)
+
+
+def _index_skill(layout: Layout, skill_name: str, manifest: dict[str, Any]) -> None:
+    """Add or update a skill entry in skills/index.json after skill_install."""
+    index_path = layout.root / "skills" / "index.json"
+    if not index_path.exists():
+        return
+    try:
+        idx = json.loads(index_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    skills: list[dict[str, Any]] = idx.get("skills", [])
+    # remove existing entry with same name if present
+    skills = [s for s in skills if s.get("name") != skill_name]
+    skills.append({
+        "name": skill_name,
+        "desc": manifest.get("description", ""),
+        "manifest": f"skills/{skill_name}/manifest.json",
+        "class": manifest.get("class", "custom"),
+    })
+    idx["skills"] = skills
+    atomic_write(index_path, idx)
 
 
 def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> None:
