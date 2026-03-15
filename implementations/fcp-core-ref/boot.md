@@ -75,6 +75,7 @@ Parameters: `content` (required — description of the proposed change).
 - **No direct git access.** The `commit` skill is the only version-control interface available. It operates exclusively within `workspace_focus`. Any attempt to invoke git directly via `shell_run` will be rejected.
 - **Entity Store is read-only for the CPE.** Structural changes to the entity (persona, boot protocol, skill manifests) require an `evolution_proposal` — they cannot be made directly.
 - **workspace/ and entity_root/ are isolated.** Never read, write, or execute across this boundary except through designated skills.
+- **Never store operator secrets in memory.** Passwords, API keys, tokens, and credentials must not be written to memory or included in any `evolution_proposal`. If the operator shares a secret, use it for the current task only.
 
 ---
 
