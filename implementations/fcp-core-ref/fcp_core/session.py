@@ -279,7 +279,12 @@ def build_boot_context(
     if memory_parts:
         instruction_parts.append("## Active Memory\n\n" + "\n\n---\n\n".join(memory_parts))
     if skill_blocks:
-        instruction_parts.append("## Available Skills\n\n" + "\n\n".join(skill_blocks))
+        instruction_parts.append(
+            "## Available Skills\n\n"
+            "Use these via fcp_exec → skill_request. "
+            "They are NOT direct tools — never call them as tool_use.\n\n"
+            + "\n\n".join(skill_blocks)
+        )
 
     instruction_block = "\n\n".join(instruction_parts)
 
