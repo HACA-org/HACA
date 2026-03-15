@@ -21,7 +21,7 @@
     },
     {
       "name": "shell_run",
-      "desc": "Execute a shell command within workspace_focus. Permitted commands declared as allowlist in this manifest.",
+      "desc": "Execute a shell command within workspace_focus. Permitted commands updated to include Python runtime.",
       "manifest": "skills/lib/shell_run/manifest.json",
       "class": "builtin"
     },
@@ -45,7 +45,7 @@
     },
     {
       "name": "worker_skill",
-      "desc": "Instantiate a Worker Skill sub-agent with a provided persona, context, and task.",
+      "desc": "Instantiate a text-only sub-agent for tasks that would pollute the main context window: summarizing large documents, cross-referencing multiple files, isolated analysis or classification tasks. Do NOT use for file I/O, sequential workspace operations, or anything you can do directly with file_reader/file_writer/shell_run. The worker has no access to tools or the filesystem \u2014 it can only reason and return text.",
       "manifest": "skills/lib/worker_skill/manifest.json",
       "class": "builtin"
     }

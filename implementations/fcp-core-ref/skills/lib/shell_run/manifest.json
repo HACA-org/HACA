@@ -1,7 +1,7 @@
 {
   "name": "shell_run",
-  "version": "1.0.0",
-  "description": "Execute a shell command within workspace_focus. Permitted commands declared as allowlist in this manifest.",
+  "version": "1.1.0",
+  "description": "Execute a shell command within workspace_focus. Permitted commands updated to include Python runtime.",
   "timeout_seconds": 30,
   "background": false,
   "irreversible": true,
@@ -10,7 +10,11 @@
     "workspace_write"
   ],
   "allowlist": [
-    "ls", "cat", "pwd", "find", "grep"
+    "ls",
+    "cat",
+    "pwd",
+    "find",
+    "grep"
   ],
   "params": {
     "type": "object",
