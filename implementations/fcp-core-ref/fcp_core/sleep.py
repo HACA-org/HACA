@@ -28,12 +28,15 @@ from .mil import (
 )
 from .sil import (
     sha256_file,
+    sha256_str,
     verify_structural_files,
     write_chain_entry,
+    last_chain_seq,
     write_notification,
     log_critical,
     revoke_session_token,
 )
+from .formats import ChainEntry, ChainEntryType
 from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
 
 
@@ -268,7 +271,23 @@ def _stage3_endure(layout: Layout) -> None:
 
         # write chain entry
         auth_digest = proposal.get("auth_digest", "")
-        write_chain_entry(layout, seq, files_written, auth_digest)
+        prev_seq = last_chain_seq(layout)
+        prev_hash: str | None = None
+        if layout.integrity_chain.exists():
+            lines = [l.strip() for l in layout.integrity_chain.read_text(encoding="utf-8").splitlines() if l.strip()]
+            if lines:
+                prev_hash = sha256_str(lines[-1])
+        integrity_doc_hash = sha256_file(layout.integrity_doc) if layout.integrity_doc.exists() else None
+        entry = ChainEntry(
+            seq=prev_seq + 1,
+            type=ChainEntryType.ENDURE_COMMIT,
+            ts=str(time.time()),
+            prev_hash=prev_hash,
+            evolution_auth_digest=auth_digest,
+            files=files_written,
+            integrity_doc_hash=integrity_doc_hash,
+        )
+        write_chain_entry(layout, entry)
 
         # MIL appends ENDURE_COMMIT to session.jsonl
         append_endure_commit(layout, seq, files_written)

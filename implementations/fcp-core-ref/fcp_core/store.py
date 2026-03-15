@@ -44,8 +44,12 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     records = []
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
-        if line:
+        if not line:
+            continue
+        try:
             records.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass  # skip malformed lines
     return records
 
 

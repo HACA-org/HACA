@@ -170,7 +170,7 @@ def _log(layout: Layout, event: str, message: str) -> None:
     try:
         ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         line = f"{ts} HOOK_FAIL [{event}] {message}\n"
-        log_path = layout.root / "state" / "integrity.log"
+        log_path = layout.integrity_log
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(line)
     except Exception:

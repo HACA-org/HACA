@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .acp import make as acp_encode
+from .sil import sha256_str as _sha256_str
 from .store import Layout, append_jsonl, atomic_write, read_json
 
 
@@ -685,10 +686,6 @@ def resolve_alias(layout: Layout, line: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _sha256_str(s: str) -> str:
-    import hashlib
-    return hashlib.sha256(s.encode()).hexdigest()
 
 
 def _write_evolution_auth(layout: Layout, content: str, auth_digest: str) -> None:

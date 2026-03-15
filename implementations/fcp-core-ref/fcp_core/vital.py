@@ -14,7 +14,6 @@ Checks performed:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -22,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .formats import StructuralBaseline
-from .sil import log_critical, log_heartbeat, log_severance_commit, write_notification
+from .sil import log_critical, log_heartbeat, log_severance_commit, sha256_file as _sha256_file, write_notification
 from .store import Layout, atomic_write, read_json
 
 
@@ -237,11 +236,3 @@ def _check_identity_drift(layout: Layout) -> list[str]:
     return []
 
 
-# ---------------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------------
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    h.update(path.read_bytes())
-    return f"sha256:{h.hexdigest()}"

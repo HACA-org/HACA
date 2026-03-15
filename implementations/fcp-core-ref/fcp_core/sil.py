@@ -210,15 +210,17 @@ def _verify_evolution_auth_coverage(layout: Layout, chain_entries: list[dict]) -
 
     Returns True if all ENDURE_COMMITs are covered, False otherwise.
     """
-    # Collect auth_digests from EVOLUTION_AUTH records in integrity.log
+    # Collect auth_digests from EVOLUTION_AUTH records in integrity.log.
+    # EVOLUTION_AUTH is written as an ACP envelope (type="MSG"), with the
+    # actual type inside the data JSON field.
     auth_digests: set[str] = set()
     if layout.integrity_log.exists():
         for log_entry in read_jsonl(layout.integrity_log):
-            if log_entry.get("type") != "EVOLUTION_AUTH":
-                continue
             try:
                 data = json.loads(log_entry.get("data", "{}"))
             except (json.JSONDecodeError, TypeError):
+                continue
+            if data.get("type") != "EVOLUTION_AUTH":
                 continue
             digest = data.get("auth_digest", "")
             if digest:
