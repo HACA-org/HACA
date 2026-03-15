@@ -818,10 +818,14 @@ def resolve_alias(layout: Layout, line: str) -> str | None:
 
 def _write_evolution_auth(layout: Layout, content: str, auth_digest: str) -> None:
     ts = int(time.time() * 1000)
+    try:
+        parsed_content = json.loads(content)
+    except Exception:
+        parsed_content = content
     envelope = acp_encode(
         env_type="MSG",
         source="operator",
-        data={"type": "EVOLUTION_AUTH", "auth_digest": auth_digest, "ts": ts},
+        data={"type": "EVOLUTION_AUTH", "auth_digest": auth_digest, "content": parsed_content, "ts": ts},
     )
     append_jsonl(layout.integrity_log, envelope)
 

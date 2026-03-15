@@ -533,7 +533,8 @@ def _dispatch_sil(
     for action in actions:
         atype = action.get("type", "")
         if atype == "evolution_proposal":
-            _stage_evolution_proposal(layout, str(action.get("content", "")))
+            payload = {k: v for k, v in action.items() if k != "type"}
+            _stage_evolution_proposal(layout, json.dumps(payload))
             results.append({"type": "evolution_proposal", "status": "queued"})
         elif atype == "session_close":
             session_closed = True
@@ -831,13 +832,36 @@ def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, 
     })
     tools.append({
         "name": "evolution_proposal",
-        "description": "Propose a structural change (persona, boot protocol, skill manifest). Requires Operator approval before taking effect.",
+        "description": (
+            "Propose a structural change to the Entity Store (skill manifests, persona files, configs). "
+            "The proposal must contain the exact changes to apply — prepare and verify the content first "
+            "using file_reader/file_writer in workspace/, then submit here. "
+            "Requires explicit Operator approval before taking effect via the Endure Protocol."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "Description of the proposed structural change."},
+                "description": {"type": "string", "description": "Human-readable summary of the proposed change."},
+                "changes": {
+                    "type": "array",
+                    "description": "List of structural changes to apply to the Entity Store.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "op": {
+                                "type": "string",
+                                "enum": ["json_merge", "file_write", "file_delete"],
+                                "description": "Operation: json_merge (partial update to a JSON file), file_write (create/replace a file), file_delete (remove a file).",
+                            },
+                            "target": {"type": "string", "description": "Path relative to entity root (e.g. skills/lib/shell_run/manifest.json). Must be within Entity Store — never workspace/."},
+                            "patch": {"type": "object", "description": "For json_merge: the fields to merge into the target JSON."},
+                            "content": {"type": "string", "description": "For file_write: the full file content to write."},
+                        },
+                        "required": ["op", "target"],
+                    },
+                },
             },
-            "required": ["content"],
+            "required": ["description", "changes"],
         },
     })
 

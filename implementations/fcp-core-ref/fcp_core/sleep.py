@@ -241,34 +241,82 @@ def _rotate_session_store(layout: Layout) -> None:
 # ---------------------------------------------------------------------------
 
 def _stage3_endure(layout: Layout) -> None:
-    """Execute authorized Evolution Proposals from operator_notifications/."""
+    """Execute authorized Evolution Proposals from integrity.log."""
     proposals = _collect_authorized_proposals(layout)
     if not proposals:
         return
 
     for proposal in proposals:
-        seq = proposal.get("seq", int(time.time() * 1000))
-        slugs: list[str] = proposal.get("slugs", [])
+        seq = int(time.time() * 1000)
+        auth_digest = proposal.get("auth_digest", "")
+        content = proposal.get("content", {})
+        if isinstance(content, str):
+            try:
+                content = json.loads(content)
+            except Exception:
+                content = {}
 
         # snapshot before mutation
         snapshot_dir = layout.snapshot_dir(seq)
         snapshot_dir.mkdir(parents=True, exist_ok=True)
 
-        # promote episodic → semantic for each slug
         files_written: dict[str, str] = {}
+
+        # apply structural changes
+        changes: list[dict[str, Any]] = content.get("changes", []) if isinstance(content, dict) else []
+        for change in changes:
+            op = change.get("op", "")
+            target_rel = change.get("target", "")
+            if not target_rel or not op:
+                continue
+            target = (layout.root / target_rel).resolve()
+            # security: must stay within entity root, never in workspace/
+            try:
+                target.relative_to(layout.root)
+            except ValueError:
+                continue
+            if str(target).startswith(str((layout.root / "workspace").resolve())):
+                continue
+
+            try:
+                if op == "json_merge":
+                    patch = change.get("patch", {})
+                    existing: dict[str, Any] = {}
+                    if target.exists():
+                        existing = json.loads(target.read_text(encoding="utf-8"))
+                    _deep_merge(existing, patch)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+                    files_written[str(target.relative_to(layout.root))] = sha256_file(target)
+
+                elif op == "file_write":
+                    file_content = change.get("content", "")
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(file_content, encoding="utf-8")
+                    files_written[str(target.relative_to(layout.root))] = sha256_file(target)
+
+                elif op == "file_delete":
+                    if target.exists():
+                        target.unlink()
+                        files_written[str(target.relative_to(layout.root))] = "deleted"
+            except Exception:
+                continue
+
+        # promote episodic → semantic for legacy slug-based proposals
+        slugs: list[str] = proposal.get("slugs", [])
         for slug in slugs:
             if promote_to_semantic(layout, slug):
                 dest = layout.semantic_dir / f"{slug}.md"
                 files_written[str(dest.relative_to(layout.root))] = sha256_file(dest)
 
         if not files_written:
+            shutil.rmtree(snapshot_dir, ignore_errors=True)
             continue
 
         # update integrity document
         _update_integrity_doc(layout, files_written)
 
         # write chain entry
-        auth_digest = proposal.get("auth_digest", "")
         prev_seq = last_chain_seq(layout)
         prev_hash: str | None = None
         if layout.integrity_chain.exists():
@@ -292,6 +340,15 @@ def _stage3_endure(layout: Layout) -> None:
 
         # clean up snapshot (no crash occurred)
         shutil.rmtree(snapshot_dir, ignore_errors=True)
+
+
+def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> None:
+    """Recursively merge patch into base in-place. Lists are replaced, not extended."""
+    for key, val in patch.items():
+        if isinstance(val, dict) and isinstance(base.get(key), dict):
+            _deep_merge(base[key], val)
+        else:
+            base[key] = val
 
 
 def _collect_authorized_proposals(layout: Layout) -> list[dict[str, Any]]:
