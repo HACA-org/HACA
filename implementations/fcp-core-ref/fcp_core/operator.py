@@ -778,8 +778,15 @@ def _cron_list(layout: Layout) -> None:
 
 def _build_wake_up_message(task: str, executor: str, tools: str = "") -> str:
     """Generate wake_up_message from task fields."""
+    if executor == "worker":
+        return (
+            f"[Task] {task}\n"
+            "[Persona] FCP autonomous worker — concise, factual, no fluff.\n"
+            "[Constraints] Read-only. Do not write files, send messages, or modify any state. "
+            "Reason only from provided context. Return only the result."
+        )
     msg = f"[Task] {task}"
-    if executor == "cpe" and tools:
+    if tools:
         msg += f"\n[Tools] {tools}"
     return msg
 
