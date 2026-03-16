@@ -13,7 +13,7 @@ from pathlib import Path
 
 def _sign(privkey: str, payload: dict) -> str:
     body = json.dumps(payload, sort_keys=True)
-    return hmac.HMAC(privkey.encode(), body.encode(), hashlib.sha256).hexdigest()
+    return hmac.HMAC(bytes.fromhex(privkey), body.encode(), hashlib.sha256).hexdigest()
 
 
 def main() -> None:

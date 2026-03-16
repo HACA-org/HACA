@@ -90,7 +90,7 @@ def main(argv: list[str]) -> None:
         print(f"invalid role: {role}", file=sys.stderr)
         sys.exit(1)
 
-    sys.path.insert(0, str(entity_root.parent))
+    sys.path.insert(0, str(entity_root))
     from fcp_core.store import Layout
     layout = Layout(entity_root)
 
@@ -570,10 +570,10 @@ class ChannelProcess:
             return False
         from .identity import sign_message
         privkey = self._credential.get("privkey", "")
-        data = json.dumps(payload, sort_keys=True).encode()
-        sig = sign_message(privkey, data)
         signed = dict(payload)
         signed["from"] = self._credential.get("node_identity", "")
+        data = json.dumps(signed, sort_keys=True).encode()
+        sig = sign_message(privkey, data)
         signed["sig"] = sig
         body = json.dumps(signed).encode()
         try:

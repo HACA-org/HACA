@@ -3,7 +3,7 @@
   "skills": [
     {
       "name": "cmi_send",
-      "desc": "Send a message to an active CMI channel (general broadcast, peer-directed, or Blackboard contribution).",
+      "desc": "Send a message to an active CMI channel. Routes through the local CMI endpoint declared in the structural baseline.",
       "manifest": "skills/lib/cmi_send/manifest.json",
       "class": "builtin"
     },
@@ -54,12 +54,6 @@
       "desc": "Text-only sub-agent for isolated analysis tasks (summarization, cross-reference, classification). No tool or filesystem access.",
       "manifest": "skills/lib/worker_skill/manifest.json",
       "class": "builtin"
-    },
-    {
-      "name": "hello_world",
-      "desc": "A simple greeting skill that demonstrates the HACA-Core expansion mechanism.",
-      "manifest": "skills/hello_world/manifest.json",
-      "class": "custom"
     }
   ],
   "aliases": {}
