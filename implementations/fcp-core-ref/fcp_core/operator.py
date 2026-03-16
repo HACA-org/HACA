@@ -772,6 +772,14 @@ def _cron_list(layout: Layout) -> None:
         print(f"         {desc}")
 
 
+def _build_wake_up_message(task: str, executor: str, tools: str = "") -> str:
+    """Generate wake_up_message from task fields."""
+    msg = f"[Task] {task}"
+    if executor == "cpe" and tools:
+        msg += f"\n[Tools] {tools}"
+    return msg
+
+
 def _cron_add_interactive(layout: Layout) -> None:
     """Prompt Operator interactively for all cron fields, then save as approved."""
     import datetime as _dt
@@ -781,7 +789,6 @@ def _cron_add_interactive(layout: Layout) -> None:
         ("tools",       "Tools/skills (leave blank if none): "),
         ("task",        "Task (clear, verifiable instruction): "),
         ("schedule",    "Schedule (cron expression, e.g. 0 9 * * 1-5): "),
-        ("wake_up_message", "Wake-up message (exact instruction for CPE/worker): "),
     ]
     values: dict[str, str] = {}
     print()
@@ -797,17 +804,19 @@ def _cron_add_interactive(layout: Layout) -> None:
     if executor not in ("worker", "cpe"):
         print("  invalid executor — must be 'worker' or 'cpe'. aborted.")
         return
-    required = ("description", "task", "schedule", "wake_up_message")
+    required = ("description", "task", "schedule")
     if not all(values.get(f) for f in required):
         print("  missing required fields. aborted.")
         return
+
+    wake_up_message = _build_wake_up_message(values["task"], executor, values.get("tools", ""))
 
     print(f"\n  description   : {values['description']}")
     print(f"  executor      : {executor}")
     print(f"  tools         : {values.get('tools') or '(none)'}")
     print(f"  task          : {values['task']}")
     print(f"  schedule      : {values['schedule']}")
-    print(f"  wake_up_msg   : {values['wake_up_message']}")
+    print(f"  wake_up_msg   : {wake_up_message}")
     try:
         confirm = input("\n  Save and approve? [y/N] ").strip().lower()
     except EOFError:
@@ -826,7 +835,7 @@ def _cron_add_interactive(layout: Layout) -> None:
         "tools": values.get("tools", ""),
         "task": values["task"],
         "schedule": values["schedule"],
-        "wake_up_message": values["wake_up_message"],
+        "wake_up_message": wake_up_message,
         "proposed_at": now,
         "approved_at": now,
         "last_run": None,

@@ -305,21 +305,26 @@ def _stage3_endure(layout: Layout) -> None:
 
             # cron_add: registers a scheduled task in state/agenda.json
             if op == "cron_add":
-                required = ("description", "executor", "task", "schedule", "wake_up_message")
+                required = ("description", "executor", "task", "schedule")
                 if not all(change.get(f) for f in required):
                     continue
                 executor = change.get("executor", "")
                 if executor not in ("worker", "cpe"):
                     continue
+                task_val = change.get("task", "")
+                tools_val = change.get("tools", "")
+                wake_up_message = f"[Task] {task_val}"
+                if executor == "cpe" and tools_val:
+                    wake_up_message += f"\n[Tools] {tools_val}"
                 task_entry: dict[str, Any] = {
                     "id": f"cron_{uuid.uuid4().hex[:12]}",
                     "status": "pending",
                     "executor": executor,
                     "description": change.get("description", ""),
-                    "tools": change.get("tools", ""),
-                    "task": change.get("task", ""),
+                    "tools": tools_val,
+                    "task": task_val,
                     "schedule": change.get("schedule", ""),
-                    "wake_up_message": change.get("wake_up_message", ""),
+                    "wake_up_message": wake_up_message,
                     "proposed_at": datetime.datetime.utcnow().isoformat() + "Z",
                     "approved_at": None,
                     "last_run": None,
