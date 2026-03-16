@@ -20,8 +20,8 @@ Do NOT use `worker_skill` when:
 ## Parameters
 
 - `task` (required) — task description to give the worker sub-agent.
-- `context` — additional context prepended to the task message (e.g. file contents).
-- `persona` — system prompt for the worker. Defaults to a generic focused sub-agent.
+- `context` (required) — material the worker will reason over (file contents, data, text). Must be non-trivial — if you can pass nothing meaningful, reconsider whether worker_skill is the right tool.
+- `persona` (required) — system prompt defining the worker's role and focus (e.g. "You are a technical writer summarizing changelogs.").
 
 ## Notes
 

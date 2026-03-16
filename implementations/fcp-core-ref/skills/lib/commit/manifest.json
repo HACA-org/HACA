@@ -14,6 +14,6 @@
       "message": {"type": "string", "description": "Commit message."},
       "remote": {"type": "boolean", "description": "If true, push to origin after committing."}
     },
-    "required": ["path"]
+    "required": ["path", "message"]
   }
 }

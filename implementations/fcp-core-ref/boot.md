@@ -80,6 +80,8 @@ Do NOT use worker_skill when:
 
 The worker has no access to tools or the filesystem. It can only reason over the text you provide and return text. If you ask it to write a file, it will not — you must do it yourself with `file_writer`.
 
+All three params are required: `task`, `context`, and `persona`. This forces deliberate use — if you cannot define a meaningful context and persona, reconsider whether worker_skill is the right tool.
+
 ---
 
 ## Session Close

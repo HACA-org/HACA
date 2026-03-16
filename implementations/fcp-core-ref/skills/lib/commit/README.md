@@ -12,7 +12,7 @@ Stage and commit a path within `workspace_focus`. This is the only version-contr
 ## Parameters
 
 - `path` (required) — path within `workspace_focus` to stage and commit.
-- `message` — commit message. Defaults to a generic message if omitted.
+- `message` (required) — commit message.
 - `remote` — if `true`, push to origin after committing.
 
 ## Notes
