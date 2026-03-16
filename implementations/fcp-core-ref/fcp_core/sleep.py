@@ -69,14 +69,14 @@ def run_sleep_cycle(layout: Layout) -> None:
     from .hooks import run_hook
     run_hook(layout, "post_endure", {})
 
+    # Convert any unresolved SEVERANCE_COMMIT entries to SEVERANCE_PENDING
+    _promote_severance_pending(layout)
+
     # Write SLEEP_COMPLETE
     _write_sleep_complete(layout)
 
     # Remove session token (last act)
     _remove_session_token(layout)
-
-    # Convert any unresolved SEVERANCE_COMMIT entries to SEVERANCE_PENDING
-    _promote_severance_pending(layout)
 
 
 # ---------------------------------------------------------------------------
@@ -173,25 +173,30 @@ def _promote_severance_pending(layout: Layout) -> None:
     cleared_seqs: set[int] = set()
 
     for i, entry in enumerate(entries):
-        if entry.get("type") == "CRITICAL_CLEARED":
+        raw_data = entry.get("data", "{}")
+        try:
+            data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+        except Exception:
+            continue
+        if isinstance(data, dict) and data.get("type") == "CRITICAL_CLEARED":
             try:
-                data = json.loads(entry.get("data", "{}"))
                 cleared_seqs.add(int(data.get("clears_seq", -1)))
             except Exception:
                 pass
 
     for i, entry in enumerate(entries):
-        if entry.get("type") == "SEVERANCE_COMMIT":
+        raw_data = entry.get("data", "{}")
+        try:
+            data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+        except Exception:
+            continue
+        if isinstance(data, dict) and data.get("type") == "SEVERANCE_COMMIT":
             seq = i + 1  # 1-indexed
             if seq not in cleared_seqs:
-                try:
-                    detail = json.loads(entry.get("data", "{}"))
-                except Exception:
-                    detail = {}
-                log_critical(layout, "SEVERANCE_PENDING", detail)
+                log_critical(layout, "SEVERANCE_PENDING", data)
                 write_notification(layout, "critical", {
                     "type": "SEVERANCE_PENDING",
-                    "detail": detail,
+                    "detail": data,
                 })
 
 
@@ -378,7 +383,7 @@ def _stage3_endure(layout: Layout) -> None:
 
 def _index_skill(layout: Layout, skill_name: str, manifest: dict[str, Any]) -> None:
     """Add or update a skill entry in skills/index.json after skill_install."""
-    index_path = layout.root / "skills" / "index.json"
+    index_path = layout.skills_index
     if not index_path.exists():
         return
     try:
@@ -408,14 +413,28 @@ def _deep_merge(base: dict[str, Any], patch: dict[str, Any]) -> None:
 
 
 def _collect_authorized_proposals(layout: Layout) -> list[dict[str, Any]]:
-    """Collect EVOLUTION_AUTH records from integrity.log that have no SLEEP_COMPLETE after them."""
+    """Collect EVOLUTION_AUTH records from integrity.log that have no SLEEP_COMPLETE after them.
+
+    Only proposals that appear after the last SLEEP_COMPLETE are pending execution.
+    """
     if not layout.integrity_log.exists():
         return []
-    proposals: list[dict[str, Any]] = []
-    for line in layout.integrity_log.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
+
+    # Find the index of the last SLEEP_COMPLETE — only proposals after it are pending.
+    lines = [l.strip() for l in layout.integrity_log.read_text(encoding="utf-8").splitlines() if l.strip()]
+    last_sleep_idx = -1
+    for i, line in enumerate(lines):
+        try:
+            rec = json.loads(line)
+            raw_data = rec.get("data", "{}")
+            data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+            if isinstance(data, dict) and data.get("type") == "SLEEP_COMPLETE":
+                last_sleep_idx = i
+        except Exception:
             continue
+
+    proposals: list[dict[str, Any]] = []
+    for line in lines[last_sleep_idx + 1:]:
         try:
             rec = json.loads(line)
             raw_data = rec.get("data", "{}")
