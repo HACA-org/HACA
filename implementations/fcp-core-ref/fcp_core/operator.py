@@ -743,8 +743,7 @@ def _cmd_help() -> None:
     /skill audit <name>          — audit a skill
 
   Model & endure:
-    /model                       — interactive model picker (active model highlighted)
-    /model list                  — alias for /model
+    /model [list]                — interactive model picker (active model highlighted)
     /endure list                 — list pending Evolution Proposals
     /endure approve <n>          — approve proposal by index
     /endure reject <n>           — reject proposal by index
