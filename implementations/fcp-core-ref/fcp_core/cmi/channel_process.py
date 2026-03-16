@@ -23,7 +23,8 @@ Architecture:
 
     Host endpoints (served by this process when role=host):
         GET  /ping                     — liveness check
-        POST /channel/<id>/enroll      — peer enrollment request
+        POST /channel/<id>/ready       — peer announces readiness; host issues Enrollment Token
+        POST /channel/<id>/enroll      — peer enrollment request (requires Enrollment Token)
         POST /channel/<id>/message     — peer sends msg:general or msg:peer
         POST /channel/<id>/contribute  — peer submits msg:bb (Blackboard contribution)
         POST /channel/<id>/close       — operator signals close
@@ -112,6 +113,7 @@ class ChannelProcess:
         self._closing = threading.Event()
         self._bb_seq = 0
         self._enrolled_peers: list[dict[str, Any]] = []  # [{node_identity, endpoint, pubkey, role}]
+        self._enrollment_tokens: dict[str, dict[str, Any]] = {}  # token → {node_identity, role, expiry, used}
         self._lock = threading.Lock()
 
         # Load config
@@ -139,8 +141,8 @@ class ChannelProcess:
         _log(f"[CMI] {self.role} process started: chan={self.chan_id} endpoint={endpoint}")
         self._update_participants_status("active")
 
-        if self.role == "host":
-            self._emit_enrollment_invites()
+        if self.role == "peer":
+            threading.Thread(target=self._announce_ready, daemon=True).start()
 
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
@@ -183,7 +185,9 @@ class ChannelProcess:
                     self._bad_request("invalid JSON")
                     return
 
-                if self.path == f"/channel/{process.chan_id}/enroll":
+                if self.path == f"/channel/{process.chan_id}/ready":
+                    process._handle_ready(self, payload)
+                elif self.path == f"/channel/{process.chan_id}/enroll":
                     process._handle_enroll(self, payload)
                 elif self.path == f"/channel/{process.chan_id}/message":
                     process._handle_message(self, payload)
@@ -239,7 +243,7 @@ class ChannelProcess:
         node_identity = payload.get("node_identity", "")
         sig = payload.get("sig", "")
         endpoint = payload.get("endpoint", "")
-        pubkey = payload.get("pubkey", "")
+        token = payload.get("enrollment_token", "")
 
         # Validate against trusted_peers
         peer_cfg = self._find_trusted_peer(node_identity)
@@ -250,17 +254,36 @@ class ChannelProcess:
 
         # Verify signature over payload minus "sig"
         check = {k: v for k, v in payload.items() if k != "sig"}
-        if not self._verify(pubkey or peer_cfg.get("pubkey", ""), check, sig):
+        if not self._verify(peer_cfg.get("pubkey", ""), check, sig):
             self._log_mif("MIF-AUTH", f"enrollment auth failure: {node_identity[:20]}")
             handler._forbidden("authentication failure")
             return
 
-        # Check channel participant list
-        declared = self._channel_cfg.get("participants", [])
-        if node_identity not in declared:
-            self._log_mif("MIF-ENROLL", f"node not in channel participant list: {node_identity[:20]}")
-            handler._forbidden("not in channel participant list")
+        # Validate Enrollment Token (private channels require a token)
+        with self._lock:
+            token_data = self._enrollment_tokens.get(token)
+        if token_data is None:
+            self._log_mif("MIF-ENROLL", f"missing or invalid enrollment token: {node_identity[:20]}")
+            handler._forbidden("invalid enrollment token")
             return
+        if token_data.get("used"):
+            self._log_mif("MIF-ENROLL", f"enrollment token already used: {node_identity[:20]}")
+            handler._forbidden("enrollment token already used")
+            return
+        if int(time.time()) > token_data.get("expiry", 0):
+            self._log_mif("MIF-ENROLL", f"enrollment token expired: {node_identity[:20]}")
+            handler._forbidden("enrollment token expired")
+            return
+        if token_data.get("node_identity") != node_identity:
+            self._log_mif("MIF-AUTH", f"enrollment token node_identity mismatch: {node_identity[:20]}")
+            handler._forbidden("enrollment token mismatch")
+            return
+
+        # Mark token as used (single-use)
+        with self._lock:
+            self._enrollment_tokens[token]["used"] = True
+
+        assigned_role = token_data.get("role", "peer")
 
         with self._lock:
             # Replace existing entry if reconnecting
@@ -268,14 +291,14 @@ class ChannelProcess:
             self._enrolled_peers.append({
                 "node_identity": node_identity,
                 "endpoint": endpoint,
-                "pubkey": pubkey or peer_cfg.get("pubkey", ""),
-                "role": "peer",
+                "pubkey": peer_cfg.get("pubkey", ""),
+                "role": assigned_role,
             })
             self._save_participants()
 
         # Send current BB state as response (late-joiner support)
         bb_entries = self._read_bb()
-        handler._ok({"enrolled": True, "role": "peer", "blackboard": bb_entries})
+        handler._ok({"enrolled": True, "role": assigned_role, "blackboard": bb_entries})
         _log(f"[CMI] enrolled peer: {node_identity[:20]}... on {self.chan_id}")
         self._write_inbox_stimulus("CMI_CONTROL", {
             "event": "peer_enrolled",
@@ -283,33 +306,154 @@ class ChannelProcess:
             "chan_id": self.chan_id,
         })
 
-    def _emit_enrollment_invites(self) -> None:
-        """Host sends enrollment tokens to declared participants at channel open."""
+    def _handle_ready(self, handler, payload: dict) -> None:
+        """Host receives a ready announcement from a peer — issues an Enrollment Token."""
+        import secrets
         if self.role != "host":
+            handler._forbidden("not host")
             return
+
+        node_identity = payload.get("node_identity", "")
+        sig = payload.get("sig", "")
+
+        peer_cfg = self._find_trusted_peer(node_identity)
+        if peer_cfg is None:
+            self._log_mif("MIF-ENROLL", f"ready from unknown node: {node_identity[:20]}")
+            handler._forbidden("not in trusted peers")
+            return
+
+        check = {k: v for k, v in payload.items() if k != "sig"}
+        if not self._verify(peer_cfg.get("pubkey", ""), check, sig):
+            self._log_mif("MIF-AUTH", f"ready auth failure: {node_identity[:20]}")
+            handler._forbidden("authentication failure")
+            return
+
+        declared = self._channel_cfg.get("participants", [])
+        if node_identity not in declared:
+            self._log_mif("MIF-ENROLL", f"node not in channel participant list: {node_identity[:20]}")
+            handler._forbidden("not in channel participant list")
+            return
+
+        # Issue single-use Enrollment Token (TTL: 5 minutes)
+        token = secrets.token_hex(32)
+        with self._lock:
+            self._enrollment_tokens[token] = {
+                "node_identity": node_identity,
+                "role": "peer",
+                "expiry": int(time.time()) + 300,
+                "used": False,
+            }
+
+        handler._ok({
+            "enrollment_token": token,
+            "chan_id": self.chan_id,
+            "task": self._channel_cfg.get("task", ""),
+            "host_endpoint": self._cmi_cfg.get("endpoint", ""),
+            "role": "peer",
+        })
+        _log(f"[CMI] enrollment token issued to: {node_identity[:20]}...")
+
+    def _announce_ready(self) -> None:
+        """Peer announces readiness to host — retries until host is reachable."""
         if self._credential is None:
             return
-        participants = self._channel_cfg.get("participants", [])
         my_ni = self._credential.get("node_identity", "")
+        my_endpoint = self._cmi_cfg.get("endpoint", "")
+
+        # Find host endpoint from trusted_peers (first FULL peer that is the host)
+        participants = self._channel_cfg.get("participants", [])
+        host_endpoint = ""
         for ni in participants:
             if ni == my_ni:
                 continue
             peer_cfg = self._find_trusted_peer(ni)
-            if peer_cfg is None:
-                continue
-            peer_endpoint = peer_cfg.get("endpoint", "")
-            if not peer_endpoint:
-                continue
-            invite = {
-                "type": "CMI_INVITE",
-                "chan_id": self.chan_id,
-                "task": self._channel_cfg.get("task", ""),
-                "host_identity": my_ni,
-                "host_endpoint": self._cmi_cfg.get("endpoint", ""),
-                "role": "peer",
-            }
-            self._sign_and_post(peer_endpoint + f"/channel/{self.chan_id}/stimulus", invite)
-            _log(f"[CMI] invite sent to: {ni[:20]}...")
+            if peer_cfg:
+                host_endpoint = peer_cfg.get("endpoint", "")
+                break
+
+        if not host_endpoint:
+            _log("[CMI] peer: no host endpoint found — cannot announce ready")
+            return
+
+        payload = {
+            "type": "CMI_READY",
+            "chan_id": self.chan_id,
+            "node_identity": my_ni,
+            "endpoint": my_endpoint,
+            "from": my_ni,
+        }
+
+        for attempt in range(1, 11):
+            if self._closing.is_set():
+                return
+            signed = dict(payload)
+            from .identity import sign_message
+            privkey = self._credential.get("privkey", "")
+            data = json.dumps(signed, sort_keys=True).encode()
+            signed["sig"] = sign_message(privkey, data)
+
+            try:
+                body = json.dumps(signed).encode()
+                req = Request(
+                    host_endpoint + f"/channel/{self.chan_id}/ready",
+                    data=body, headers={"Content-Type": "application/json"}, method="POST",
+                )
+                with urlopen(req, timeout=5) as resp:
+                    result = json.loads(resp.read().decode())
+                token = result.get("enrollment_token", "")
+                if token:
+                    _log(f"[CMI] peer: received enrollment token — enrolling...")
+                    self._enroll_with_token(host_endpoint, token)
+                    return
+            except Exception as exc:
+                _log(f"[CMI] peer: ready attempt {attempt}/10 failed: {exc}")
+                time.sleep(2)
+
+        _log("[CMI] peer: exhausted ready attempts — enrollment failed")
+
+    def _enroll_with_token(self, host_endpoint: str, token: str) -> None:
+        """Peer uses an Enrollment Token to enroll with the host."""
+        if self._credential is None:
+            return
+        my_ni = self._credential.get("node_identity", "")
+        my_endpoint = self._cmi_cfg.get("endpoint", "")
+        privkey = self._credential.get("privkey", "")
+
+        payload = {
+            "type": "CMI_ENROLL",
+            "chan_id": self.chan_id,
+            "node_identity": my_ni,
+            "endpoint": my_endpoint,
+            "enrollment_token": token,
+            "from": my_ni,
+        }
+        from .identity import sign_message
+        data = json.dumps(payload, sort_keys=True).encode()
+        payload["sig"] = sign_message(privkey, data)
+
+        try:
+            body = json.dumps(payload).encode()
+            req = Request(
+                host_endpoint + f"/channel/{self.chan_id}/enroll",
+                data=body, headers={"Content-Type": "application/json"}, method="POST",
+            )
+            with urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read().decode())
+            if result.get("enrolled"):
+                _log(f"[CMI] peer: enrolled on {self.chan_id} role:{result.get('role')}")
+                self._update_participants_status("active")
+                # Write CMI_INVITE stimulus to CPE inbox with task context
+                self._write_inbox_stimulus("CMI_CONTROL", {
+                    "event": "enrolled",
+                    "chan_id": self.chan_id,
+                    "role": result.get("role", "peer"),
+                    "task": self._channel_cfg.get("task", ""),
+                    "blackboard": result.get("blackboard", []),
+                })
+            else:
+                _log(f"[CMI] peer: enrollment rejected: {result}")
+        except Exception as exc:
+            _log(f"[CMI] peer: enrollment failed: {exc}")
 
     # -----------------------------------------------------------------------
     # Host: ephemeral messages (msg:general, msg:peer)
