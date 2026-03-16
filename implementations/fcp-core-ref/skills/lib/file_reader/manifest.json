@@ -10,7 +10,9 @@
   "params": {
     "type": "object",
     "properties": {
-      "path": {"type": "string", "description": "Path relative to workspace/ to read."}
+      "path": {"type": "string", "description": "Path relative to workspace/ to read."},
+      "offset": {"type": "integer", "description": "First line to read (1-indexed). Defaults to 1."},
+      "limit": {"type": "integer", "description": "Maximum number of lines to return."}
     },
     "required": ["path"]
   }

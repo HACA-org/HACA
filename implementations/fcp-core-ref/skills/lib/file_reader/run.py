@@ -34,8 +34,20 @@ def main() -> None:
         print(json.dumps({"path": path_param, "type": "directory", "entries": entries}))
         return
 
-    content = target.read_text(encoding="utf-8", errors="replace")
-    print(json.dumps({"path": path_param, "content": content}))
+    lines = target.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+    total = len(lines)
+
+    offset = params.get("offset")
+    limit = params.get("limit")
+
+    start = max(0, int(offset) - 1) if offset is not None else 0
+    end = min(total, start + int(limit)) if limit is not None else total
+
+    content = "".join(lines[start:end])
+    result: dict = {"path": path_param, "content": content, "total_lines": total}
+    if offset is not None or limit is not None:
+        result["lines"] = f"{start + 1}-{end}"
+    print(json.dumps(result))
 
 
 main()
