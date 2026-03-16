@@ -207,6 +207,8 @@ class ChannelProcess:
                     self._ok({"status": "ok", "ts": int(time.time())})
                 elif self.path == f"/channel/{process.chan_id}/bb":
                     process._handle_bb_get(self)
+                elif self.path == f"/channel/{process.chan_id}/status":
+                    process._handle_status_get(self)
                 else:
                     self._not_found()
 
@@ -509,6 +511,10 @@ class ChannelProcess:
         if self.role != "host":
             handler._forbidden("not host")
             return
+        ch_status = self._channel_cfg.get("status", "active")
+        if ch_status in ("closing", "closed"):
+            handler._forbidden(f"channel is {ch_status} — no new messages permitted")
+            return
 
         node_identity = payload.get("from", "")
         sig = payload.get("sig", "")
@@ -565,6 +571,10 @@ class ChannelProcess:
         """Host receives a BB contribution from a peer (msg:bb)."""
         if self.role != "host":
             handler._forbidden("not host")
+            return
+        ch_status = self._channel_cfg.get("status", "active")
+        if ch_status in ("closing", "closed"):
+            handler._forbidden(f"channel is {ch_status} — no new contributions permitted")
             return
 
         node_identity = payload.get("from", "")
@@ -706,6 +716,20 @@ class ChannelProcess:
     def _handle_bb_get(self, handler) -> None:
         entries = self._read_bb()
         handler._ok({"chan_id": self.chan_id, "entries": entries})
+
+    def _handle_status_get(self, handler) -> None:
+        with self._lock:
+            peers = list(self._enrolled_peers)
+        handler._ok({
+            "chan_id": self.chan_id,
+            "role": self.role,
+            "status": self._channel_cfg.get("status", "active"),
+            "task": self._channel_cfg.get("task", ""),
+            "participants": [
+                {"node_identity": p["node_identity"], "role": p.get("role", "peer")}
+                for p in peers
+            ],
+        })
 
     def _append_bb(self, entry: dict) -> None:
         bb_path = self.layout.cmi_blackboard(self.chan_id)

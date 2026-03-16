@@ -1,0 +1,25 @@
+{
+  "name": "cmi_req",
+  "version": "1.0.0",
+  "description": "Read state from an active CMI channel. 'bb' returns all Blackboard entries; 'status' returns channel status and enrolled participants. Available during active and closing states. Closed channels return an error.",
+  "timeout_seconds": 10,
+  "background": false,
+  "irreversible": false,
+  "class": "builtin",
+  "permissions": ["network"],
+  "params": {
+    "type": "object",
+    "properties": {
+      "op": {
+        "type": "string",
+        "description": "Operation: 'bb' to read the Blackboard, 'status' to get channel status and participants.",
+        "enum": ["bb", "status"]
+      },
+      "chan_id": {
+        "type": "string",
+        "description": "Channel identifier (e.g. chan_<uuid>)."
+      }
+    },
+    "required": ["op", "chan_id"]
+  }
+}
