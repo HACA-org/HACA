@@ -421,7 +421,7 @@ def _inbox_clear(layout: Layout) -> None:
 
 def _cmd_work(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /work set <subdir> | clone <repo>")
+        print("  usage: /work set <subdir> | clone <repo> | status | clear")
         return
     sub = args[0].lower()
     if sub == "set" and len(args) > 1:
