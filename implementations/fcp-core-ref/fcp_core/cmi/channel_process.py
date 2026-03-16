@@ -733,17 +733,23 @@ class ChannelProcess:
     # -----------------------------------------------------------------------
 
     def _write_inbox_stimulus(self, msg_type: str, payload: dict) -> None:
-        """Write a CMI stimulus to io/inbox/ for the CPE to process."""
-        from ..store import atomic_write
-        ts = int(time.time() * 1000)
-        envelope = {
+        """Write a CMI stimulus to io/inbox/ for the CPE to process (ACP format)."""
+        from ..acp import make as acp_make, ACPEnvelope, encode, _MSG_SUFFIX
+        import os
+        data = {
             "type": msg_type,
             "channel_id": self.chan_id,
-            "ts": ts,
-            **{k: v for k, v in payload.items() if k not in ("type", "channel_id", "ts")},
+            **{k: v for k, v in payload.items() if k not in ("type", "channel_id")},
         }
-        dest = self.layout.inbox_dir / f"{ts}_cmi_{msg_type.lower()}.json"
-        atomic_write(dest, envelope)
+        raw = acp_make(env_type="MSG", source="cmi", data=data)
+        env = ACPEnvelope.from_dict(raw)
+        ts_ms = int(time.time() * 1000)
+        name = f"{ts_ms}_cmi_{msg_type.lower()}{_MSG_SUFFIX}"
+        self.layout.spool_dir.mkdir(parents=True, exist_ok=True)
+        spool_path = self.layout.spool_dir / name
+        inbox_path = self.layout.inbox_dir / name
+        spool_path.write_text(encode(env), encoding="utf-8")
+        os.rename(str(spool_path), str(inbox_path))
 
     # -----------------------------------------------------------------------
     # State persistence

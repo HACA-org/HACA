@@ -443,6 +443,20 @@ def _format_cmi_stimulus(env: dict[str, Any]) -> str:
                 f"The Blackboard is now final. Review it with `/cmi bb {chan_id}` "
                 f"and decide what to preserve in memory."
             )
+        if event == "enrolled":
+            role = env.get("role", "peer")
+            task = env.get("task", "")
+            bb = env.get("blackboard", [])
+            bb_note = f" Blackboard has {len(bb)} existing contribution(s)." if bb else ""
+            return (
+                f"[CMI] You have been enrolled in channel {chan_id} as {role}.\n"
+                f"Task: {task}{bb_note}\n"
+                f"Use `cmi_send` to participate."
+            )
+        if event == "peer_enrolled":
+            ni = env.get("node_identity", "?")
+            ni_short = ni[:16] + "..." if len(ni) > 16 else ni
+            return f"[CMI] Peer enrolled on channel {chan_id}: {ni_short}"
         return f"[CMI] Control event on channel {chan_id}: {event}"
 
     if msg_type == "CMI_MSG_GENERAL":
@@ -466,11 +480,6 @@ def _format_cmi_stimulus(env: dict[str, Any]) -> str:
 
 def _envelope_to_text(env: dict[str, Any]) -> str:
     """Extract displayable text from an ACP envelope for chat history injection."""
-    # CMI stimuli arrive directly (not wrapped in ACP) — handle separately
-    env_type = env.get("type", "")
-    if isinstance(env_type, str) and env_type.startswith("CMI_"):
-        return _format_cmi_stimulus(env)
-
     raw_data = env.get("data", "")
     if isinstance(raw_data, str):
         try:
@@ -480,8 +489,12 @@ def _envelope_to_text(env: dict[str, Any]) -> str:
     else:
         data = raw_data
 
+    # CMI stimuli are wrapped in ACP (source=cmi) — data.type starts with CMI_
     if isinstance(data, dict):
-        if data.get("type") in _SYSTEM_TYPES:
+        data_type = data.get("type", "")
+        if isinstance(data_type, str) and data_type.startswith("CMI_"):
+            return _format_cmi_stimulus(data)
+        if data_type in _SYSTEM_TYPES:
             return ""
         return json.dumps(data, ensure_ascii=False)
     if isinstance(data, str):

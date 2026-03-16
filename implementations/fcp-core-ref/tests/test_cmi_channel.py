@@ -8,7 +8,14 @@ from pathlib import Path
 from fcp_core.store import Layout, atomic_write, read_json, read_jsonl
 from fcp_core.cmi.identity import generate_cmi_credential
 from fcp_core.cmi.channel_process import ChannelProcess
+from fcp_core.acp import decode as acp_decode
 from tests.helpers import make_layout
+
+
+def _read_inbox_data(path: Path) -> dict:
+    """Read an ACP .msg file and return the decoded data dict."""
+    env = acp_decode(path.read_text(encoding="utf-8"))
+    return json.loads(env.data)
 
 
 CHAN_ID = "chan_test0001"
@@ -210,7 +217,7 @@ class TestInboxStimulus(unittest.TestCase):
         self.assertGreater(len(files), 0)
         found = [f for f in files if "cmi_msg_general" in f.name]
         self.assertEqual(len(found), 1)
-        data = read_json(found[0])
+        data = _read_inbox_data(found[0])
         self.assertEqual(data["type"], "CMI_MSG_GENERAL")
         self.assertEqual(data["channel_id"], CHAN_ID)
         self.assertEqual(data["content"], "hello from peer")
@@ -224,7 +231,7 @@ class TestInboxStimulus(unittest.TestCase):
         found = [f for f in self.layout.inbox_dir.iterdir()
                  if "cmi_msg_peer" in f.name]
         self.assertEqual(len(found), 1)
-        data = read_json(found[0])
+        data = _read_inbox_data(found[0])
         self.assertEqual(data["type"], "CMI_MSG_PEER")
         self.assertEqual(data["to"], "sha256:alice")
 
@@ -237,7 +244,7 @@ class TestInboxStimulus(unittest.TestCase):
         files = [f for f in self.layout.inbox_dir.iterdir()
                  if "cmi_msg_bb" in f.name]
         self.assertEqual(len(files), 1)
-        data = read_json(files[0])
+        data = _read_inbox_data(files[0])
         self.assertEqual(data["seq"], 5)
         self.assertEqual(data["type"], "CMI_MSG_BB")
 
@@ -304,7 +311,7 @@ class TestHandleMessage(unittest.TestCase):
         found = [f for f in self.layout.inbox_dir.iterdir()
                  if "cmi_msg_general" in f.name]
         self.assertEqual(len(found), 1)
-        data = read_json(found[0])
+        data = _read_inbox_data(found[0])
         self.assertEqual(data["type"], "CMI_MSG_GENERAL")
 
     def test_msg_peer_accepted_with_to(self):
@@ -322,7 +329,7 @@ class TestHandleMessage(unittest.TestCase):
         found = [f for f in self.layout.inbox_dir.iterdir()
                  if "cmi_msg_peer" in f.name]
         self.assertEqual(len(found), 1)
-        data = read_json(found[0])
+        data = _read_inbox_data(found[0])
         self.assertEqual(data["to"], target_ni)
 
     def test_msg_peer_without_to_rejected(self):
