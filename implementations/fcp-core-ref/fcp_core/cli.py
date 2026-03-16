@@ -84,8 +84,13 @@ def _main() -> None:
         _run_model(Layout(entity_root))
         return
 
+    if cmd == "--auto" and rest:
+        from .store import Layout
+        _run_auto(Layout(entity_root), rest[0])
+        return
+
     print(f"unknown command: {cmd}")
-    print("usage: ./fcp-core [init | model | doctor [--fix] | decommission --archive|--destroy]")
+    print("usage: ./fcp-core [init | model | doctor [--fix] | decommission --archive|--destroy | --auto <cron_id>]")
     sys.exit(1)
 
 
@@ -175,6 +180,149 @@ def _run_normal(layout: "Layout") -> None:
             index = read_json(layout.skills_index)
 
     print("[FCP-Core] Session complete.")
+
+
+# ---------------------------------------------------------------------------
+# Auto session — triggered by host cron
+# ---------------------------------------------------------------------------
+
+def _run_auto(layout: "Layout", cron_id: str) -> None:
+    """Execute a scheduled task autonomously, without an Operator session."""
+    import json
+    from .boot import run as boot_run, BootError
+    from .cpe.base import make_adapter
+    from .fap import FAPError
+    from .sleep import run_sleep_cycle
+    from .store import read_json
+    from .sil import write_notification
+
+    # Load agenda and find task
+    if not layout.agenda.exists():
+        print(f"[FCP-Auto] agenda not found — no task to run")
+        sys.exit(1)
+    try:
+        agenda = json.loads(layout.agenda.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"[FCP-Auto] could not read agenda: {exc}")
+        sys.exit(1)
+    task = next((t for t in agenda.get("tasks", []) if t.get("id") == cron_id), None)
+    if task is None:
+        print(f"[FCP-Auto] task not found: {cron_id}")
+        sys.exit(1)
+    if task.get("status") != "approved":
+        print(f"[FCP-Auto] task not approved: {cron_id} (status: {task.get('status')})")
+        sys.exit(1)
+
+    executor = task.get("executor", "cpe")
+    wake_up_message = task.get("wake_up_message", "")
+    description = task.get("description", cron_id)
+
+    print(f"[FCP-Auto] starting — {description} ({executor})")
+
+    # executor: worker — invoke worker_skill directly, no session needed
+    if executor == "worker":
+        _run_auto_worker(layout, task, wake_up_message)
+        return
+
+    # executor: cpe — full auto_session
+    try:
+        boot_run(layout)
+    except FAPError as exc:
+        print(f"[FAP FAILED] {exc}")
+        sys.exit(1)
+    except BootError as exc:
+        print(f"[BOOT FAILED] {exc}")
+        sys.exit(1)
+
+    _load_env_file()
+
+    try:
+        baseline = read_json(layout.baseline)
+        cpe_cfg = baseline.get("cpe", {})
+        adapter = make_adapter(
+            backend=cpe_cfg.get("backend", "ollama"),
+            model=cpe_cfg.get("model", ""),
+            api_key="",
+        )
+    except Exception as exc:
+        print(f"[CPE ERROR] {exc}")
+        sys.exit(1)
+
+    index: dict = {}
+    if layout.skills_index.exists():
+        index = read_json(layout.skills_index)
+
+    # Inject wake_up as first stimulus via first-stimuli.json
+    from .store import atomic_write
+    atomic_write(layout.first_stimuli, {"message": wake_up_message, "source": "cron", "cron_id": cron_id})
+
+    from .session import run_session
+    run_session(layout, adapter, index)
+
+    try:
+        run_sleep_cycle(layout)
+    except Exception as exc:
+        print(f"[SLEEP CYCLE ERROR] {exc}")
+
+    # Update last_run in agenda
+    import datetime as _dt
+    task["last_run"] = _dt.datetime.utcnow().isoformat() + "Z"
+    atomic_write(layout.agenda, agenda)
+
+    write_notification(layout, "auto_session_complete", {
+        "cron_id": cron_id,
+        "description": description,
+        "last_run": task["last_run"],
+    })
+    print(f"[FCP-Auto] complete — {cron_id}")
+
+
+def _run_auto_worker(layout: "Layout", task: dict, wake_up_message: str) -> None:
+    """Run a worker_skill task directly without a CPE session."""
+    import datetime as _dt
+    import json
+    from .store import atomic_write, read_json
+    from .sil import write_notification
+    from .exec_ import dispatch
+
+    _load_env_file()
+
+    index: dict = {}
+    if layout.skills_index.exists():
+        index = read_json(layout.skills_index)
+
+    cron_id = task.get("id", "")
+    description = task.get("description", cron_id)
+
+    try:
+        result = dispatch(layout, "worker_skill", {
+            "task": wake_up_message,
+            "context": task.get("task", ""),
+            "persona": "FCP autonomous worker",
+        }, index)
+    except Exception as exc:
+        result = f"error: {exc}"
+
+    now = _dt.datetime.utcnow().isoformat() + "Z"
+
+    # Update last_run
+    if layout.agenda.exists():
+        try:
+            agenda = json.loads(layout.agenda.read_text(encoding="utf-8"))
+            for t in agenda.get("tasks", []):
+                if t.get("id") == cron_id:
+                    t["last_run"] = now
+            atomic_write(layout.agenda, agenda)
+        except Exception:
+            pass
+
+    write_notification(layout, "auto_worker_complete", {
+        "cron_id": cron_id,
+        "description": description,
+        "result": result,
+        "last_run": now,
+    })
+    print(f"[FCP-Auto] worker complete — {cron_id}")
 
 
 # ---------------------------------------------------------------------------

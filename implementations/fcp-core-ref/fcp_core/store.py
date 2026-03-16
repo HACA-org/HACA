@@ -198,6 +198,10 @@ class Layout:
         return self.root / "state" / "operator_notifications"
 
     @property
+    def agenda(self) -> Path:
+        return self.root / "state" / "agenda.json"
+
+    @property
     def first_stimuli(self) -> Path:
         return self.root / "state" / "first-stimuli.json"
 

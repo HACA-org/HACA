@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -300,6 +301,44 @@ def _stage3_endure(layout: Layout) -> None:
                     _index_skill(layout, skill_name, m)
                 except Exception:
                     continue
+                continue
+
+            # cron_add: registers a scheduled task in state/agenda.json
+            if op == "cron_add":
+                required = ("description", "executor", "task", "schedule", "wake_up_message")
+                if not all(change.get(f) for f in required):
+                    continue
+                executor = change.get("executor", "")
+                if executor not in ("worker", "cpe"):
+                    continue
+                task_entry: dict[str, Any] = {
+                    "id": f"cron_{uuid.uuid4().hex[:12]}",
+                    "status": "pending",
+                    "executor": executor,
+                    "description": change.get("description", ""),
+                    "tools": change.get("tools", ""),
+                    "task": change.get("task", ""),
+                    "schedule": change.get("schedule", ""),
+                    "wake_up_message": change.get("wake_up_message", ""),
+                    "proposed_at": datetime.datetime.utcnow().isoformat() + "Z",
+                    "approved_at": None,
+                    "last_run": None,
+                }
+                agenda_path = layout.agenda
+                agenda: dict[str, Any] = {"tasks": []}
+                if agenda_path.exists():
+                    try:
+                        agenda = json.loads(agenda_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        pass
+                agenda.setdefault("tasks", []).append(task_entry)
+                agenda_path.parent.mkdir(parents=True, exist_ok=True)
+                agenda_path.write_text(json.dumps(agenda, indent=2), encoding="utf-8")
+                files_written[str(agenda_path.relative_to(layout.root))] = sha256_file(agenda_path)
+                write_notification(layout, "cron_proposed", {
+                    "id": task_entry["id"],
+                    "description": task_entry["description"],
+                })
                 continue
 
             target_rel = change.get("target", "")

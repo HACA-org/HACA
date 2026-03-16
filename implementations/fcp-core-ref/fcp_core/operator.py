@@ -226,12 +226,15 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
         _cmd_skill(layout, args)
         return True
 
-    # --- Model & endure ---
+    # --- Model, endure & cron ---
     if cmd == "/model":
         _cmd_model(layout, args, adapter_ref)
         return True
     if cmd == "/endure":
         _cmd_endure(layout, args)
+        return True
+    if cmd == "/cron":
+        _cmd_cron(layout, args)
         return True
 
     # --- Compact ---
@@ -722,6 +725,197 @@ def _endure_sync(layout: Layout, remote: bool) -> None:
         print(f"  push: {'ok' if r3.returncode == 0 else r3.stderr.strip()}")
 
 
+# --- Cron ---
+
+def _cmd_cron(layout: Layout, args: list[str]) -> None:
+    if not args:
+        print("  usage: /cron list | add | approve <id> | reject <id> | remove <id> [--all]")
+        return
+    sub = args[0].lower()
+    if sub == "list":
+        _cron_list(layout)
+    elif sub == "add":
+        _cron_add_interactive(layout)
+    elif sub == "approve" and len(args) > 1:
+        _cron_decide(layout, args[1], approve=True)
+    elif sub == "reject" and len(args) > 1:
+        _cron_decide(layout, args[1], approve=False)
+    elif sub == "remove" and len(args) > 1:
+        _cron_remove(layout, args[1], remove_all="--all" in args)
+    else:
+        print("  usage: /cron list | add | approve <id> | reject <id> | remove <id> [--all]")
+
+
+def _cron_read_agenda(layout: Layout) -> dict:
+    if not layout.agenda.exists():
+        return {"tasks": []}
+    try:
+        return json.loads(layout.agenda.read_text(encoding="utf-8"))
+    except Exception:
+        return {"tasks": []}
+
+
+def _cron_list(layout: Layout) -> None:
+    agenda = _cron_read_agenda(layout)
+    tasks = agenda.get("tasks", [])
+    if not tasks:
+        print("  no scheduled tasks")
+        return
+    for t in tasks:
+        status = t.get("status", "?")
+        tid = t.get("id", "?")
+        desc = t.get("description", "")
+        executor = t.get("executor", "?")
+        schedule = t.get("schedule", "?")
+        last_run = t.get("last_run") or "never"
+        print(f"  [{status}] {tid}  {executor}  {schedule}  last:{last_run}")
+        print(f"         {desc}")
+
+
+def _cron_add_interactive(layout: Layout) -> None:
+    """Prompt Operator interactively for all cron fields, then save as approved."""
+    import datetime as _dt
+    fields = [
+        ("description", "Description (human-readable summary): "),
+        ("executor",    "Executor [worker/cpe]: "),
+        ("tools",       "Tools/skills (leave blank if none): "),
+        ("task",        "Task (clear, verifiable instruction): "),
+        ("schedule",    "Schedule (cron expression, e.g. 0 9 * * 1-5): "),
+        ("wake_up_message", "Wake-up message (exact instruction for CPE/worker): "),
+    ]
+    values: dict[str, str] = {}
+    print()
+    for key, prompt in fields:
+        try:
+            val = input(f"  {prompt}").strip()
+        except EOFError:
+            print("\n  aborted.")
+            return
+        values[key] = val
+
+    executor = values.get("executor", "").lower()
+    if executor not in ("worker", "cpe"):
+        print("  invalid executor — must be 'worker' or 'cpe'. aborted.")
+        return
+    required = ("description", "task", "schedule", "wake_up_message")
+    if not all(values.get(f) for f in required):
+        print("  missing required fields. aborted.")
+        return
+
+    print(f"\n  description   : {values['description']}")
+    print(f"  executor      : {executor}")
+    print(f"  tools         : {values.get('tools') or '(none)'}")
+    print(f"  task          : {values['task']}")
+    print(f"  schedule      : {values['schedule']}")
+    print(f"  wake_up_msg   : {values['wake_up_message']}")
+    try:
+        confirm = input("\n  Save and approve? [y/N] ").strip().lower()
+    except EOFError:
+        confirm = "n"
+    if confirm != "y":
+        print("  aborted.")
+        return
+
+    import uuid as _uuid
+    now = _dt.datetime.utcnow().isoformat() + "Z"
+    task_entry = {
+        "id": f"cron_{_uuid.uuid4().hex[:12]}",
+        "status": "approved",
+        "executor": executor,
+        "description": values["description"],
+        "tools": values.get("tools", ""),
+        "task": values["task"],
+        "schedule": values["schedule"],
+        "wake_up_message": values["wake_up_message"],
+        "proposed_at": now,
+        "approved_at": now,
+        "last_run": None,
+    }
+    agenda = _cron_read_agenda(layout)
+    agenda.setdefault("tasks", []).append(task_entry)
+    layout.agenda.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(layout.agenda, agenda)
+    _cron_register_host(task_entry, layout)
+    print(f"  created and approved: {task_entry['id']}")
+
+
+def _cron_decide(layout: Layout, cron_id: str, approve: bool) -> None:
+    agenda = _cron_read_agenda(layout)
+    tasks = agenda.get("tasks", [])
+    task = next((t for t in tasks if t.get("id") == cron_id), None)
+    if task is None:
+        print(f"  task not found: {cron_id}")
+        return
+    if task.get("status") != "pending":
+        print(f"  task is not pending: {cron_id} (status: {task.get('status')})")
+        return
+    if approve:
+        import datetime as _dt
+        task["status"] = "approved"
+        task["approved_at"] = _dt.datetime.utcnow().isoformat() + "Z"
+        atomic_write(layout.agenda, agenda)
+        _cron_register_host(task, layout)
+        print(f"  approved: {cron_id}")
+    else:
+        agenda["tasks"] = [t for t in tasks if t.get("id") != cron_id]
+        atomic_write(layout.agenda, agenda)
+        print(f"  rejected and removed: {cron_id}")
+
+
+def _cron_remove(layout: Layout, cron_id: str, remove_all: bool = False) -> None:
+    agenda = _cron_read_agenda(layout)
+    tasks = agenda.get("tasks", [])
+    if remove_all:
+        removed = len(tasks)
+        for t in tasks:
+            _cron_unregister_host(t.get("id", ""), layout)
+        agenda["tasks"] = []
+        atomic_write(layout.agenda, agenda)
+        print(f"  removed all {removed} task(s)")
+        return
+    task = next((t for t in tasks if t.get("id") == cron_id), None)
+    if task is None:
+        print(f"  task not found: {cron_id}")
+        return
+    _cron_unregister_host(cron_id, layout)
+    agenda["tasks"] = [t for t in tasks if t.get("id") != cron_id]
+    atomic_write(layout.agenda, agenda)
+    print(f"  removed: {cron_id}")
+
+
+def _cron_register_host(task: dict, layout: Layout) -> None:
+    """Register cron entry in the host crontab."""
+    import subprocess
+    cron_id = task.get("id", "")
+    schedule = task.get("schedule", "")
+    if not schedule or not cron_id:
+        return
+    fcp_bin = layout.root / "fcp-core"
+    cron_line = f"{schedule} {fcp_bin} --auto {cron_id}  # fcp:{cron_id}"
+    # read current crontab, append, write back
+    r = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    existing = r.stdout if r.returncode == 0 else ""
+    # remove any stale entry for this id first
+    lines = [l for l in existing.splitlines() if f"# fcp:{cron_id}" not in l]
+    lines.append(cron_line)
+    new_crontab = "\n".join(lines) + "\n"
+    subprocess.run(["crontab", "-"], input=new_crontab, text=True)
+    print(f"  crontab registered: {schedule}")
+
+
+def _cron_unregister_host(cron_id: str, layout: Layout) -> None:
+    """Remove cron entry from host crontab."""
+    import subprocess
+    if not cron_id:
+        return
+    r = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    if r.returncode != 0:
+        return
+    lines = [l for l in r.stdout.splitlines() if f"# fcp:{cron_id}" not in l]
+    new_crontab = "\n".join(lines) + "\n"
+    subprocess.run(["crontab", "-"], input=new_crontab, text=True)
+
+
 # --- Compact ---
 
 def _cmd_compact() -> None:
@@ -790,12 +984,17 @@ def _cmd_help() -> None:
     /skill list                  — list installed skills
     /skill audit <name>          — audit a skill
 
-  Model & endure:
+  Model, endure & cron:
     /model [list]                — interactive model picker (active model highlighted)
     /endure list                 — list pending Evolution Proposals
     /endure approve <n>          — approve proposal by index
     /endure reject <n>           — reject proposal by index
     /endure sync [--remote]      — commit entity root to version control
+    /cron list                   — list scheduled tasks
+    /cron add                    — create task interactively (Operator-initiated)
+    /cron approve <id>           — approve pending task proposal; registers cron on host
+    /cron reject <id>            — reject pending task proposal
+    /cron remove <id> [--all]    — remove task and unregister from host crontab
 
   Debug:
     /verbose [--off]             — enable component message summary (--off to disable)
