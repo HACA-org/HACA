@@ -142,11 +142,11 @@ def memory_recall(layout: Layout, query: str, path: str) -> dict[str, Any]:
             link = layout.active_context_dir / link_name
             if link.is_symlink():
                 link.unlink()
-                link.symlink_to(target)
+                link.symlink_to(target.resolve())
             elif link.exists():
                 pass  # directory or regular file collision — skip symlink creation
             else:
-                link.symlink_to(target)
+                link.symlink_to(target.resolve())
     else:
         # query-only recall: search episodic and semantic memory by filename and content
         q = query.lower()
@@ -170,7 +170,7 @@ def memory_recall(layout: Layout, query: str, path: str) -> dict[str, Any]:
             if link.is_symlink():
                 link.unlink()
             if not link.exists():
-                link.symlink_to(f)
+                link.symlink_to(f.resolve())
         status = "found" if paths else "not_found"
 
     # Include file contents so the CPE can read the recalled memory directly.
@@ -268,7 +268,7 @@ def seed_active_context(layout: Layout) -> list[str]:
             continue  # directory collision — skip
         elif link.exists():
             link.unlink()
-        link.symlink_to(target)
+        link.symlink_to(target.resolve())
 
     return skipped
 
@@ -331,9 +331,11 @@ def process_closure(layout: Layout) -> bool:
         if not isinstance(entry, dict):
             continue
         rel = entry.get("path", "")
-        if (layout.root / rel).exists():
-            valid.append(entry)
-        # invalid paths: caller (SIL) must log CTX_SKIP to integrity.log
+        if not rel:
+            continue
+        valid.append(entry)
+        # Paths that don't exist yet (e.g. session-handoff written below) are kept.
+        # Stale paths will be dropped at seed_active_context time.
 
     valid_sorted = sorted(valid, key=lambda e: int(e.get("priority", 99)))
     if len(valid_sorted) > max_entries:
@@ -342,7 +344,9 @@ def process_closure(layout: Layout) -> bool:
     atomic_write(layout.working_memory, {"entries": valid_sorted})
 
     # 3. session-handoff
-    session_handoff: dict[str, Any] = payload.get("session_handoff", {})
+    session_handoff = payload.get("session_handoff", {})
+    if not isinstance(session_handoff, dict):
+        session_handoff = {}
     atomic_write(layout.session_handoff, session_handoff)
 
     # 4. delete pending-closure.json
