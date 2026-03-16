@@ -83,6 +83,8 @@ def run_session(
     close_reason = "session_close"
     cycle = 0
     compact_in_progress = False
+    # display log: list of ("operator"|"cpe", text, extra) for redraw on verbose/debugger toggle
+    _display_log: list[tuple[str, str, str]] = []
     stimulus_ready = bool(greeting or inject or first_stimuli_injected)
     tokens_used = 0
 
@@ -132,8 +134,7 @@ def run_session(
                 handled = handle_platform_command(layout, stripped, adapter_ref=adapter_ref)
                 if handled:
                     if stripped.lower().split()[0] in ("/verbose", "/debugger"):
-                        if _is_verbose() or _get_debugger() is not None:
-                            _vlog_request(system, chat_history, tools)
+                        _redraw_session(_display_log, system, chat_history, tools)
                     if _is_endure_approved():
                         _set_endure_approved(False)
                         close_reason = "endure_approved"
@@ -161,6 +162,7 @@ def run_session(
             _vlog("operator", f"input: {stripped!r}")
             _append_msg(layout, "operator", user_input)
             chat_history.append({"role": "user", "content": stripped})
+            _display_log.append(("operator", stripped, ""))
 
         stimulus_ready = False
         cycle += 1
@@ -188,6 +190,7 @@ def run_session(
             _append_msg(layout, "cpe", response.text)
             _model_label = getattr(adapter_ref.current, "_model", "")
             _print_cpe_block(response.text, _model_label)
+            _display_log.append(("cpe", response.text, _model_label))
             chat_history.append({"role": "assistant", "content": response.text})
         if response.tool_use_calls and not response.text:
             # assistant turn with tool use only — needs empty content tracked
@@ -821,6 +824,23 @@ def _print_cpe_block(text: str, model: str = "") -> None:
     print(f"\n{_GRAY}─── {label} {border}{_RESET}")
     print(text)
     print(f"{_GRAY}{'─' * _WIDTH}{_RESET}")
+
+
+def _redraw_session(
+    display_log: list[tuple[str, str, str]],
+    system: str,
+    chat_history: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+) -> None:
+    """Clear screen and reprint conversation history, then verbose/debug context if active."""
+    print("\033[2J\033[H", end="")  # clear screen + move cursor to top
+    for kind, text, extra in display_log:
+        if kind == "operator":
+            print(f"\n> {text}")
+        elif kind == "cpe":
+            _print_cpe_block(text, extra)
+    if _is_verbose() or _get_debugger() is not None:
+        _vlog_request(system, chat_history, tools)
 
 
 def _vprint(text: str) -> None:
