@@ -51,6 +51,13 @@ def run_session(
         tools = _tool_declarations(layout, index)
     adapter_ref = adapter if isinstance(adapter, AdapterRef) else AdapterRef(adapter)
 
+    try:
+        _bl = read_json(layout.baseline)
+        _cpe_cfg = _bl.get("cpe", {})
+        _model_label = f"{_cpe_cfg.get('backend', '?')}:{_cpe_cfg.get('model', '?')}"
+    except Exception:
+        _model_label = "?"
+
     # --- Build system prompt and initial chat history once at session start ---
     system, chat_history = build_boot_context(layout, index)
     _vlog("fcp", f"boot context: system={len(system)} chars, history={len(chat_history)} msgs")
@@ -184,7 +191,7 @@ def run_session(
             print(f"\n{_DIM}  [fcp] working... cycle {cycle} — {tools_repr}{_RESET}")
         if response.text:
             _append_msg(layout, "cpe", response.text)
-            _print_cpe_block(response.text)
+            _print_cpe_block(response.text, _model_label)
             chat_history.append({"role": "assistant", "content": response.text})
         if response.tool_use_calls and not response.text:
             # assistant turn with tool use only — needs empty content tracked
@@ -811,10 +818,10 @@ _GRAY = "\x1b[90m"
 _WIDTH = 50
 
 
-def _print_cpe_block(text: str) -> None:
+def _print_cpe_block(text: str, model: str = "") -> None:
     """Print a CPE response with top and bottom separator lines."""
-    label = "CPE"
-    border = "─" * (_WIDTH - len(label) - 3)
+    label = f"CPE:{model}" if model else "CPE"
+    border = "─" * max(0, _WIDTH - len(label) - 3)
     print(f"\n{_GRAY}─── {label} {border}{_RESET}")
     print(text)
     print(f"{_GRAY}{'─' * _WIDTH}{_RESET}")
