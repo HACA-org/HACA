@@ -132,7 +132,8 @@ def run_session(
                 handled = handle_platform_command(layout, stripped, adapter_ref=adapter_ref)
                 if handled:
                     if stripped.lower().split()[0] in ("/verbose", "/debugger"):
-                        _vlog_request(system, chat_history, tools)
+                        if _is_verbose() or _get_debugger() is not None:
+                            _vlog_request(system, chat_history, tools)
                     if _is_endure_approved():
                         _set_endure_approved(False)
                         close_reason = "endure_approved"

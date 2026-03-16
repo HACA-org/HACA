@@ -28,18 +28,37 @@ def _main() -> None:
     entity_root = Path.cwd()
 
     verbose = "--verbose" in args
-    debugger = "--debugger" in args
-    args = [a for a in args if a not in ("--verbose", "--debugger")]
+
+    # --debugger[=mode] or --debugger <mode>
+    _dbg_mode: str | None = None
+    _clean: list[str] = []
+    _skip_next = False
+    for i, a in enumerate(args):
+        if _skip_next:
+            _skip_next = False
+            continue
+        if a.startswith("--debugger="):
+            _dbg_mode = a.split("=", 1)[1] or "all"
+        elif a == "--debugger":
+            # peek at next arg for optional mode
+            nxt = args[i + 1] if i + 1 < len(args) else ""
+            if nxt in ("all", "chat", "boot"):
+                _dbg_mode = nxt
+                _skip_next = True
+            else:
+                _dbg_mode = "all"
+        elif a != "--verbose":
+            _clean.append(a)
+    args = _clean
 
     if not args:
         # normal boot + session
         from .store import Layout
-        if verbose:
-            from .operator import set_verbose
+        from .operator import set_verbose, set_debugger
+        if verbose and not _dbg_mode:
             set_verbose(True)
-        if debugger:
-            from .operator import set_debugger
-            set_debugger("all")
+        if _dbg_mode:
+            set_debugger(_dbg_mode)
         _run_normal(Layout(entity_root))
         return
 
