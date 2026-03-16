@@ -331,7 +331,9 @@ def build_boot_context(
             if p.is_file():
                 memory_parts.append(p.read_text(encoding="utf-8").strip())
 
-    instruction_parts: list[str] = [boot_protocol]
+    tools_index = _build_tools_index(layout, index)
+
+    instruction_parts: list[str] = [boot_protocol, tools_index]
     if memory_parts:
         instruction_parts.append("## Active Memory\n\n" + "\n\n---\n\n".join(memory_parts))
 
@@ -910,6 +912,58 @@ def _stage_evolution_proposal(layout: Layout, content: str) -> None:
     os.replace(tmp, dest)
 
 
+def _build_tools_index(layout: Layout, index: dict[str, Any]) -> str:
+    """Build a compact alphabetical tools reference injected into the boot instruction block.
+
+    Lists every tool available to the CPE: system tools (hardcoded) plus skills
+    from the index (class != 'operator'). Required params marked with *.
+    """
+    # System tools: name → (description, required_params)
+    system_tools: list[tuple[str, str, list[str]]] = [
+        ("closure_payload", "record full session outcome before closing", ["consolidation"]),
+        ("evolution_proposal", "propose structural change to entity (persona, skills, configs)", ["description", "changes"]),
+        ("memory_recall", "retrieve context from memory", ["query"]),
+        ("memory_write", "persist information across sessions", ["slug", "content"]),
+        ("result_recall", "retrieve truncated tool result by timestamp", ["ts"]),
+        ("session_close", "signal session complete", []),
+        ("skill_info", "get full documentation for a skill", ["skill"]),
+    ]
+
+    entries: list[tuple[str, str, list[str]]] = list(system_tools)
+
+    # Skills from index
+    if layout.skills_index.exists():
+        idx = index if index else read_json(layout.skills_index)
+        for skill in idx.get("skills", []):
+            if skill.get("class") == "operator":
+                continue
+            name = skill.get("name", "")
+            if not name:
+                continue
+            mrel = skill.get("manifest", "")
+            manifest: dict[str, Any] = {}
+            if mrel:
+                mpath = layout.root / mrel
+                if mpath.exists():
+                    try:
+                        manifest = read_json(mpath)
+                    except Exception:
+                        pass
+            description = manifest.get("description", f"Skill: {name}")
+            params_schema = manifest.get("params", {})
+            required: list[str] = params_schema.get("required", []) if isinstance(params_schema, dict) else []
+            entries.append((name, description, required))
+
+    entries.sort(key=lambda e: e[0])
+
+    lines: list[str] = ["## Tools\n"]
+    for name, desc, required in entries:
+        params_str = ", ".join(f"{p}*" for p in required) if required else "none"
+        lines.append(f"{name} — {desc}. params: {params_str}")
+
+    return "\n".join(lines)
+
+
 def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, Any]]:
     """Build the tool declarations sent to the CPE each cycle.
 
@@ -988,7 +1042,7 @@ def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, 
                     "description": "Pending tasks and next steps for the following session.",
                 },
             },
-            "required": ["consolidation"],
+            "required": ["consolidation", "working_memory", "session_handoff"],
         },
     })
     tools.append({

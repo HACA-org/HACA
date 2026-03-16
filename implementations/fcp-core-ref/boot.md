@@ -24,17 +24,7 @@ Memory tools persist and retrieve context across sessions. They are invoked as t
 → memory_write({ "slug": "operator-profile", "content": "..." })
 ```
 
-**memory_recall** — retrieve context from memory. Use before acting on requests that depend on prior sessions.
-
-Parameters:
-- `query` (required) — search terms to retrieve relevant memory.
-- `path` (optional) — specific memory slug to retrieve directly.
-
-**memory_write** — persist information that should survive across sessions. Writing to an existing slug replaces its content entirely.
-
-Parameters:
-- `slug` (required) — short, stable, kebab-case identifier.
-- `content` (required) — content to persist.
+Use `memory_recall` before acting on requests that depend on prior sessions. Writing to an existing slug replaces its content entirely — use `skill_info({ "skill": "memory_write" })` for details on conflict handling.
 
 ---
 
@@ -52,23 +42,7 @@ Skills extend your capabilities. They are invoked as tool calls — the same mec
 
 Never write parameters as text in your response — always use the tool call mechanism.
 
-**file_writer** — write a file within the workspace.
-
-Parameters:
-- `path` (required) — path relative to workspace root.
-- `content` (required) — full file content to write.
-
-**file_reader** — read a file or list a directory within the workspace.
-
-Parameters:
-- `path` (required) — path relative to workspace root.
-
-**skill_info** — retrieve full documentation for a skill, including all parameters, before using it for the first time or when a call returns an unexpected error.
-
-Parameters:
-- `skill` (required) — name of the skill.
-
-If a skill call returns `"error"`, report it to the operator before proceeding.
+Use `skill_info` to get full documentation for any skill. If a skill call returns `"error"`, report it to the operator before proceeding.
 
 ---
 
@@ -84,24 +58,9 @@ The workspace is a sandboxed directory where you can read, write, and manage fil
 → commit({ "path": "notes.md", "message": "add notes" })
 ```
 
-**file_reader** — read a file or list a directory. Path is relative to workspace root.
+**file_reader** and **file_writer** operate relative to the workspace root. Use `"."` to list the root directory.
 
-Parameters:
-- `path` (required) — path relative to workspace root. Use `"."` to list the root.
-
-**file_writer** — write a file. Path is relative to workspace root.
-
-Parameters:
-- `path` (required) — path relative to workspace root.
-- `content` (required) — full file content to write.
-
-**commit** — version-control checkpoint. Requires `workspace_focus` to be set. Path is relative to `workspace_focus`.
-
-Parameters: use `skill_info({ "skill": "commit" })` for full details.
-
-**shell_run** — execute a shell command. Requires `workspace_focus` to be set. Commands run inside `workspace_focus`.
-
-Parameters: use `skill_info({ "skill": "shell_run" })` for full details.
+**commit** and **shell_run** require `workspace_focus` to be set. Use `skill_info` for full details.
 
 **worker_skill** — instantiate a text-only sub-agent to offload tasks that would otherwise bloat the main context window.
 
@@ -136,11 +95,9 @@ Parameters:
 - `consolidation` (required) — narrative summary of insights, decisions, and knowledge from this session.
 - `promotion` (optional) — list of slugs to promote from episodic to semantic memory.
 - `working_memory` (required) — `[{priority, path}, ...]` — list of memory artefacts to preload at the next session; keep concise, loaded at boot.
-- `session_handoff` (optional) — `{pending_tasks, next_steps}` for the following session.
+- `session_handoff` (required) — `{pending_tasks, next_steps}` for the following session.
 
-**session_close** — signals that the session is complete. Call immediately after `closure_payload`.
-
-Parameters: none.
+**session_close** — signals that the session is complete. Call immediately after `closure_payload`. No parameters.
 
 ---
 
