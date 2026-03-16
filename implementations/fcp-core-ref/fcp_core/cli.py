@@ -116,6 +116,11 @@ def _run_normal(layout: "Layout") -> None:
 
     _print_boot_header(layout, index)
 
+    # Present any pending evolution proposals before starting the session.
+    # Operator must approve or reject all of them before proceeding.
+    while present_evolution_proposals(layout):
+        pass
+
     while True:
         close_reason = run_session(layout, adapter, index)
 
