@@ -179,7 +179,7 @@ def check_chain(layout: Layout) -> list[Finding]:
                 findings.append(_fail("§3.12", f"ENDURE_COMMIT {seq} has auth_digest",
                                       "missing evolution_auth_digest"))
 
-        prev_hash = _sha256_str(line)
+        prev_hash = "sha256:" + _sha256_str(line)
 
     findings.append(_ok("§3.12", f"chain has {len(lines)} entries"))
     return findings
