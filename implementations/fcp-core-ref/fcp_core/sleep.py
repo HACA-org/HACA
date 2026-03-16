@@ -38,7 +38,7 @@ from .sil import (
     log_critical,
 )
 from .formats import ChainEntry, ChainEntryType
-from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
+from .store import Layout, append_jsonl, atomic_write, load_baseline, read_json, read_jsonl
 
 
 class SleepCycleError(Exception):
@@ -225,7 +225,7 @@ def _rotate_session_store(layout: Layout) -> None:
     if not layout.session_store.exists():
         return
 
-    baseline = _load_baseline(layout)
+    baseline = load_baseline(layout)
     threshold = int(
         baseline.get("session_store", {}).get("rotation_threshold_bytes", 1_000_000)
     )
@@ -522,8 +522,3 @@ def _remove_session_token(layout: Layout) -> None:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _load_baseline(layout: Layout) -> dict[str, Any]:
-    try:
-        return read_json(layout.baseline)
-    except Exception:
-        return {}

@@ -184,3 +184,14 @@ def detect_adapter(model: str = "") -> CPEAdapter:
         "No CPE backend available. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or "
         "GOOGLE_API_KEY, or start Ollama locally (https://ollama.com)."
     )
+
+
+def fetch_ollama_models() -> list[str]:
+    """Return list of model names from the local Ollama instance. Empty on failure."""
+    try:
+        import urllib.request, json as _json
+        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as resp:
+            data = _json.loads(resp.read().decode())
+        return [m["name"] for m in data.get("models", [])]
+    except Exception:
+        return []

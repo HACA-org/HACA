@@ -472,7 +472,7 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
 
 def _run_model(layout: "Layout") -> None:
     import os
-    from .cpe.base import BACKENDS, KNOWN_MODELS
+    from .cpe.base import BACKENDS, KNOWN_MODELS, fetch_ollama_models
     from .store import read_json, atomic_write
 
     try:
@@ -490,7 +490,7 @@ def _run_model(layout: "Layout") -> None:
     pairs: list[tuple[str, str]] = []  # (backend, model) parallel to items
 
     for backend in BACKENDS:
-        models = _fetch_ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
+        models = fetch_ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
         for m in models:
             active = backend == current_backend and m == current_model
             label = f"\x1b[1;96m{backend}:{m} ✓\x1b[0m" if active else f"{backend}:{m}"
@@ -534,15 +534,6 @@ def _run_model(layout: "Layout") -> None:
 # Init helpers
 # ---------------------------------------------------------------------------
 
-def _fetch_ollama_models() -> list[str]:
-    """Return list of model names from the local Ollama instance. Empty on failure."""
-    try:
-        import urllib.request, json as _json
-        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as resp:
-            data = _json.loads(resp.read().decode())
-        return [m["name"] for m in data.get("models", [])]
-    except Exception:
-        return []
 
 
 # ---------------------------------------------------------------------------
@@ -691,11 +682,11 @@ def _run_init(entity_root: Path) -> None:
 
     print("=== FCP-Core Init ===")
 
-    from .cpe.base import BACKENDS, KNOWN_MODELS
+    from .cpe.base import BACKENDS, KNOWN_MODELS, fetch_ollama_models
     backend = _pick_from_list("CPE backend", BACKENDS)
 
     if backend == "ollama":
-        ollama_models = _fetch_ollama_models()
+        ollama_models = fetch_ollama_models()
         if ollama_models:
             model = _pick_from_list("Model", ollama_models)
         else:
@@ -712,7 +703,8 @@ def _run_init(entity_root: Path) -> None:
         if api_key:
             _save_api_key(entity_root.name, env_var, api_key)
 
-    _atomic_write(entity_root / "state" / "baseline.json", {
+    from .store import atomic_write
+    atomic_write(entity_root / "state" / "baseline.json", {
         "version": "1.0.0",
         "entity_id": entity_root.name,
         "cpe": {"backend": backend, "model": model, "topology": "transparent"},
@@ -728,7 +720,7 @@ def _run_init(entity_root: Path) -> None:
         "operator_channel": {"notifications_dir": "state/operator_notifications"},
     })
 
-    _atomic_write(entity_root / "state" / "integrity.json", {
+    atomic_write(entity_root / "state" / "integrity.json", {
         "version": "1.0", "algorithm": "sha256",
         "last_checkpoint": None, "files": {},
     })
@@ -740,7 +732,7 @@ def _run_init(entity_root: Path) -> None:
     ]:
         p.write_text("", encoding="utf-8")
 
-    _atomic_write(entity_root / "memory" / "working-memory.json", {"entries": []})
+    atomic_write(entity_root / "memory" / "working-memory.json", {"entries": []})
 
     print(f"\n[FCP-Core] Initialised: {entity_root}")
     print("  First boot will run FAP (First Activation Protocol).")
@@ -789,9 +781,3 @@ def _print_boot_header(layout: "Layout", index: dict) -> None:
     print(f"Type your message or /help.{notif_str}")
 
 
-def _atomic_write(path: Path, data: object) -> None:
-    import json
-    import os
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    os.replace(tmp, path)

@@ -24,7 +24,7 @@ from .acp import drain_inbox, make as acp_encode
 from .cpe.base import AdapterRef, CPEAdapter, CPEResponse
 from .mil import memory_recall, process_closure, result_recall, summarize_session, write_episodic
 from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger, is_compact_pending as _is_compact_pending, set_compact_pending as _set_compact_pending, is_endure_approved as _is_endure_approved, set_endure_approved as _set_endure_approved
-from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
+from .store import Layout, append_jsonl, atomic_write, load_baseline, read_json, read_jsonl
 from . import vital as _vital
 
 
@@ -722,7 +722,7 @@ def build_boot_stats(
     # context % — estimate tokens as chars / 4
     total_chars = len(system) + sum(len(str(m.get("content", ""))) for m in chat_history)
     total_tokens = total_chars // 4
-    baseline = _load_baseline(layout)
+    baseline = load_baseline(layout)
     ctx_window = baseline.get("context_window", {}).get("budget_tokens", 0)
     ctx_pct = round(total_tokens / ctx_window * 100, 1) if ctx_window else None
 
@@ -797,13 +797,6 @@ def build_boot_stats(
         "tools": n_tools,
         "notifications": n_notif,
     }
-
-
-def _load_baseline(layout: Layout) -> dict[str, Any]:
-    try:
-        return read_json(layout.baseline)
-    except Exception:
-        return {}
 
 
 # ---------------------------------------------------------------------------

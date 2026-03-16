@@ -18,7 +18,7 @@ from typing import Any
 
 from .acp import make as acp_encode
 from .sil import sha256_str as _sha256_str
-from .store import Layout, append_jsonl, atomic_write, read_json
+from .store import Layout, append_jsonl, atomic_write, load_agenda, read_json
 
 
 # ---------------------------------------------------------------------------
@@ -549,22 +549,14 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
 def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[str, str] | None:
     """Interactive arrow-key picker organised by provider. Returns (backend, model) or None."""
     import sys, tty, termios
-    from .cpe.base import KNOWN_MODELS, BACKENDS
+    from .cpe.base import KNOWN_MODELS, BACKENDS, fetch_ollama_models
 
     # Build flat list of "backend:model" labels
     labels: list[str] = []
     pairs: list[tuple[str, str]] = []
 
-    def _ollama_models() -> list[str]:
-        try:
-            import urllib.request, json as _j
-            with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2) as r:
-                return [m["name"] for m in _j.loads(r.read().decode()).get("models", [])]
-        except Exception:
-            return []
-
     for backend in BACKENDS:
-        models = _ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
+        models = fetch_ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
         for m in models:
             active = backend == current_backend and m == current_model
             label = f"\x1b[1;96m{backend}:{m} ✓\x1b[0m" if active else f"{backend}:{m}"
@@ -620,16 +612,6 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
 
     print()
     return pairs[sel_idx]
-
-
-def _model_list_print(backend: str) -> None:
-    from .cpe.base import KNOWN_MODELS
-    print(f"  backend: {backend}")
-    for b, models in KNOWN_MODELS.items():
-        marker = " (current)" if b == backend else ""
-        print(f"  ── {b}{marker}")
-        for m in models:
-            print(f"       {m}")
 
 
 def _cmd_endure(layout: Layout, args: list[str]) -> None:
@@ -750,17 +732,8 @@ def _cmd_cron(layout: Layout, args: list[str]) -> None:
         print("  usage: /cron list | add | approve <id> | reject <id> | remove <id> [--all]")
 
 
-def _cron_read_agenda(layout: Layout) -> dict:
-    if not layout.agenda.exists():
-        return {"tasks": []}
-    try:
-        return json.loads(layout.agenda.read_text(encoding="utf-8"))
-    except Exception:
-        return {"tasks": []}
-
-
 def _cron_list(layout: Layout) -> None:
-    agenda = _cron_read_agenda(layout)
+    agenda = load_agenda(layout)
     tasks = agenda.get("tasks", [])
     if not tasks:
         print("  no scheduled tasks")
@@ -851,7 +824,7 @@ def _cron_add_interactive(layout: Layout) -> None:
         "approved_at": now,
         "last_run": None,
     }
-    agenda = _cron_read_agenda(layout)
+    agenda = load_agenda(layout)
     agenda.setdefault("tasks", []).append(task_entry)
     layout.agenda.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(layout.agenda, agenda)
@@ -860,7 +833,7 @@ def _cron_add_interactive(layout: Layout) -> None:
 
 
 def _cron_decide(layout: Layout, cron_id: str, approve: bool) -> None:
-    agenda = _cron_read_agenda(layout)
+    agenda = load_agenda(layout)
     tasks = agenda.get("tasks", [])
     task = next((t for t in tasks if t.get("id") == cron_id), None)
     if task is None:
@@ -883,7 +856,7 @@ def _cron_decide(layout: Layout, cron_id: str, approve: bool) -> None:
 
 
 def _cron_remove(layout: Layout, cron_id: str, remove_all: bool = False) -> None:
-    agenda = _cron_read_agenda(layout)
+    agenda = load_agenda(layout)
     tasks = agenda.get("tasks", [])
     if remove_all:
         removed = len(tasks)

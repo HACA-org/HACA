@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .acp import make as acp_encode
+from .sil import write_notification
 from .store import Layout, append_jsonl, read_json
 
 
@@ -126,7 +127,7 @@ def check_sil_heartbeat(layout: Layout, component: str = "exec") -> bool:
             "threshold_seconds": threshold,
         },
     )
-    _write_operator_notification(layout, envelope)
+    write_notification(layout, envelope["type"].lower(), envelope)
     return False
 
 
@@ -291,7 +292,7 @@ def _increment_failure(layout: Layout, skill_name: str) -> None:
             source="exec",
             data={"skill": skill_name, "error": f"exceeded n_retry ({n_retry})"},
         )
-        _write_operator_notification(layout, envelope)
+        write_notification(layout, envelope["type"].lower(), envelope)
 
 
 def _reset_failure(layout: Layout, skill_name: str) -> None:
@@ -364,20 +365,10 @@ def _last_heartbeat_ts(layout: Layout) -> float | None:
 # ---------------------------------------------------------------------------
 
 def _write_inbox(layout: Layout, envelope: dict[str, Any]) -> None:
-    import os
+    from .store import atomic_write
     ts = int(time.time() * 1000)
     env_type = str(envelope.get("type", "msg")).lower()
     dest = layout.inbox_dir / f"{ts}_{env_type}.json"
-    tmp = dest.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
-    os.replace(tmp, dest)
+    atomic_write(dest, envelope)
 
 
-def _write_operator_notification(layout: Layout, envelope: dict[str, Any]) -> None:
-    import os
-    ts = int(time.time() * 1000)
-    env_type = str(envelope.get("type", "notif")).lower()
-    dest = layout.operator_notifications_dir / f"{ts}_{env_type}.json"
-    tmp = dest.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
-    os.replace(tmp, dest)

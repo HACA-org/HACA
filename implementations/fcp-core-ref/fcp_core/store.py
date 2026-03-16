@@ -30,6 +30,22 @@ def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_baseline(layout: "Layout") -> dict[str, Any]:
+    """Read baseline.json, returning {} on any error."""
+    try:
+        return read_json(layout.baseline)
+    except Exception:
+        return {}
+
+
+def load_agenda(layout: "Layout") -> dict[str, Any]:
+    """Read state/agenda.json, returning {"tasks": []} on any error."""
+    try:
+        return read_json(layout.agenda)
+    except Exception:
+        return {"tasks": []}
+
+
 def append_jsonl(path: Path, record: dict[str, Any]) -> None:
     """Append *record* as a single JSON line to a .jsonl file."""
     line = json.dumps(record, separators=(",", ":")) + "\n"
