@@ -138,6 +138,48 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
 # Platform commands  §12.3.1
 # ---------------------------------------------------------------------------
 
+_DIM = "\x1b[2m"
+_RESET = "\x1b[0m"
+_CMD_INDENT = "    "  # 4 spaces
+
+
+class _DimWriter:
+    """Wraps sys.stdout to prefix each line with indent + dim colour."""
+    def __init__(self, orig):
+        self._orig = orig
+
+    def write(self, text: str) -> int:
+        if text == "\n":
+            self._orig.write("\n")
+        else:
+            lines = text.split("\n")
+            out = "\n".join(
+                f"{_DIM}{_CMD_INDENT}{l}{_RESET}" if l else l
+                for l in lines
+            )
+            self._orig.write(out)
+        return len(text)
+
+    def flush(self) -> None:
+        self._orig.flush()
+
+    def __getattr__(self, name: str):
+        return getattr(self._orig, name)
+
+
+import contextlib as _contextlib
+
+@_contextlib.contextmanager
+def _cmd_output():
+    import sys as _sys
+    orig = _sys.stdout
+    _sys.stdout = _DimWriter(orig)
+    try:
+        yield
+    finally:
+        _sys.stdout = orig
+
+
 def handle_platform_command(layout: Layout, line: str, adapter_ref: Any = None) -> bool:
     """Handle a /command line. Returns True if handled, False if unknown."""
     parts = line.strip().split()
@@ -146,6 +188,12 @@ def handle_platform_command(layout: Layout, line: str, adapter_ref: Any = None) 
     cmd = parts[0].lower()
     args = list(itertools.islice(parts, 1, len(parts)))
 
+    with _cmd_output():
+        return _dispatch_command(layout, cmd, args, adapter_ref)
+    return False  # unreachable; satisfies type checker
+
+
+def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) -> bool:
     # --- Entity & session ---
     if cmd == "/status":
         _cmd_status(layout)
