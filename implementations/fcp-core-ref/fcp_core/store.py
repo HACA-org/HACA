@@ -229,6 +229,31 @@ class Layout:
     def decommission_flag(self) -> Path:
         return self.root / "state" / "decommission.json"
 
+    # -- cmi (state territory) --
+    @property
+    def cmi_dir(self) -> Path:
+        return self.root / "state" / "cmi"
+
+    @property
+    def cmi_credential(self) -> Path:
+        return self.root / "state" / "cmi" / "credential.json"
+
+    @property
+    def cmi_channels_dir(self) -> Path:
+        return self.root / "state" / "cmi" / "channels"
+
+    def cmi_channel_dir(self, chan_id: str) -> Path:
+        return self.root / "state" / "cmi" / "channels" / chan_id
+
+    def cmi_blackboard(self, chan_id: str) -> Path:
+        return self.root / "state" / "cmi" / "channels" / chan_id / "blackboard.jsonl"
+
+    def cmi_participants(self, chan_id: str) -> Path:
+        return self.root / "state" / "cmi" / "channels" / chan_id / "participants.json"
+
+    def cmi_enrollment(self, chan_id: str) -> Path:
+        return self.root / "state" / "cmi" / "channels" / chan_id / "enrollment.json"
+
     # -- helpers --
     def skill_manifest(self, name: str, builtin: bool = False) -> Path:
         if builtin:

@@ -236,6 +236,9 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
     if cmd == "/cron":
         _cmd_cron(layout, args)
         return True
+    if cmd == "/cmi":
+        _cmd_cmi(layout, args)
+        return True
 
     # --- Compact ---
     if cmd == "/compact":
@@ -909,6 +912,234 @@ def _cron_unregister_host(cron_id: str, layout: Layout) -> None:
     subprocess.run(["crontab", "-"], input=new_crontab, text=True)
 
 
+# --- CMI ---
+
+def _cmd_cmi(layout: Layout, args: list[str]) -> None:
+    if not args:
+        print("  usage: /cmi status | peers | channel list | channel open <id> | channel close <id> | bb <id>")
+        return
+    sub = args[0].lower()
+    if sub == "status":
+        _cmi_status(layout)
+    elif sub == "peers":
+        _cmi_peers(layout)
+    elif sub == "channel":
+        _cmi_channel(layout, args[1:])
+    elif sub == "bb" and len(args) > 1:
+        _cmi_bb(layout, args[1])
+    else:
+        print("  usage: /cmi status | peers | channel list | channel open <id> | channel close <id> | bb <id>")
+
+
+def _cmi_status(layout: Layout) -> None:
+    """Show CMI node status and active channels."""
+    from .cmi.identity import load_cmi_credential
+    cred = load_cmi_credential(layout)
+    if cred is None:
+        print("  CMI not activated — no credential found")
+        print("  (enable CMI via evolution_proposal to generate credentials)")
+        return
+    print(f"  node identity : {cred['node_identity']}")
+    baseline = {}
+    if layout.baseline.exists():
+        try:
+            baseline = read_json(layout.baseline)
+        except Exception:
+            pass
+    cmi_cfg = baseline.get("cmi", {})
+    endpoint = cmi_cfg.get("endpoint", "(not configured)")
+    enabled = cmi_cfg.get("enabled", False)
+    print(f"  endpoint      : {endpoint}")
+    print(f"  enabled       : {enabled}")
+    # active channels from state/cmi/channels/
+    channels: list[str] = []
+    if layout.cmi_channels_dir.exists():
+        channels = [d.name for d in sorted(layout.cmi_channels_dir.iterdir()) if d.is_dir()]
+    if channels:
+        print(f"  channels      : {len(channels)} active")
+        for c in channels:
+            participants_path = layout.cmi_participants(c)
+            role = "?"
+            status = "?"
+            if participants_path.exists():
+                try:
+                    p = read_json(participants_path)
+                    role = p.get("local_role", "?")
+                    status = p.get("status", "?")
+                except Exception:
+                    pass
+            print(f"    {c}  role:{role}  status:{status}")
+    else:
+        print("  channels      : none")
+
+
+def _cmi_peers(layout: Layout) -> None:
+    """List trusted peers from baseline.cmi.trusted_peers."""
+    baseline = {}
+    if layout.baseline.exists():
+        try:
+            baseline = read_json(layout.baseline)
+        except Exception:
+            pass
+    peers = baseline.get("cmi", {}).get("trusted_peers", [])
+    if not peers:
+        print("  no trusted peers configured")
+        print("  (add peers via evolution_proposal with op cmi_peer_add)")
+        return
+    for p in peers:
+        alias = p.get("alias", "?")
+        ni = p.get("node_identity", "?")
+        label = p.get("trust_label", "?")
+        endpoint = p.get("endpoint", "?")
+        print(f"  {alias}  [{label}]  {ni[:20]}...  {endpoint}")
+
+
+def _cmi_channel(layout: Layout, args: list[str]) -> None:
+    if not args:
+        print("  usage: /cmi channel list | open <id> | close <id>")
+        return
+    sub = args[0].lower()
+    if sub == "list":
+        _cmi_channel_list(layout)
+    elif sub == "open" and len(args) > 1:
+        _cmi_channel_open(layout, args[1])
+    elif sub == "close" and len(args) > 1:
+        _cmi_channel_close(layout, args[1])
+    else:
+        print("  usage: /cmi channel list | open <id> | close <id>")
+
+
+def _cmi_channel_list(layout: Layout) -> None:
+    """List channels declared in baseline.cmi.channels."""
+    baseline = {}
+    if layout.baseline.exists():
+        try:
+            baseline = read_json(layout.baseline)
+        except Exception:
+            pass
+    channels = baseline.get("cmi", {}).get("channels", [])
+    if not channels:
+        print("  no channels configured")
+        print("  (declare channels via evolution_proposal)")
+        return
+    for ch in channels:
+        cid = ch.get("id", "?")
+        task = ch.get("task", "?")
+        role = ch.get("role", "?")
+        status = ch.get("status", "?")
+        n_participants = len(ch.get("participants", []))
+        print(f"  {cid}  [{status}]  role:{role}  peers:{n_participants}")
+        print(f"         {task[:72]}")
+
+
+def _cmi_channel_open(layout: Layout, chan_id: str) -> None:
+    """Launch CMI subprocess for a declared channel."""
+    import subprocess
+    from .cmi.identity import load_cmi_credential
+
+    # Validate CMI is activated
+    cred = load_cmi_credential(layout)
+    if cred is None:
+        print("  CMI not activated — no credential found")
+        return
+
+    # Validate chan_id exists in baseline
+    baseline = {}
+    if layout.baseline.exists():
+        try:
+            baseline = read_json(layout.baseline)
+        except Exception:
+            pass
+    channels = baseline.get("cmi", {}).get("channels", [])
+    ch = next((c for c in channels if c.get("id") == chan_id), None)
+    if ch is None:
+        print(f"  channel not found in baseline: {chan_id}")
+        return
+    if ch.get("status") not in ("created", "active"):
+        print(f"  channel status is '{ch.get('status')}' — cannot open")
+        return
+
+    role = ch.get("role", "peer")
+
+    # Check session token — CMI requires active session
+    if not layout.session_token.exists():
+        print("  no active session — CMI requires a session token")
+        return
+
+    # Check for existing channel process (participants.json status=active)
+    p_path = layout.cmi_participants(chan_id)
+    if p_path.exists():
+        try:
+            p = read_json(p_path)
+            if p.get("status") == "active":
+                print(f"  channel already active: {chan_id}")
+                return
+        except Exception:
+            pass
+
+    # Launch channel_process as a background subprocess
+    import sys
+    cmd = [
+        sys.executable, "-m", "fcp_core.cmi.channel_process",
+        str(layout.root), chan_id, role,
+    ]
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(layout.root),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    print(f"  channel process launched: {chan_id}  role:{role}  pid:{proc.pid}")
+
+
+def _cmi_channel_close(layout: Layout, chan_id: str) -> None:
+    """Signal close to an active CMI channel via HTTP POST."""
+    import urllib.request, urllib.error
+
+    baseline = {}
+    if layout.baseline.exists():
+        try:
+            baseline = read_json(layout.baseline)
+        except Exception:
+            pass
+    cmi_cfg = baseline.get("cmi", {})
+    endpoint = cmi_cfg.get("endpoint", "http://localhost:7700")
+
+    url = f"{endpoint}/channel/{chan_id}/close"
+    body = json.dumps({"operator": True}).encode()
+    try:
+        req = urllib.request.Request(
+            url, data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5):
+            pass
+        print(f"  close signal sent: {chan_id}")
+    except urllib.error.URLError as exc:
+        print(f"  could not reach channel process: {exc.reason}")
+        print(f"  (process may have already exited)")
+
+
+def _cmi_bb(layout: Layout, chan_id: str) -> None:
+    """Display Blackboard contents for a channel."""
+    from .store import read_jsonl
+    bb_path = layout.cmi_blackboard(chan_id)
+    if not bb_path.exists():
+        print(f"  no blackboard found for channel: {chan_id}")
+        return
+    entries = read_jsonl(bb_path)
+    if not entries:
+        print(f"  blackboard empty: {chan_id}")
+        return
+    print(f"  blackboard: {chan_id}  ({len(entries)} entries)")
+    for e in entries:
+        seq = e.get("seq", "?")
+        contributor = str(e.get("from", "?"))[:16]
+        content = str(e.get("content", ""))[:80]
+        print(f"  [{seq}] {contributor}...  {content}")
+
+
 # --- Compact ---
 
 def _cmd_compact() -> None:
@@ -989,6 +1220,14 @@ def _cmd_help() -> None:
     /cron approve <id>           — approve pending task proposal; registers cron on host
     /cron reject <id>            — reject pending task proposal
     /cron remove <id> [--all]    — remove task and unregister from host crontab
+
+  CMI (Cognitive Mesh Interface):
+    /cmi status                  — node identity, endpoint, active channels
+    /cmi peers                   — list trusted peers and trust labels
+    /cmi channel list            — list declared channels from baseline
+    /cmi channel open <id>       — launch CMI process for a channel
+    /cmi channel close <id>      — signal close to an active channel
+    /cmi bb <id>                 — display Blackboard contents for a channel
 
   Debug:
     /verbose [--off]             — enable component message summary (--off to disable)
