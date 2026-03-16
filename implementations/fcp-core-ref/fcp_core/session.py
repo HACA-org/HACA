@@ -158,7 +158,9 @@ def run_session(
                         stimulus_ready = True
                     continue  # back to top — wait for next input, no CPE call
                 if not handled:
-                    print(f"  unknown command: {stripped.split()[0]}")
+                    from .operator import _cmd_output
+                    with _cmd_output():
+                        print(f"unknown command: {stripped.split()[0]}")
                     continue
             _vlog("operator", f"input: {stripped!r}")
             _append_msg(layout, "operator", user_input)
