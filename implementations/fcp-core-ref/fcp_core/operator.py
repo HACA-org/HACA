@@ -982,7 +982,7 @@ def _cmd_help() -> None:
 
   Memory & inbox:
     /memory [query]              — list memory store contents (episodic + semantic)
-    /inbox [list]                — list system notifications
+    /inbox list                  — list system notifications
     /inbox view <n>              — view notification by index
     /inbox dismiss <n>           — remove notification by index
     /inbox clear                 — remove all notifications
@@ -995,6 +995,7 @@ def _cmd_help() -> None:
 
   Skills & execution:
     /skill list                  — list installed skills
+    /skill add                   — create new skill (requires active session)
     /skill audit <name>          — audit a skill
 
   Model, endure & cron:
