@@ -73,19 +73,22 @@ class TestDispatchBuiltinSkill(unittest.TestCase):
         data = json.loads(output)
         self.assertEqual(data["echo"]["key"], "val")
 
-    def test_result_written_to_inbox(self) -> None:
-        exec_.dispatch(self.layout, "echo_skill", {}, self.index)
+    def test_result_returned_inline(self) -> None:
+        output = exec_.dispatch(self.layout, "echo_skill", {}, self.index)
+        self.assertIsInstance(output, str)
+        # results are returned inline — inbox should have no skill_result files
         files = list(self.layout.inbox_dir.glob("*skill_result*"))
-        self.assertGreater(len(files), 0)
+        self.assertEqual(len(files), 0)
 
-    def test_failure_writes_error_to_inbox(self) -> None:
+    def test_failure_raises_exception(self) -> None:
         # break the executable so it fails
         skill_dir = self.layout.skills_lib_dir / "echo_skill"
         (skill_dir / "run.py").write_text("import sys; sys.exit(1)\n", encoding="utf-8")
         with self.assertRaises(Exception):
             exec_.dispatch(self.layout, "echo_skill", {}, self.index)
+        # errors propagate via exception — inbox should have no skill_error files
         files = list(self.layout.inbox_dir.glob("*skill_error*"))
-        self.assertGreater(len(files), 0)
+        self.assertEqual(len(files), 0)
 
 
 class TestActionLedger(unittest.TestCase):

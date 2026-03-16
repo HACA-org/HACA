@@ -84,7 +84,6 @@ def dispatch(
     except Exception as exc:
         if ledger_seq is not None:
             _ledger_resolve(layout, ledger_seq, "failed")
-        _write_skill_error(layout, skill_name, str(exc))
         _increment_failure(layout, skill_name)
         post_skill_hook(layout, skill_name, params, str(exc), failed=True)
         raise
@@ -93,7 +92,6 @@ def dispatch(
         _ledger_resolve(layout, ledger_seq, "complete")
 
     _reset_failure(layout, skill_name)
-    _write_skill_result(layout, skill_name, output)
     post_skill_hook(layout, skill_name, params, output, failed=False)
     return output
 
