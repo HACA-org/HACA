@@ -995,7 +995,7 @@ def _cmd_help() -> None:
 
   Skills & execution:
     /skill list                  — list installed skills
-    /skill add                   — create new skill (requires active session)
+    /skill add                   — create new skill
     /skill audit <name>          — audit a skill
 
   Model, endure & cron:
