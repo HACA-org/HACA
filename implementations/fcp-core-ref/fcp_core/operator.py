@@ -222,7 +222,7 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
         return True
 
     # --- Skills & execution ---
-    if cmd == "/skill":
+    if cmd in ("/skill", "/skills"):
         _cmd_skill(layout, args)
         return True
 
@@ -338,8 +338,10 @@ def _cmd_memory(layout: Layout, args: list[str]) -> None:
 
 
 def _cmd_inbox(layout: Layout, args: list[str]) -> None:
-    sub = args[0].lower() if args else "list"
-
+    if not args:
+        print("  usage: /inbox list | view <n> | dismiss <n> | clear")
+        return
+    sub = args[0].lower()
     if sub == "list":
         _inbox_list(layout)
     elif sub == "view" and len(args) > 1:
@@ -349,7 +351,7 @@ def _cmd_inbox(layout: Layout, args: list[str]) -> None:
     elif sub == "clear":
         _inbox_clear(layout)
     else:
-        print("  usage: /inbox [list] | view <n> | dismiss <n> | clear")
+        print("  usage: /inbox list | view <n> | dismiss <n> | clear")
 
 
 def _inbox_notifications(layout: Layout) -> list[Path]:
@@ -487,7 +489,7 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
 
 def _cmd_skill(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /skill list | audit <name>")
+        print("  usage: /skill list | add | audit <name>")
         return
     sub = args[0].lower()
     if sub == "list":
@@ -497,10 +499,12 @@ def _cmd_skill(layout: Layout, args: list[str]) -> None:
                 print(f"  {s['name']} [{s.get('class', '?')}]")
         else:
             print("  skills/index.json not found")
+    elif sub == "add":
+        print("  /skill add requires an active session — use the skill_create tool during a session.")
     elif sub == "audit" and len(args) > 1:
         print(f"  audit {args[1]}: use /skill audit via EXEC dispatch during session")
     else:
-        print("  usage: /skill list | audit <name>")
+        print("  usage: /skill list | add | audit <name>")
 
 
 # --- Model & endure ---
@@ -642,7 +646,7 @@ def _cmd_endure(layout: Layout, args: list[str]) -> None:
     elif sub == "sync":
         _endure_sync(layout, "--remote" in args)
     else:
-        print(f"  unknown endure subcommand: {sub}")
+        print("  usage: /endure list | approve <n> | reject <n> | sync [--remote]")
 
 
 def _endure_proposals(layout: Layout) -> list[dict]:
