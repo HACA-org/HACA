@@ -339,7 +339,7 @@ def _cmd_memory(layout: Layout, args: list[str]) -> None:
 
 def _cmd_inbox(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /inbox list | view <n> | dismiss <n> | clear")
+        print("  usage: /inbox list | view <id> | dismiss <id> | clear")
         return
     sub = args[0].lower()
     if sub == "list":
@@ -351,7 +351,7 @@ def _cmd_inbox(layout: Layout, args: list[str]) -> None:
     elif sub == "clear":
         _inbox_clear(layout)
     else:
-        print("  usage: /inbox list | view <n> | dismiss <n> | clear")
+        print("  usage: /inbox list | view <id> | dismiss <id> | clear")
 
 
 def _inbox_notifications(layout: Layout) -> list[Path]:
@@ -634,7 +634,7 @@ def _model_list_print(backend: str) -> None:
 
 def _cmd_endure(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /endure list | approve <n> | reject <n> | sync [--remote]")
+        print("  usage: /endure list | approve <id> | reject <id> | sync [--remote]")
         return
     sub = args[0].lower()
     if sub == "list":
@@ -646,7 +646,7 @@ def _cmd_endure(layout: Layout, args: list[str]) -> None:
     elif sub == "sync":
         _endure_sync(layout, "--remote" in args)
     else:
-        print("  usage: /endure list | approve <n> | reject <n> | sync [--remote]")
+        print("  usage: /endure list | approve <id> | reject <id> | sync [--remote]")
 
 
 def _endure_proposals(layout: Layout) -> list[dict]:
@@ -983,8 +983,8 @@ def _cmd_help() -> None:
   Memory & inbox:
     /memory [query]              — list memory store contents (episodic + semantic)
     /inbox list                  — list system notifications
-    /inbox view <n>              — view notification by index
-    /inbox dismiss <n>           — remove notification by index
+    /inbox view <id>             — view notification by index
+    /inbox dismiss <id>          — remove notification by index
     /inbox clear                 — remove all notifications
 
   Workspace:
@@ -1001,8 +1001,8 @@ def _cmd_help() -> None:
   Model, endure & cron:
     /model [list]                — interactive model picker (active model highlighted)
     /endure list                 — list pending Evolution Proposals
-    /endure approve <n>          — approve proposal by index
-    /endure reject <n>           — reject proposal by index
+    /endure approve <id>         — approve proposal by index
+    /endure reject <id>          — reject proposal by index
     /endure sync [--remote]      — commit entity root to version control
     /cron list                   — list scheduled tasks
     /cron add                    — create task interactively (Operator-initiated)
