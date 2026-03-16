@@ -2,6 +2,12 @@
   "version": "1.0",
   "skills": [
     {
+      "name": "cmi_send",
+      "desc": "Send a message to an active CMI channel (general broadcast, peer-directed, or Blackboard contribution).",
+      "manifest": "skills/lib/cmi_send/manifest.json",
+      "class": "builtin"
+    },
+    {
       "name": "commit",
       "desc": "Commit a path within workspace_focus. Only git interface available to the CPE.",
       "manifest": "skills/lib/commit/manifest.json",

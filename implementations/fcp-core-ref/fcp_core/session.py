@@ -428,8 +428,49 @@ def _session_to_turns(layout: Layout) -> list[tuple[str, str]]:
     return pairs
 
 
+def _format_cmi_stimulus(env: dict[str, Any]) -> str:
+    """Format a CMI inbox envelope as a readable stimulus for the CPE."""
+    msg_type = env.get("type", "")
+    chan_id = env.get("channel_id", "?")
+    sender = env.get("from", env.get("host_identity", ""))
+    sender_short = sender[:16] + "..." if len(sender) > 16 else sender
+
+    if msg_type == "CMI_CONTROL":
+        event = env.get("event", "")
+        if event == "channel_closing":
+            return (
+                f"[CMI] Channel {chan_id} is closing.\n"
+                f"The Blackboard is now final. Review it with `/cmi bb {chan_id}` "
+                f"and decide what to preserve in memory."
+            )
+        return f"[CMI] Control event on channel {chan_id}: {event}"
+
+    if msg_type == "CMI_MSG_GENERAL":
+        content = env.get("content", "")
+        return f"[CMI:{chan_id}] {sender_short}: {content}"
+
+    if msg_type == "CMI_MSG_PEER":
+        to = env.get("to", "")
+        content = env.get("content", "")
+        to_short = to[:16] + "..." if len(to) > 16 else to
+        return f"[CMI:{chan_id}] {sender_short} → {to_short}: {content}"
+
+    if msg_type == "CMI_MSG_BB":
+        content = env.get("content", "")
+        seq = env.get("seq", "?")
+        return f"[CMI:{chan_id}] BB[{seq}] {sender_short}: {content}"
+
+    # fallback for unknown CMI types
+    return f"[CMI:{chan_id}] {msg_type}: {json.dumps(env, ensure_ascii=False)}"
+
+
 def _envelope_to_text(env: dict[str, Any]) -> str:
     """Extract displayable text from an ACP envelope for chat history injection."""
+    # CMI stimuli arrive directly (not wrapped in ACP) — handle separately
+    env_type = env.get("type", "")
+    if isinstance(env_type, str) and env_type.startswith("CMI_"):
+        return _format_cmi_stimulus(env)
+
     raw_data = env.get("data", "")
     if isinstance(raw_data, str):
         try:

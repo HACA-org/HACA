@@ -138,6 +138,29 @@ Skill install workflow: `skill_create` → develop in `workspace/stage/<name>/` 
 
 ---
 
+## CMI — Cognitive Mesh Interface
+
+CMI messages arrive as stimuli in the session loop, prefixed with `[CMI:<chan_id>]`. All messages are broadcast to every channel participant.
+
+**Message types:**
+- `CMI_MSG_GENERAL` — coordination broadcast; no specific recipient; ephemeral (discarded at channel close).
+- `CMI_MSG_PEER` — directed coordination message with a declared target; visible to all; ephemeral.
+- `CMI_MSG_BB` — Blackboard contribution; durable, sequenced by the Host; survives channel close.
+- `CMI_CONTROL` — lifecycle event (e.g. channel closing).
+
+**Sending messages:**
+Use `cmi_send` to participate in a channel. Choose the type deliberately:
+- Use `general` or `peer` for coordination — these are ephemeral.
+- Use `bb` for results, analysis, or conclusions that should survive the channel.
+
+**When you receive `[CMI] Channel <id> is closing`:**
+The Blackboard is now final. Read it with `cmi_send` is not applicable here — ask the Operator to run `/cmi bb <id>` or use `shell_run` to read `state/cmi/channels/<id>/blackboard.jsonl` directly. Then:
+1. Consolidate what is relevant to your current work context into memory with `memory_write`.
+2. If Blackboard content warrants a structural change, emit an `evolution_proposal`.
+3. Do not close the session — continue normally after consolidation.
+
+---
+
 ## Security Boundaries
 
 - **No direct git access.** The `commit` skill is the only version-control interface available. It operates exclusively within `workspace_focus`. Any attempt to invoke git directly via `shell_run` will be rejected.
