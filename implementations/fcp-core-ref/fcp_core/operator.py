@@ -1079,6 +1079,19 @@ def _cmi_channel_open(layout: Layout, chan_id: str) -> None:
         except Exception:
             pass
 
+    # Check if port is already in use before launching
+    import socket as _socket
+    from urllib.parse import urlparse as _urlparse
+    _ep = baseline.get("cmi", {}).get("endpoint", "http://localhost:7700")
+    _parsed = _urlparse(_ep)
+    _host = _parsed.hostname or "localhost"
+    _port = _parsed.port or 7700
+    with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as _s:
+        if _s.connect_ex((_host, _port)) == 0:
+            print(f"  port {_port} is already in use — cannot open channel process")
+            print(f"  (another channel may be active, or a previous process is still running)")
+            return
+
     # Launch channel_process as a background subprocess
     import sys
     cmd = [
@@ -1098,6 +1111,18 @@ def _cmi_channel_close(layout: Layout, chan_id: str) -> None:
     """Signal close to an active CMI channel via HTTP POST."""
     import urllib.request, urllib.error
 
+    # Read close_token from Entity Store — only the local Operator can do this
+    close_token = ""
+    token_path = layout.cmi_close_token(chan_id)
+    if token_path.exists():
+        try:
+            close_token = read_json(token_path).get("token", "")
+        except Exception:
+            pass
+    if not close_token:
+        print(f"  close_token not found for channel {chan_id} — is the channel process running?")
+        return
+
     baseline = {}
     if layout.baseline.exists():
         try:
@@ -1108,7 +1133,7 @@ def _cmi_channel_close(layout: Layout, chan_id: str) -> None:
     endpoint = cmi_cfg.get("endpoint", "http://localhost:7700")
 
     url = f"{endpoint}/channel/{chan_id}/close"
-    body = json.dumps({"operator": True}).encode()
+    body = json.dumps({"close_token": close_token}).encode()
     try:
         req = urllib.request.Request(
             url, data=body,

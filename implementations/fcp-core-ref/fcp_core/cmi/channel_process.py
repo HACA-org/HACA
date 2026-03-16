@@ -114,6 +114,7 @@ class ChannelProcess:
         self._bb_seq = 0
         self._enrolled_peers: list[dict[str, Any]] = []  # [{node_identity, endpoint, pubkey, role}]
         self._enrollment_tokens: dict[str, dict[str, Any]] = {}  # token → {node_identity, role, expiry, used}
+        self._close_token: str = ""
         self._lock = threading.Lock()
 
         # Load config
@@ -125,7 +126,7 @@ class ChannelProcess:
         # Ensure channel dirs exist
         self.layout.cmi_channel_dir(chan_id).mkdir(parents=True, exist_ok=True)
 
-        # Restore enrolled peers from participants.json (host crash/restart recovery)
+        # Restore enrolled peers and BB seq from disk (host crash/restart recovery)
         if self.role == "host":
             p_path = self.layout.cmi_participants(chan_id)
             if p_path.exists():
@@ -135,16 +136,33 @@ class ChannelProcess:
                     self._enrolled_peers = saved.get("peers", [])
                 except Exception:
                     pass
+            bb_path = self.layout.cmi_blackboard(chan_id)
+            if bb_path.exists():
+                try:
+                    lines = [l for l in bb_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+                    if lines:
+                        import json as _json
+                        last = _json.loads(lines[-1])
+                        self._bb_seq = int(last.get("seq", 0))
+                except Exception:
+                    pass
 
     # -----------------------------------------------------------------------
     # Run
     # -----------------------------------------------------------------------
 
     def run(self) -> None:
+        import secrets as _secrets
         endpoint = self._cmi_cfg.get("endpoint", "http://localhost:7700")
         parsed = urlparse(endpoint)
         host = parsed.hostname or "localhost"
         port = parsed.port or 7700
+
+        # Generate a single-use close token — stored in Entity Store so only
+        # the local Operator (with filesystem access) can issue a close signal.
+        self._close_token = _secrets.token_hex(32)
+        from ..store import atomic_write
+        atomic_write(self.layout.cmi_close_token(self.chan_id), {"token": self._close_token})
 
         handler_factory = self._make_handler()
         server = HTTPServer((host, port), handler_factory)
@@ -167,6 +185,11 @@ class ChannelProcess:
             server.shutdown()
             self._update_participants_status("closed")
             self._update_channel_status("closed")
+            # Remove close token on clean shutdown
+            try:
+                self.layout.cmi_close_token(self.chan_id).unlink(missing_ok=True)
+            except Exception:
+                pass
 
     # -----------------------------------------------------------------------
     # HTTP handler factory
@@ -339,6 +362,12 @@ class ChannelProcess:
             handler._forbidden("authentication failure")
             return
 
+        # Reject ready/enroll if channel is no longer accepting participants
+        ch_status = self._channel_cfg.get("status", "created")
+        if ch_status in ("closing", "closed"):
+            handler._forbidden(f"channel is {ch_status}")
+            return
+
         declared = self._channel_cfg.get("participants", [])
         if node_identity not in declared:
             self._log_mif("MIF-ENROLL", f"node not in channel participant list: {node_identity[:20]}")
@@ -495,17 +524,19 @@ class ChannelProcess:
             handler._bad_request("msg:peer requires 'to' field")
             return
 
-        peer = self._find_enrolled_peer(node_identity)
+        peer = self._resolve_sender(node_identity)
         if peer is None:
             self._log_mif("MIF-ROLE", f"message from non-enrolled node: {node_identity[:20]}")
             handler._forbidden("not enrolled")
             return
 
-        check = {k: v for k, v in payload.items() if k != "sig"}
-        if not self._verify(peer.get("pubkey", ""), check, sig):
-            self._log_mif("MIF-AUTH", f"message auth failure: {node_identity[:20]}")
-            handler._forbidden("authentication failure")
-            return
+        pubkey = peer.get("pubkey", "")
+        if pubkey:  # skip sig check for self-sent (host, pubkey="")
+            check = {k: v for k, v in payload.items() if k != "sig"}
+            if not self._verify(pubkey, check, sig):
+                self._log_mif("MIF-AUTH", f"message auth failure: {node_identity[:20]}")
+                handler._forbidden("authentication failure")
+                return
 
         handler._ok({"received": True})
 
@@ -540,22 +571,24 @@ class ChannelProcess:
         sig = payload.get("sig", "")
         content = payload.get("content", "")
 
-        peer = self._find_enrolled_peer(node_identity)
+        peer = self._resolve_sender(node_identity)
         if peer is None:
             self._log_mif("MIF-ROLE", f"contribution from non-enrolled node: {node_identity[:20]}")
             handler._forbidden("not enrolled")
             return
 
-        if peer.get("role") not in ("peer",):
+        if peer.get("role") not in ("peer", "host"):
             self._log_mif("MIF-ROLE", f"observer tried to contribute: {node_identity[:20]}")
             handler._forbidden("observers cannot contribute")
             return
 
-        check = {k: v for k, v in payload.items() if k != "sig"}
-        if not self._verify(peer.get("pubkey", ""), check, sig):
-            self._log_mif("MIF-AUTH", f"contribution auth failure: {node_identity[:20]}")
-            handler._forbidden("authentication failure")
-            return
+        pubkey = peer.get("pubkey", "")
+        if pubkey:  # skip sig check for self-sent (host, pubkey="")
+            check = {k: v for k, v in payload.items() if k != "sig"}
+            if not self._verify(pubkey, check, sig):
+                self._log_mif("MIF-AUTH", f"contribution auth failure: {node_identity[:20]}")
+                handler._forbidden("authentication failure")
+                return
 
         with self._lock:
             self._bb_seq += 1
@@ -596,7 +629,7 @@ class ChannelProcess:
             pubkey = peer_cfg.get("pubkey", "") if peer_cfg else ""
             if pubkey:
                 check = {k: v for k, v in payload.items() if k != "sig"}
-                if sig and not self._verify(pubkey, check, sig):
+                if not sig or not self._verify(pubkey, check, sig):
                     self._log_mif("MIF-AUTH", f"stimulus auth failure from {node_identity[:20]}")
                     handler._ok({"received": False, "error": "auth failure"})
                     return
@@ -618,7 +651,17 @@ class ChannelProcess:
     # -----------------------------------------------------------------------
 
     def _handle_close(self, handler, payload: dict) -> None:
-        """Receive close signal — from Host (peer side) or Operator (host side)."""
+        """Receive close signal — from Host (peer side) or Operator (host side).
+
+        Requires the close_token written to the Entity Store at process start.
+        This prevents any external party from closing the channel — only the
+        local Operator (with filesystem access) can read and supply the token.
+        """
+        import hmac as _hmac
+        provided = payload.get("close_token", "")
+        if not provided or not _hmac.compare_digest(provided, self._close_token):
+            handler._forbidden("invalid close_token")
+            return
         handler._ok({"closing": True})
         _log(f"[CMI] close signal received for {self.chan_id}")
         self._update_channel_status("closing")
@@ -750,7 +793,7 @@ class ChannelProcess:
         data = {
             "type": msg_type,
             "channel_id": self.chan_id,
-            **{k: v for k, v in payload.items() if k not in ("type", "channel_id")},
+            **{k: v for k, v in payload.items() if k not in ("type", "channel_id", "chan_id")},
         }
         raw = acp_make(env_type="MSG", source="cmi", data=data)
         env = ACPEnvelope.from_dict(raw)
@@ -869,6 +912,22 @@ class ChannelProcess:
                 if p.get("node_identity") == node_identity:
                     return p
         return None
+
+    def _resolve_sender(self, node_identity: str) -> dict[str, Any] | None:
+        """Return sender info for auth/role checks.
+
+        The host entity is always a valid sender (role=host) — it never
+        self-enrolls but must be able to send messages and BB contributions
+        on channels it owns.  Enrolled peers are also valid senders.
+
+        Returns a dict with keys: node_identity, pubkey, role.
+        pubkey="" signals "skip signature verification" (self-sent by host).
+        """
+        my_ni = self._credential.get("node_identity", "") if self._credential else ""
+        if node_identity and node_identity == my_ni:
+            # Host sending on its own channel — no external sig verification needed
+            return {"node_identity": my_ni, "pubkey": "", "role": "host"}
+        return self._find_enrolled_peer(node_identity)
 
     def _verify(self, pubkey: str, payload: dict, sig: str) -> bool:
         if not pubkey or not sig:

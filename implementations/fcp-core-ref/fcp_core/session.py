@@ -107,6 +107,9 @@ def run_session(
         # drain io/inbox/ → consolidate to session.jsonl
         inbox_envs = _drain_and_consolidate(layout)
         for env in inbox_envs:
+            indicator = _cmi_indicator(env)
+            if indicator:
+                print(f"{_DIM}{indicator}{_RESET}")
             text = _envelope_to_text(env)
             if text:
                 chat_history.append({"role": "user", "content": text})
@@ -212,6 +215,8 @@ def run_session(
             _vlog_json(f"{call.tool}→fcp", result)
             _return_tool_result(layout, call.id, call.tool, result)
             tool_results.append(f"[{call.tool}] {json.dumps(result, ensure_ascii=False)}")
+            if call.tool == "cmi_send":
+                _cmi_send_indicator(call.input, result)
             if closed:
                 close_reason = "session_close"
                 session_closed = True
@@ -478,16 +483,55 @@ def _format_cmi_stimulus(env: dict[str, Any]) -> str:
     return f"[CMI:{chan_id}] {msg_type}: {json.dumps(env, ensure_ascii=False)}"
 
 
-def _envelope_to_text(env: dict[str, Any]) -> str:
-    """Extract displayable text from an ACP envelope for chat history injection."""
+def _parse_env_data(env: dict[str, Any]) -> Any:
+    """Return the parsed data field of an ACP envelope."""
     raw_data = env.get("data", "")
     if isinstance(raw_data, str):
         try:
-            data = json.loads(raw_data)
+            return json.loads(raw_data)
         except Exception:
-            data = raw_data
+            return raw_data
+    return raw_data
+
+
+def _cmi_indicator(env: dict[str, Any]) -> str:
+    """Return a short operator-facing indicator if env is a CMI stimulus, else ''."""
+    data = _parse_env_data(env)
+    if not isinstance(data, dict):
+        return ""
+    data_type = data.get("type", "")
+    if not isinstance(data_type, str) or not data_type.startswith("CMI_"):
+        return ""
+    chan_id = data.get("channel_id", "?")
+    event = data.get("event", "")
+    if data_type == "CMI_CONTROL":
+        return f"  [cmi:{chan_id}] ← control:{event}"
+    if data_type == "CMI_MSG_GENERAL":
+        sender = data.get("from", "?")
+        return f"  [cmi:{chan_id}] ← msg from {sender[:16]}"
+    if data_type == "CMI_MSG_PEER":
+        sender = data.get("from", "?")
+        return f"  [cmi:{chan_id}] ← peer from {sender[:16]}"
+    if data_type == "CMI_MSG_BB":
+        seq = data.get("seq", "?")
+        return f"  [cmi:{chan_id}] ← bb[{seq}]"
+    return f"  [cmi:{chan_id}] ← {data_type}"
+
+
+def _cmi_send_indicator(params: dict[str, Any], result: dict[str, Any]) -> None:
+    """Print a dim operator-facing line when the CPE sends a CMI message."""
+    chan_id = params.get("chan_id", "?")
+    msg_type = params.get("type", "?")
+    if result.get("status") == "sent":
+        print(f"{_DIM}  [cmi:{chan_id}] → {msg_type}{_RESET}")
     else:
-        data = raw_data
+        err = result.get("error", "failed")
+        print(f"{_DIM}  [cmi:{chan_id}] → {msg_type} (error: {err}){_RESET}")
+
+
+def _envelope_to_text(env: dict[str, Any]) -> str:
+    """Extract displayable text from an ACP envelope for chat history injection."""
+    data = _parse_env_data(env)
 
     # CMI stimuli are wrapped in ACP (source=cmi) — data.type starts with CMI_
     if isinstance(data, dict):

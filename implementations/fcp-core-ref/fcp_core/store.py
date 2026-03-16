@@ -254,6 +254,9 @@ class Layout:
     def cmi_enrollment(self, chan_id: str) -> Path:
         return self.root / "state" / "cmi" / "channels" / chan_id / "enrollment.json"
 
+    def cmi_close_token(self, chan_id: str) -> Path:
+        return self.root / "state" / "cmi" / "channels" / chan_id / "close_token.json"
+
     # -- helpers --
     def skill_manifest(self, name: str, builtin: bool = False) -> Path:
         if builtin:
