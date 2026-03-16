@@ -3,7 +3,7 @@
   "skills": [
     {
       "name": "commit",
-      "desc": "Version-control checkpoint for workspace projects. This is the only git interface available to the CPE \u2014 direct git access is prohibited. Stages and commits the specified path within workspace_focus; optionally pushes to origin.",
+      "desc": "Commit a path within workspace_focus. Only git interface available to the CPE.",
       "manifest": "skills/lib/commit/manifest.json",
       "class": "builtin"
     },
@@ -21,7 +21,7 @@
     },
     {
       "name": "shell_run",
-      "desc": "Execute a shell command within workspace_focus. Permitted commands updated to include Python runtime.",
+      "desc": "Execute an allowed shell command within workspace_focus.",
       "manifest": "skills/lib/shell_run/manifest.json",
       "class": "builtin"
     },
@@ -33,7 +33,7 @@
     },
     {
       "name": "skill_create",
-      "desc": "Stage a new skill cartridge under workspace/stage/<name>/ for Endure installation. Optional --base <name> clones an existing skill as a starting point.",
+      "desc": "Scaffold a new skill in workspace/stage/<name>/ for installation via evolution_proposal.",
       "manifest": "skills/lib/skill_create/manifest.json",
       "class": "builtin"
     },
@@ -45,7 +45,7 @@
     },
     {
       "name": "worker_skill",
-      "desc": "Instantiate a text-only sub-agent for tasks that would pollute the main context window: summarizing large documents, cross-referencing multiple files, isolated analysis or classification tasks. Do NOT use for file I/O, sequential workspace operations, or anything you can do directly with file_reader/file_writer/shell_run. The worker has no access to tools or the filesystem \u2014 it can only reason and return text.",
+      "desc": "Text-only sub-agent for isolated analysis tasks (summarization, cross-reference, classification). No tool or filesystem access.",
       "manifest": "skills/lib/worker_skill/manifest.json",
       "class": "builtin"
     }
