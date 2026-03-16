@@ -465,56 +465,30 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
     current_backend = cpe_cfg.get("backend", "ollama")
     current_model = cpe_cfg.get("model", "")
 
-    if not args:
-        # Interactive picker
-        selected = _pick_model_interactive(current_backend, current_model)
-        if selected is None:
-            return
-        backend, new_model = selected
-        if backend == current_backend and new_model == current_model:
-            print(f"  no change ({current_backend}:{current_model})")
-            return
-        if adapter_ref is None:
-            print("  /model is only available during an active session")
-            return
-        from .cpe.base import make_adapter
-        try:
-            new_adapter = make_adapter(backend=backend, model=new_model, api_key="")
-        except Exception as exc:
-            print(f"  failed to create adapter: {exc}")
-            return
-        adapter_ref.current = new_adapter
-        cpe_cfg["backend"] = backend
-        cpe_cfg["model"] = new_model
-        baseline["cpe"] = cpe_cfg
-        from .store import atomic_write
-        atomic_write(layout.baseline, baseline)
-        print(f"  switched → {backend}:{new_model}")
+    # /model and /model list both open the interactive picker
+    selected = _pick_model_interactive(current_backend, current_model)
+    if selected is None:
         return
-
-    sub = args[0].lower()
-
-    if sub == "list":
-        _model_list_print(current_backend)
+    backend, new_model = selected
+    if backend == current_backend and new_model == current_model:
+        print(f"  no change ({current_backend}:{current_model})")
         return
-
-    # /model <name> — direct switch within current backend
-    new_model = args[0]
     if adapter_ref is None:
-        print("  /model <name> is only available during an active session")
+        print("  /model is only available during an active session")
         return
     from .cpe.base import make_adapter
     try:
-        new_adapter = make_adapter(backend=current_backend, model=new_model, api_key="")
+        new_adapter = make_adapter(backend=backend, model=new_model, api_key="")
     except Exception as exc:
         print(f"  failed to create adapter: {exc}")
         return
     adapter_ref.current = new_adapter
+    cpe_cfg["backend"] = backend
     cpe_cfg["model"] = new_model
     baseline["cpe"] = cpe_cfg
     from .store import atomic_write
     atomic_write(layout.baseline, baseline)
-    print(f"  model switched : {new_model}")
+    print(f"  switched → {backend}:{new_model}")
 
 
 def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[str, str] | None:
@@ -537,8 +511,9 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
     for backend in BACKENDS:
         models = _ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
         for m in models:
-            marker = " ✓" if backend == current_backend and m == current_model else ""
-            labels.append(f"{backend}:{m}{marker}")
+            active = backend == current_backend and m == current_model
+            label = f"\x1b[1;96m{backend}:{m} ✓\x1b[0m" if active else f"{backend}:{m}"
+            labels.append(label)
             pairs.append((backend, m))
 
     if not labels:
@@ -768,9 +743,8 @@ def _cmd_help() -> None:
     /skill audit <name>          — audit a skill
 
   Model & endure:
-    /model                       — show current model and backend
-    /model list                  — list known models for current backend
-    /model <name>                — switch model mid-session (takes effect immediately)
+    /model                       — interactive model picker (active model highlighted)
+    /model list                  — alias for /model
     /endure list                 — list pending Evolution Proposals
     /endure approve <n>          — approve proposal by index
     /endure reject <n>           — reject proposal by index

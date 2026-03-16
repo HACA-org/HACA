@@ -305,8 +305,9 @@ def _run_model(layout: "Layout") -> None:
     for backend in BACKENDS:
         models = _fetch_ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
         for m in models:
-            marker = " ✓" if backend == current_backend and m == current_model else ""
-            items.append(f"{backend}:{m}{marker}")
+            active = backend == current_backend and m == current_model
+            label = f"\x1b[1;96m{backend}:{m} ✓\x1b[0m" if active else f"{backend}:{m}"
+            items.append(label)
             pairs.append((backend, m))
 
     if not items:
