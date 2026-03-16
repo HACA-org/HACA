@@ -108,6 +108,8 @@ def _check_context_budget(
 def _check_workspace_focus(layout: Layout) -> list[str]:
     if not layout.workspace_focus.exists():
         return []
+    focus_path: Path | None = None
+    workspace: Path | None = None
     try:
         wf = read_json(layout.workspace_focus)
         raw_path = wf.get("path", "")
@@ -117,7 +119,10 @@ def _check_workspace_focus(layout: Layout) -> list[str]:
         workspace = layout.workspace_dir.resolve()
         focus_path.relative_to(workspace)
     except ValueError:
-        detail = {"path": str(focus_path), "workspace": str(workspace)}
+        detail = {
+            "path": str(focus_path) if focus_path else "",
+            "workspace": str(workspace) if workspace else "",
+        }
         log_critical(layout, "WORKSPACE_FOCUS_INVALID", detail)
         write_notification(layout, "critical", {
             "type": "WORKSPACE_FOCUS_INVALID",
@@ -172,10 +177,12 @@ def _check_skill_audit(layout: Layout) -> None:
 
     for entry in list(skills):
         skill_name = entry.get("name", "")
-        exe_rel = entry.get("exe", "")
-        if not exe_rel:
+        manifest_rel = entry.get("manifest", "")
+        if not manifest_rel:
             continue
-        exe_path = layout.root / exe_rel
+        manifest_path = layout.root / manifest_rel
+        exe_path = manifest_path.parent / "run.py"
+        exe_rel = str(exe_path.relative_to(layout.root))
         if not exe_path.is_file():
             continue
         expected = tracked.get(exe_rel)

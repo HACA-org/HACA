@@ -994,10 +994,10 @@ def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, 
     tools.append({
         "name": "evolution_proposal",
         "description": (
-            "Propose a structural change to the Entity Store (skill manifests, persona files, configs). "
-            "The proposal must contain the exact changes to apply — prepare and verify the content first "
-            "using file_reader/file_writer in workspace/, then submit here. "
-            "Requires explicit Operator approval before taking effect via the Endure Protocol."
+            "Propose a structural change to the Entity Store. "
+            "To install a custom skill: use skill_install op with the skill name (must be staged in workspace/stage/<name>/ and validated with skill_audit first). "
+            "For other structural changes (persona files, configs): use json_merge, file_write, or file_delete ops. "
+            "Requires explicit Operator approval before taking effect."
         ),
         "input_schema": {
             "type": "object",

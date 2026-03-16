@@ -166,9 +166,9 @@ def verify_integrity_chain(layout: Layout, integrity_doc: IntegrityDocument) -> 
     check_from = 1 if cp is None else start_seq
     prev_hash: str | None = None
 
-    for seq in range(check_from, len(entries) + 1):
-        if seq not in seq_to_line:
-            return False  # gap
+    for seq in sorted(seq_to_line.keys()):
+        if seq < check_from:
+            continue
         raw = seq_to_line[seq]
         entry = ChainEntry.from_dict(json.loads(raw))
 
