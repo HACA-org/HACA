@@ -65,6 +65,10 @@ def _main() -> None:
     cmd = args[0]
     rest = args[1:]
 
+    if cmd in ("help", "--help", "-h"):
+        _print_help()
+        return
+
     if cmd == "init":
         _run_init(entity_root)
         return
@@ -92,6 +96,22 @@ def _main() -> None:
     print(f"unknown command: {cmd}")
     print("usage: ./fcp-core [init | model | doctor [--fix] | decommission --archive|--destroy | --auto <cron_id>]")
     sys.exit(1)
+
+
+def _print_help() -> None:
+    print("""
+  ./fcp-core                         — boot entity and start session
+  ./fcp-core init                    — initialize a new entity
+  ./fcp-core model                   — interactive model picker
+  ./fcp-core doctor [--fix]          — check integrity; --fix to repair
+  ./fcp-core decommission --archive  — archive entity (reversible)
+  ./fcp-core decommission --destroy  — destroy entity permanently
+  ./fcp-core --auto <cron_id>        — run scheduled task autonomously
+  ./fcp-core --verbose               — boot with verbose mode enabled
+  ./fcp-core --debugger[=all|chat|boot]
+                                     — boot with debugger mode enabled
+  ./fcp-core help | --help | -h      — this message
+""")
 
 
 # ---------------------------------------------------------------------------
