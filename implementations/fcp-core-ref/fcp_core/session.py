@@ -51,12 +51,6 @@ def run_session(
         tools = _tool_declarations(layout, index)
     adapter_ref = adapter if isinstance(adapter, AdapterRef) else AdapterRef(adapter)
 
-    try:
-        _bl = read_json(layout.baseline)
-        _cpe_cfg = _bl.get("cpe", {})
-        _model_label = f"{_cpe_cfg.get('backend', '?')}:{_cpe_cfg.get('model', '?')}"
-    except Exception:
-        _model_label = "?"
 
     # --- Build system prompt and initial chat history once at session start ---
     system, chat_history = build_boot_context(layout, index)
@@ -191,6 +185,7 @@ def run_session(
             print(f"\n{_DIM}  [fcp] working... cycle {cycle} — {tools_repr}{_RESET}")
         if response.text:
             _append_msg(layout, "cpe", response.text)
+            _model_label = getattr(adapter_ref.current, "_model", "")
             _print_cpe_block(response.text, _model_label)
             chat_history.append({"role": "assistant", "content": response.text})
         if response.tool_use_calls and not response.text:
