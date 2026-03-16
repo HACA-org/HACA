@@ -50,13 +50,14 @@ def main() -> None:
         print(json.dumps({"error": f"baseline parse error: {exc}"}))
         sys.exit(1)
 
-    endpoint = baseline.get("cmi", {}).get("endpoint", "").rstrip("/")
-    if not endpoint:
+    cmi_cfg = baseline.get("cmi", {})
+    local_endpoint = cmi_cfg.get("endpoint", "").rstrip("/")
+    if not local_endpoint:
         print(json.dumps({"error": "cmi.endpoint not declared in baseline"}))
         sys.exit(1)
 
     # Verify channel is active
-    channels: list[dict] = baseline.get("cmi", {}).get("channels", [])
+    channels: list[dict] = cmi_cfg.get("channels", [])
     channel_cfg = next((c for c in channels if c.get("id") == chan_id), None)
     if channel_cfg is None:
         print(json.dumps({"error": f"channel {chan_id!r} not found in baseline"}))
@@ -65,6 +66,31 @@ def main() -> None:
     if status != "active":
         print(json.dumps({"error": f"channel {chan_id!r} is not active (status: {status})"}))
         sys.exit(1)
+
+    # Resolve target endpoint: host receives messages; peers forward to host
+    # For role=host, send to own endpoint. For role=peer, send to host endpoint.
+    channel_role = channel_cfg.get("role", "host")
+    if channel_role == "host":
+        endpoint = local_endpoint
+    else:
+        # Find host endpoint from trusted_peers (first peer that is not self)
+        cred_path_tmp = entity_root / "state" / "cmi" / "credential.json"
+        my_ni = ""
+        if cred_path_tmp.exists():
+            try:
+                my_ni = json.loads(cred_path_tmp.read_text(encoding="utf-8")).get("node_identity", "")
+            except Exception:
+                pass
+        trusted_peers = cmi_cfg.get("trusted_peers", [])
+        host_endpoint = ""
+        for tp in trusted_peers:
+            if tp.get("node_identity") != my_ni and tp.get("endpoint"):
+                host_endpoint = tp["endpoint"].rstrip("/")
+                break
+        if not host_endpoint:
+            print(json.dumps({"error": "host endpoint not found in trusted_peers"}))
+            sys.exit(1)
+        endpoint = host_endpoint
 
     # Load CMI credential
     cred_path = entity_root / "state" / "cmi" / "credential.json"

@@ -732,10 +732,14 @@ def _rebuild_compact_history(
 
 
 def _drain_and_consolidate(layout: Layout) -> list[dict[str, Any]]:
+    import dataclasses
     envelopes = drain_inbox(layout.inbox_dir)
+    result = []
     for env in envelopes:
-        append_jsonl(layout.session_store, env)
-    return envelopes
+        d = dataclasses.asdict(env) if dataclasses.is_dataclass(env) else env
+        append_jsonl(layout.session_store, d)
+        result.append(d)
+    return result
 
 
 def _append_msg(layout: Layout, source: str, text: str) -> None:

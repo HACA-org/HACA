@@ -125,6 +125,17 @@ class ChannelProcess:
         # Ensure channel dirs exist
         self.layout.cmi_channel_dir(chan_id).mkdir(parents=True, exist_ok=True)
 
+        # Restore enrolled peers from participants.json (host crash/restart recovery)
+        if self.role == "host":
+            p_path = self.layout.cmi_participants(chan_id)
+            if p_path.exists():
+                try:
+                    from ..store import read_json
+                    saved = read_json(p_path)
+                    self._enrolled_peers = saved.get("peers", [])
+                except Exception:
+                    pass
+
     # -----------------------------------------------------------------------
     # Run
     # -----------------------------------------------------------------------
