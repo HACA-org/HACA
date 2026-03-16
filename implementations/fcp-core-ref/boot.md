@@ -60,7 +60,11 @@ The workspace is a sandboxed directory where you can read, write, and manage fil
 
 **file_reader** and **file_writer** operate relative to the workspace root. Use `"."` to list the root directory.
 
-**commit** and **shell_run** require `workspace_focus` to be set. Use `skill_info` for full details.
+**commit** and **shell_run** require `workspace_focus` to be set.
+
+**shell_run** permitted commands: `ls`, `cat`, `pwd`, `find`, `grep`. Direct git access is rejected — use `commit` instead.
+
+**skill_create** scaffolds a new skill in `workspace/stage/<name>/`. Use `--base <name>` to clone an existing skill as a starting point.
 
 **worker_skill** — instantiate a text-only sub-agent to offload tasks that would otherwise bloat the main context window.
 
@@ -93,9 +97,9 @@ Session close tools signal the end of a session and record its outcome. They are
 
 Parameters:
 - `consolidation` (required) — narrative summary of insights, decisions, and knowledge from this session.
-- `promotion` (optional) — list of slugs to promote from episodic to semantic memory.
 - `working_memory` (required) — `[{priority, path}, ...]` — list of memory artefacts to preload at the next session; keep concise, loaded at boot.
 - `session_handoff` (required) — `{pending_tasks, next_steps}` for the following session.
+- `promotion` — list of slugs to promote from episodic to semantic memory.
 
 **session_close** — signals that the session is complete. Call immediately after `closure_payload`. No parameters.
 

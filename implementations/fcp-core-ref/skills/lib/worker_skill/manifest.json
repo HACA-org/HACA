@@ -1,7 +1,7 @@
 {
   "name": "worker_skill",
   "version": "1.0.0",
-  "description": "Instantiate a text-only sub-agent for tasks that would pollute the main context window: summarizing large documents, cross-referencing multiple files, isolated analysis or classification tasks. Do NOT use for file I/O, sequential workspace operations, or anything you can do directly with file_reader/file_writer/shell_run. The worker has no access to tools or the filesystem — it can only reason and return text.",
+  "description": "Text-only sub-agent for isolated analysis tasks (summarization, cross-reference, classification). No tool or filesystem access.",
   "timeout_seconds": 120,
   "background": false,
   "irreversible": false,

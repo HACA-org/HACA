@@ -1,7 +1,7 @@
 {
   "name": "skill_create",
   "version": "1.0.0",
-  "description": "Stage a new skill cartridge under workspace/stage/<name>/ for Endure installation. Optional --base <name> clones an existing skill as a starting point.",
+  "description": "Scaffold a new skill in workspace/stage/<name>/ for installation via evolution_proposal.",
   "timeout_seconds": 30,
   "background": false,
   "irreversible": false,

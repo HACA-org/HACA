@@ -1,7 +1,7 @@
 {
   "name": "commit",
   "version": "1.0.0",
-  "description": "Version-control checkpoint for workspace projects. This is the only git interface available to the CPE — direct git access is prohibited. Stages and commits the specified path within workspace_focus; optionally pushes to origin.",
+  "description": "Commit a path within workspace_focus. Only git interface available to the CPE.",
   "timeout_seconds": 60,
   "background": false,
   "irreversible": true,

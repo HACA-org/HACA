@@ -1,7 +1,7 @@
 {
   "name": "shell_run",
   "version": "1.1.0",
-  "description": "Execute a shell command within workspace_focus. Permitted commands updated to include Python runtime.",
+  "description": "Execute an allowed shell command within workspace_focus.",
   "timeout_seconds": 30,
   "background": false,
   "irreversible": true,

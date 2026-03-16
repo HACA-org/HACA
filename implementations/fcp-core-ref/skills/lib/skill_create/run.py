@@ -47,15 +47,15 @@ def main() -> None:
         (stage_dir / "manifest.json").write_text(
             json.dumps(manifest, indent=2), encoding="utf-8"
         )
-        (stage_dir / "run.py").write_text(
-            '#!/usr/bin/env python3\nimport json, sys\n\n'
-            'def main() -> None:\n'
-            '    req = json.loads(sys.stdin.read())\n'
-            '    params = req.get("params", {})\n'
-            '    print(json.dumps({"status": "ok"}))\n\n'
-            'main()\n',
-            encoding="utf-8"
+        readme = (
+            f"# {name}\n\n"
+            "Describe what this skill does.\n\n"
+            "## Examples\n\n"
+            f"```\n→ {name}({{ \"param\": \"value\" }})\n```\n\n"
+            "## Parameters\n\n"
+            "- `param` (required) — description\n"
         )
+        (stage_dir / "README.md").write_text(readme, encoding="utf-8")
         print(json.dumps({"status": "ok", "path": str(stage_dir)}))
 
 

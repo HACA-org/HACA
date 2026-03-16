@@ -920,7 +920,7 @@ def _build_tools_index(layout: Layout, index: dict[str, Any]) -> str:
     """
     # System tools: name → (description, required_params)
     system_tools: list[tuple[str, str, list[str]]] = [
-        ("closure_payload", "record full session outcome before closing", ["consolidation"]),
+        ("closure_payload", "record full session outcome before closing", ["consolidation", "working_memory", "session_handoff"]),
         ("evolution_proposal", "propose structural change to entity (persona, skills, configs)", ["description", "changes"]),
         ("memory_recall", "retrieve context from memory", ["query"]),
         ("memory_write", "persist information across sessions", ["slug", "content"]),
@@ -958,7 +958,7 @@ def _build_tools_index(layout: Layout, index: dict[str, Any]) -> str:
 
     lines: list[str] = ["## Tools\n"]
     for name, desc, required in entries:
-        params_str = ", ".join(f"{p}*" for p in required) if required else "none"
+        params_str = ", ".join(f"{p} (required)" for p in required) if required else "none"
         lines.append(f"{name} — {desc}. params: {params_str}")
 
     return "\n".join(lines)
