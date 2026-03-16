@@ -186,9 +186,6 @@ def _run_normal(layout: "Layout") -> None:
             print("[FCP-Core] Evolution approved. Rebooting...")
         else:
             print("[FCP-Core] Starting new session...")
-        # Clear session store for a clean context
-        if layout.session_store.exists():
-            layout.session_store.write_text("", encoding="utf-8")
         # Re-run boot for fresh context
         try:
             boot_run(layout)

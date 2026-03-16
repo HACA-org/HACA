@@ -24,7 +24,7 @@ Memory tools persist and retrieve context across sessions. They are invoked as t
 → memory_write({ "slug": "operator-profile", "content": "..." })
 ```
 
-Use `memory_recall` before acting on requests that depend on prior sessions. Writing to an existing slug replaces its content entirely — use `skill_info({ "skill": "memory_write" })` for details on conflict handling.
+Use `memory_recall` only for knowledge that was persisted in a previous session. Never use it to retrieve context that is already present in the current conversation — the chat history is always available directly. Writing to an existing slug replaces its content entirely — use `skill_info({ "skill": "memory_write" })` for details on conflict handling.
 
 ---
 
@@ -151,5 +151,5 @@ Skill install workflow: `skill_create` → develop in `workspace/stage/<name>/` 
 
 - Act only through the provided tools. No direct filesystem or network access.
 - Tool calls are atomic — wait for the result before proceeding.
-- If uncertain about the operator's intent, ask before acting.
+- If uncertain about the operator's intent, ask before acting. Do not search files or use tools speculatively trying to deduce what was meant — one direct question is cheaper than many tool calls.
 - Do not repeat instructions back to the operator unprompted.

@@ -297,8 +297,10 @@ def _stage3_endure(layout: Layout) -> None:
                     for f in dest.rglob("*"):
                         if f.is_file():
                             files_written[str(f.relative_to(layout.root))] = sha256_file(f)
-                    # add to skills/index.json
+                    # add to skills/index.json and track its hash
                     _index_skill(layout, skill_name, m)
+                    index_rel = str(layout.skills_index.relative_to(layout.root))
+                    files_written[index_rel] = sha256_file(layout.skills_index)
                 except Exception:
                     continue
                 continue

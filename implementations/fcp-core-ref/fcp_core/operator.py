@@ -206,6 +206,8 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
         return True
     if cmd in ("/new", "/clear", "/reset"):
         print("  resetting session...")
+        if layout.session_store.exists():
+            layout.session_store.write_text("", encoding="utf-8")
         return True
 
     # --- Memory & inbox ---
