@@ -313,9 +313,8 @@ def _stage3_endure(layout: Layout) -> None:
                     continue
                 task_val = change.get("task", "")
                 tools_val = change.get("tools", "")
-                wake_up_message = f"[Task] {task_val}"
-                if executor == "cpe" and tools_val:
-                    wake_up_message += f"\n[Tools] {tools_val}"
+                from .operator import _build_wake_up_message
+                wake_up_message = _build_wake_up_message(task_val, executor, tools_val)
                 task_entry: dict[str, Any] = {
                     "id": f"cron_{uuid.uuid4().hex[:12]}",
                     "status": "pending",
