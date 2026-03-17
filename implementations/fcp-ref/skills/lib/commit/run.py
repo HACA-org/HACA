@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""commit — git checkpoint within workspace_focus."""
+"""commit — git checkpoint within workspace_focus.
+
+commit always requires workspace_focus to be inside workspace/ — regardless of
+profile. The entity may read/write its own structure via file_reader/file_writer
+(Evolve), but git history of the entity root is not managed by the CPE.
+"""
 
 from __future__ import annotations
 import json
@@ -12,6 +17,7 @@ def main() -> None:
     req = json.loads(sys.stdin.read())
     params = req.get("params", {})
     entity_root = Path(req.get("entity_root", ".")).resolve()
+    workspace = entity_root / "workspace"
 
     path_param = str(params.get("path", "")).strip()
     message = str(params.get("message", "checkpoint")).strip()
@@ -29,6 +35,13 @@ def main() -> None:
 
     focus = json.loads(focus_file.read_text(encoding="utf-8"))
     focus_path = Path(str(focus.get("path", ""))).resolve()
+
+    # commit is always restricted to workspace/ — even in Evolve
+    try:
+        focus_path.relative_to(workspace)
+    except ValueError:
+        print(json.dumps({"error": "commit requires workspace_focus inside workspace/"}))
+        sys.exit(1)
 
     target = (focus_path / path_param).resolve()
     try:
