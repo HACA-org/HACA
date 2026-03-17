@@ -278,8 +278,13 @@ def clear_beacon(layout: Layout) -> None:
 
 def issue_session_token(layout: Layout) -> str:
     """Write state/sentinels/session.token and return the new session_id."""
+    from .cmi.identity import read_genesis_omega
+    try:
+        genesis_omega = read_genesis_omega(layout)
+    except RuntimeError:
+        genesis_omega = ""
     session_id = str(uuid.uuid4())
-    token = SessionToken(session_id=session_id, issued_at=_utcnow(), revoked_at=None)
+    token = SessionToken(session_id=session_id, issued_at=_utcnow(), genesis_omega=genesis_omega, revoked_at=None)
     layout.sentinels_dir.mkdir(parents=True, exist_ok=True)
     atomic_write(layout.session_token, token.to_dict())
     return session_id

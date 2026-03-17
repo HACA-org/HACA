@@ -230,6 +230,7 @@ class OperatorBound:
 class SessionToken:
     session_id: str
     issued_at: str           # ISO 8601 UTC
+    genesis_omega: str       # imprint_hash of seq=1 — binds token to entity identity
     revoked_at: str | None   # None while active; set at session close
 
     @classmethod
@@ -237,6 +238,7 @@ class SessionToken:
         return cls(
             session_id=d["session_id"],
             issued_at=d["issued_at"],
+            genesis_omega=d.get("genesis_omega", ""),
             revoked_at=d.get("revoked_at"),
         )
 
@@ -244,6 +246,7 @@ class SessionToken:
         d: dict[str, Any] = {
             "session_id": self.session_id,
             "issued_at": self.issued_at,
+            "genesis_omega": self.genesis_omega,
         }
         if self.revoked_at is not None:
             d["revoked_at"] = self.revoked_at
