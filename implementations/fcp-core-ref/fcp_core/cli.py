@@ -708,13 +708,12 @@ def _run_init(entity_root: Path) -> None:
         enable_cmi = "n"
     if enable_cmi == "y":
         try:
-            cmi_host = input("CMI endpoint (e.g. localhost:7000): ").strip()
+            cmi_host = input("CMI endpoint [localhost:7000]: ").strip()
         except EOFError:
             cmi_host = ""
-        if cmi_host:
-            cmi_cfg = {"enabled": True, "host": cmi_host}
-        else:
-            print("  skipping CMI — no endpoint provided (activate later with /cmi start)")
+        if not cmi_host:
+            cmi_host = "localhost:7000"
+        cmi_cfg = {"enabled": True, "host": cmi_host}
 
     from .store import atomic_write
     baseline: dict = {

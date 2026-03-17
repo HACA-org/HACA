@@ -60,12 +60,6 @@
       "desc": "Text-only sub-agent for isolated analysis tasks (summarization, cross-reference, classification). No tool or filesystem access.",
       "manifest": "skills/lib/worker_skill/manifest.json",
       "class": "builtin"
-    },
-    {
-      "name": "calculator",
-      "desc": "",
-      "manifest": "skills/calculator/manifest.json",
-      "class": "custom"
     }
   ],
   "aliases": {}
