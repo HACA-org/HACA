@@ -62,9 +62,9 @@ The workspace is a sandboxed directory where you can read, write, and manage fil
 
 **commit** and **shell_run** require `workspace_focus` to be set.
 
-**shell_run** permitted commands: `ls`, `cat`, `pwd`, `find`, `grep`. Direct git access is rejected — use `commit` instead.
+**shell_run** permitted commands: `ls`, `cat`, `pwd`, `find`, `grep`. Direct git access is rejected — use `commit` skill instead.
 
-**skill_create** scaffolds a new skill in `workspace/stage/<name>/`. Use `--base <name>` to clone an existing skill as a starting point.
+**skill_create** scaffolds a new skill in `workspace/stage/<name>/`. Use `--base <name>` to clone an installed skill as a starting point for a skill update.
 
 **worker_skill** — instantiate a text-only sub-agent to offload tasks that would otherwise bloat the main context window.
 
@@ -79,6 +79,8 @@ Do NOT use worker_skill when:
 - You want to avoid doing work — delegation is not a shortcut.
 
 The worker has no access to tools or the filesystem. It can only reason over the text you provide and return text. If you ask it to write a file, it will not — you must do it yourself with `file_writer`.
+
+If the task requires coordinated work across multiple entities, do not simulate it with worker_skill — request a CMI channel from the Operator instead.
 
 All three params are required: `task`, `context`, and `persona`. This forces deliberate use — if you cannot define a meaningful context and persona, reconsider whether worker_skill is the right tool.
 

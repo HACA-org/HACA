@@ -181,6 +181,9 @@ def _run_skill(
             break
 
     if exe is None:
+        readme = exe_dir / "README.md"
+        if readme.exists():
+            return readme.read_text(encoding="utf-8")
         raise ExecError(f"No executable found for skill {skill_name!r} in {exe_dir}")
 
     cmd = _exe_cmd(Path(str(exe)))
