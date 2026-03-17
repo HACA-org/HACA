@@ -596,9 +596,9 @@ def _pick_from_list(prompt: str, items: list[str], default_idx: int = 0, indent:
 
 
 def _load_env_file() -> None:
-    """Load KEY=value pairs from ~/.fcp-core.env into os.environ (no-op if absent)."""
+    """Load KEY=value pairs from ~/.fcp.env into os.environ (no-op if absent)."""
     import os
-    env_file = Path.home() / ".fcp-core.env"
+    env_file = Path.home() / ".fcp.env"
     if not env_file.exists():
         return
     for line in env_file.read_text(encoding="utf-8").splitlines():
@@ -612,9 +612,9 @@ def _load_env_file() -> None:
 
 
 def _save_api_key(entity_name: str, env_var: str, api_key: str) -> None:
-    """Append or update KEY=value in ~/.fcp-core.env."""
+    """Append or update KEY=value in ~/.fcp.env."""
     import os
-    env_file = Path.home() / ".fcp-core.env"
+    env_file = Path.home() / ".fcp.env"
     lines: list[str] = []
     if env_file.exists():
         lines = env_file.read_text(encoding="utf-8").splitlines()
