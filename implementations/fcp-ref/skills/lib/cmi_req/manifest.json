@@ -30,5 +30,8 @@
       "chan_id"
     ]
   },
-  "execution": "script"
+  "execution": "script",
+  "dependencies": [
+    "python3"
+  ]
 }

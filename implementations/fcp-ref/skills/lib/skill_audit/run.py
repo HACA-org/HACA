@@ -7,12 +7,14 @@ import json
 import os
 import py_compile
 import re
+import shutil
 import sys
 import tempfile
 from pathlib import Path
 
 REQUIRED_MANIFEST_FIELDS = ["name", "version", "description", "timeout_seconds",
-                             "background", "irreversible", "class", "execution"]
+                             "background", "irreversible", "class", "execution",
+                             "dependencies"]
 
 VALID_EXECUTION_TYPES = {"script", "text"}
 
@@ -70,6 +72,17 @@ def _check_manifest(manifest: dict, name: str, issues: list[str]) -> None:
     execution = manifest.get("execution")
     if execution is not None and execution not in VALID_EXECUTION_TYPES:
         issues.append(f"invalid execution {execution!r} — must be one of {sorted(VALID_EXECUTION_TYPES)}")
+
+    deps = manifest.get("dependencies")
+    if deps is not None:
+        if not isinstance(deps, list):
+            issues.append("dependencies must be a list")
+        else:
+            for dep in deps:
+                if not isinstance(dep, str):
+                    issues.append(f"dependency entry must be a string, got {dep!r}")
+                elif shutil.which(dep) is None:
+                    issues.append(f"dependency not found on host: {dep!r}")
 
 
 # ---------------------------------------------------------------------------

@@ -19,5 +19,8 @@
       "name"
     ]
   },
-  "execution": "script"
+  "execution": "script",
+  "dependencies": [
+    "python3"
+  ]
 }
