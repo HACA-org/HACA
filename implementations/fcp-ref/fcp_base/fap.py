@@ -47,7 +47,6 @@ from .store import Layout, atomic_write, read_json
 
 # HACA spec versions this implementation targets.
 _HACA_ARCH_VERSION = "1.0.0"
-_HACA_PROFILE = "HACA-Core-1.0.0"
 
 
 class FAPError(Exception):
@@ -131,7 +130,7 @@ def run(layout: Layout) -> str:
             version="1.0",
             activated_at=activated_at,
             haca_arch_version=_HACA_ARCH_VERSION,
-            haca_profile=_HACA_PROFILE,
+            haca_profile=baseline.haca_profile,
             operator_bound=operator_bound,
             structural_baseline=baseline_hash,
             integrity_document=integrity_doc_hash,
@@ -171,7 +170,7 @@ def run(layout: Layout) -> str:
             "source": "fap",
             "message": (
                 "[FIRST SESSION] You have just been activated for the first time. "
-                "Begin by introducing yourself to the Operator: your name, your profile (HACA-Core), "
+                f"Begin by introducing yourself to the Operator: your name, your profile ({baseline.haca_profile}), "
                 "your available skills, and your operational boundaries (including what requires "
                 "Operator authorization).\n\n"
                 "Then ask the Operator for the following information to personalize your collaboration:\n"

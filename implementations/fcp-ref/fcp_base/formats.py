@@ -91,6 +91,7 @@ class StructuralBaseline:
     fault_n_boot: int
     fault_n_channel: int
     fault_n_retry: int
+    haca_profile: str = "HACA-Core-1.0.0"
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> StructuralBaseline:
@@ -113,6 +114,7 @@ class StructuralBaseline:
             fault_n_boot=d["fault"]["n_boot"],
             fault_n_channel=d["fault"]["n_channel"],
             fault_n_retry=d["fault"]["n_retry"],
+            haca_profile=d.get("haca_profile", "HACA-Core-1.0.0"),
         )
 
     def to_dict(self) -> dict[str, Any]:
