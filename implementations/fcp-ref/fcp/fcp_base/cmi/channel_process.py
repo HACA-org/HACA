@@ -5,7 +5,7 @@ Launched by the FCP as a subprocess for each open Mesh Channel.
 One process per channel, ephemeral — exits when the channel closes.
 
 Usage (internal, called by cli.py):
-    python3 -m fcp_core.cmi.channel_process <entity_root> <chan_id> <role>
+    python3 -m fcp_base.cmi.channel_process <entity_root> <chan_id> <role>
 
     role: host | peer | observer
 
@@ -92,7 +92,7 @@ def main(argv: list[str]) -> None:
         sys.exit(1)
 
     sys.path.insert(0, str(entity_root))
-    from fcp_core.store import Layout
+    from fcp_base.store import Layout
     layout = Layout(entity_root)
 
     process = ChannelProcess(layout, chan_id, role)

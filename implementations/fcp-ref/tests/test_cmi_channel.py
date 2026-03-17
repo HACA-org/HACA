@@ -1,14 +1,14 @@
-"""Tests for fcp_core.cmi.channel_process — ChannelProcess internals."""
+"""Tests for fcp_base.cmi.channel_process — ChannelProcess internals."""
 
 import json
 import shutil
 import unittest
 from pathlib import Path
 
-from fcp_core.store import Layout, atomic_write, read_json, read_jsonl
-from fcp_core.cmi.identity import generate_cmi_credential
-from fcp_core.cmi.channel_process import ChannelProcess
-from fcp_core.acp import decode as acp_decode
+from fcp_base.store import Layout, atomic_write, read_json, read_jsonl
+from fcp_base.cmi.identity import generate_cmi_credential
+from fcp_base.cmi.channel_process import ChannelProcess
+from fcp_base.acp import decode as acp_decode
 from tests.helpers import make_layout
 
 
@@ -284,7 +284,7 @@ class TestHandleMessage(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def _make_payload(self, msg_type, content, to=None):
-        from fcp_core.cmi.identity import sign_message
+        from fcp_base.cmi.identity import sign_message
         payload = {
             "type": msg_type,
             "from": self.peer_ni,
@@ -449,7 +449,7 @@ class TestSignVerifyIntegration(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def test_verify_own_signature(self):
-        from fcp_core.cmi.identity import sign_message
+        from fcp_base.cmi.identity import sign_message
         cred = self.proc._credential
         payload = {"type": "test", "content": "hello"}
         data = json.dumps(payload, sort_keys=True).encode()
@@ -459,7 +459,7 @@ class TestSignVerifyIntegration(unittest.TestCase):
         self.assertTrue(result)
 
     def test_verify_wrong_key_fails(self):
-        from fcp_core.cmi.identity import sign_message
+        from fcp_base.cmi.identity import sign_message
         cred = self.proc._credential
         payload = {"type": "test", "content": "hello"}
         data = json.dumps(payload, sort_keys=True).encode()

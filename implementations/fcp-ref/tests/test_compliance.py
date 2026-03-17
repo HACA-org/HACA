@@ -5,11 +5,11 @@ import shutil
 import unittest
 from pathlib import Path
 
-from fcp_core.compliance import (
+from fcp_base.compliance import (
     check_structure, check_integrity, check_chain,
     check_skills, check_session_token, run_all,
 )
-from fcp_core.store import Layout, atomic_write
+from fcp_base.store import Layout, atomic_write
 from tests.helpers import make_layout
 
 
@@ -152,7 +152,7 @@ class TestRunAll(unittest.TestCase):
         findings = run_all(self.layout)
         self.assertGreater(len(findings), 0)
         # all are Finding instances
-        from fcp_core.compliance import Finding
+        from fcp_base.compliance import Finding
         for f in findings:
             self.assertIsInstance(f, Finding)
 

@@ -5,10 +5,10 @@ import shutil
 import unittest
 from typing import Any
 
-from fcp_core.cpe.base import CPEResponse, ToolUseCall
-from fcp_core.session import build_boot_context, dispatch_tool_use, _tool_declarations
-from fcp_core.store import Layout, atomic_write
-from fcp_core import mil
+from fcp_base.cpe.base import CPEResponse, ToolUseCall
+from fcp_base.session import build_boot_context, dispatch_tool_use, _tool_declarations
+from fcp_base.store import Layout, atomic_write
+from fcp_base import mil
 from tests.helpers import make_layout
 
 
@@ -61,8 +61,8 @@ class TestBuildBootContext(unittest.TestCase):
         self.assertIn("base knowledge", instruction)
 
     def test_session_tail_in_history(self) -> None:
-        from fcp_core.store import append_jsonl
-        from fcp_core.acp import make as acp_encode
+        from fcp_base.store import append_jsonl
+        from fcp_base.acp import make as acp_encode
         env = acp_encode(env_type="MSG", source="operator", data="hello")
         append_jsonl(self.layout.session_store, env)
         _, history = build_boot_context(self.layout, {})

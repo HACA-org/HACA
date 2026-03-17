@@ -37,7 +37,7 @@ def main() -> None:
     persona += _WORKER_CONSTRAINT
 
     sys.path.insert(0, str(entity_root))
-    from fcp_core.cpe.base import detect_adapter, make_adapter
+    from fcp_base.cpe.base import detect_adapter, make_adapter
 
     # read backend/model from baseline.json if available
     backend = ""

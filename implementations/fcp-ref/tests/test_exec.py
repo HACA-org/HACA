@@ -5,8 +5,8 @@ import shutil
 import unittest
 from pathlib import Path
 
-from fcp_core import exec_
-from fcp_core.store import Layout, atomic_write
+from fcp_base import exec_
+from fcp_base.store import Layout, atomic_write
 from tests.helpers import make_layout
 
 
@@ -122,7 +122,7 @@ class TestActionLedger(unittest.TestCase):
 
     def test_ledger_write_ahead_and_resolve(self) -> None:
         exec_.dispatch(self.layout, "irrev_skill", {}, self.index)
-        from fcp_core.store import read_jsonl
+        from fcp_base.store import read_jsonl
         records = read_jsonl(self.layout.session_store)
         import json as _json
         def _status(r: dict) -> object:
@@ -191,8 +191,8 @@ class TestCheckSilHeartbeat(unittest.TestCase):
 
     def test_recent_heartbeat_passes(self) -> None:
         import time
-        from fcp_core.acp import make as acp_encode
-        from fcp_core.store import append_jsonl
+        from fcp_base.acp import make as acp_encode
+        from fcp_base.store import append_jsonl
         hb = acp_encode(env_type="HEARTBEAT", source="sil",
                         data={"ts": time.time()})
         append_jsonl(self.layout.integrity_log, hb)

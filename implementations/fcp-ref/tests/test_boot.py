@@ -6,21 +6,21 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fcp_core import boot
-from fcp_core.store import Layout, append_jsonl, atomic_write, read_json
+from fcp_base import boot
+from fcp_base.store import Layout, append_jsonl, atomic_write, read_json
 from tests.helpers import make_layout
 
 
 def _patch_channel():
-    return patch("fcp_core.boot.operator_channel_available", return_value=(True, True))
+    return patch("fcp_base.boot.operator_channel_available", return_value=(True, True))
 
 
 def _patch_fap(session_id: str = "fap-session-001"):
-    return patch("fcp_core.boot.fap_run", return_value=session_id)
+    return patch("fcp_base.boot.fap_run", return_value=session_id)
 
 
 def _patch_sleep():
-    return patch("fcp_core.boot.sleep_mod.run")
+    return patch("fcp_base.boot.sleep_mod.run")
 
 
 _GENESIS_TS = "2000-01-01T00:00:00Z"
@@ -92,13 +92,13 @@ class TestBootPhase0(unittest.TestCase):
         self.assertIn("Phase 0", str(cm.exception))
 
     def test_no_notifications_dir_raises(self) -> None:
-        with patch("fcp_core.boot.operator_channel_available", return_value=(False, True)):
+        with patch("fcp_base.boot.operator_channel_available", return_value=(False, True)):
             with self.assertRaises(boot.BootError) as cm:
                 boot.run(self.layout)
         self.assertIn("Phase 0", str(cm.exception))
 
     def test_no_terminal_raises(self) -> None:
-        with patch("fcp_core.boot.operator_channel_available", return_value=(True, False)):
+        with patch("fcp_base.boot.operator_channel_available", return_value=(True, False)):
             with self.assertRaises(boot.BootError) as cm:
                 boot.run(self.layout)
         self.assertIn("Phase 0", str(cm.exception))
@@ -153,8 +153,8 @@ class TestBootPhase2CrashRecovery(unittest.TestCase):
         })
         with _patch_channel():
             # sleep is imported locally inside _crash_recovery; patch the module
-            with patch("fcp_core.sleep.run_sleep_cycle"):
-                with patch("fcp_core.boot._resolve_action_ledger"):
+            with patch("fcp_base.sleep.run_sleep_cycle"):
+                with patch("fcp_base.boot._resolve_action_ledger"):
                     result = boot.run(self.layout)
         self.assertTrue(result.crash_recovered)
 

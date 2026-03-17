@@ -6,8 +6,8 @@ import shutil
 import unittest
 from pathlib import Path
 
-from fcp_core import mil
-from fcp_core.store import Layout
+from fcp_base import mil
+from fcp_base.store import Layout
 from tests.helpers import make_layout
 
 
@@ -99,7 +99,7 @@ class TestSeedActiveContext(unittest.TestCase):
 
     def test_seed_valid_entries(self) -> None:
         mil.write_semantic(self.layout, "base", "base content")
-        from fcp_core.store import atomic_write
+        from fcp_base.store import atomic_write
         atomic_write(self.layout.working_memory, {
             "entries": [{"priority": 1, "path": "memory/semantic/base.md"}]
         })
@@ -109,7 +109,7 @@ class TestSeedActiveContext(unittest.TestCase):
         self.assertTrue(link.is_symlink())
 
     def test_seed_missing_entries_skipped(self) -> None:
-        from fcp_core.store import atomic_write
+        from fcp_base.store import atomic_write
         atomic_write(self.layout.working_memory, {
             "entries": [{"priority": 1, "path": "memory/semantic/absent.md"}]
         })
@@ -144,7 +144,7 @@ class TestProcessClosure(unittest.TestCase):
             "promotion": [],
         }
         # write session-handoff first so working_memory entry is valid
-        from fcp_core.store import atomic_write
+        from fcp_base.store import atomic_write
         atomic_write(self.layout.session_handoff, {})
         atomic_write(self.layout.pending_closure, payload)
         result = mil.process_closure(self.layout)

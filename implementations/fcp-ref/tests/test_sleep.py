@@ -4,8 +4,8 @@ import json
 import shutil
 import unittest
 
-from fcp_core import sleep as sleep_mod
-from fcp_core.store import Layout, atomic_write, append_jsonl, read_jsonl
+from fcp_base import sleep as sleep_mod
+from fcp_base.store import Layout, atomic_write, append_jsonl, read_jsonl
 from tests.helpers import make_layout
 
 
@@ -55,7 +55,7 @@ class TestStage2GC(unittest.TestCase):
         self.assertFalse(stale.exists())
 
     def test_valid_symlink_preserved(self) -> None:
-        from fcp_core.mil import write_semantic
+        from fcp_base.mil import write_semantic
         write_semantic(self.layout, "keep", "content")
         link = self.layout.active_context_dir / "keep.md"
         link.symlink_to(self.layout.semantic_dir / "keep.md")
@@ -98,7 +98,7 @@ class TestSessionRotation(unittest.TestCase):
 
     def test_rotation_above_threshold(self) -> None:
         # write baseline with tiny threshold
-        from fcp_core.store import atomic_write as aw
+        from fcp_base.store import atomic_write as aw
         import json
         baseline = json.loads(self.layout.baseline.read_text(encoding="utf-8"))
         baseline["session_store"]["rotation_threshold_bytes"] = 10
@@ -123,7 +123,7 @@ class TestCollectAuthorizedProposals(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def _append_log(self, data: dict) -> None:
-        from fcp_core.acp import make as acp_encode
+        from fcp_base.acp import make as acp_encode
         append_jsonl(self.layout.integrity_log, acp_encode(
             env_type="MSG", source="sil", data=data
         ))
@@ -165,7 +165,7 @@ class TestPromoteSeverancePending(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def _append_log(self, data: dict) -> None:
-        from fcp_core.acp import make as acp_encode
+        from fcp_base.acp import make as acp_encode
         append_jsonl(self.layout.integrity_log, acp_encode(
             env_type="MSG", source="sil", data=data
         ))

@@ -5,19 +5,19 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fcp_core import fap
-from fcp_core.store import Layout, read_json
+from fcp_base import fap
+from fcp_base.store import Layout, read_json
 from tests.helpers import make_layout
 
 
 def _patch_enroll(name: str = "Alice", email: str = "alice@example.com"):
     """Patch _enroll_operator to return fixed values without terminal I/O."""
-    return patch("fcp_core.fap._enroll_operator", return_value=(name, email))
+    return patch("fcp_base.fap._enroll_operator", return_value=(name, email))
 
 
 def _patch_channel():
     """Patch operator_channel_available to return (True, True)."""
-    return patch("fcp_core.fap.operator_channel_available", return_value=(True, True))
+    return patch("fcp_base.fap.operator_channel_available", return_value=(True, True))
 
 
 class TestFAPStructuralValidation(unittest.TestCase):
@@ -61,14 +61,14 @@ class TestFAPChannelCheck(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def test_no_notifications_dir_raises(self) -> None:
-        with patch("fcp_core.fap.operator_channel_available", return_value=(False, True)):
+        with patch("fcp_base.fap.operator_channel_available", return_value=(False, True)):
             with _patch_enroll():
                 with self.assertRaises(fap.FAPError) as cm:
                     fap.run(self.layout)
         self.assertIn("operator_notifications", str(cm.exception))
 
     def test_no_terminal_raises(self) -> None:
-        with patch("fcp_core.fap.operator_channel_available", return_value=(True, False)):
+        with patch("fcp_base.fap.operator_channel_available", return_value=(True, False)):
             with _patch_enroll():
                 with self.assertRaises(fap.FAPError) as cm:
                     fap.run(self.layout)
@@ -121,7 +121,7 @@ class TestFAPSuccess(unittest.TestCase):
 
     def test_integrity_chain_has_genesis(self) -> None:
         self._run()
-        from fcp_core.store import read_jsonl
+        from fcp_base.store import read_jsonl
         chain = read_jsonl(self.layout.integrity_chain)
         self.assertGreater(len(chain), 0)
         genesis = chain[0]
@@ -152,7 +152,7 @@ class TestFAPRollback(unittest.TestCase):
 
     def test_rollback_on_enrollment_cancel(self) -> None:
         with _patch_channel():
-            with patch("fcp_core.fap._enroll_operator",
+            with patch("fcp_base.fap._enroll_operator",
                        side_effect=fap.FAPError("cancelled")):
                 with self.assertRaises(fap.FAPError):
                     fap.run(self.layout)
@@ -167,7 +167,7 @@ class TestFAPRollback(unittest.TestCase):
             raise fap.FAPError("forced failure after skills_index")
 
         with _patch_enroll(), _patch_channel():
-            with patch("fcp_core.fap.write_integrity_doc", side_effect=_fail):
+            with patch("fcp_base.fap.write_integrity_doc", side_effect=_fail):
                 with self.assertRaises(fap.FAPError):
                     fap.run(self.layout)
 

@@ -4,5 +4,5 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from fcp_core.cli import main
+from fcp_base.cli import main
 main()

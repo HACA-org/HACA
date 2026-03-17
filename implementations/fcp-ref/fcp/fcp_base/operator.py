@@ -1404,7 +1404,7 @@ def _cmi_channel_open(layout: Layout, chan_id: str | None) -> None:
     # Launch channel_process as a background subprocess
     import sys
     cmd = [
-        sys.executable, "-m", "fcp_core.cmi.channel_process",
+        sys.executable, "-m", "fcp_base.cmi.channel_process",
         str(layout.root), chan_id, role,
     ]
     proc = subprocess.Popen(

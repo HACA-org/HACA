@@ -1,4 +1,4 @@
-"""Tests for fcp_core.cmi.identity — Node Identity and CMI Credential."""
+"""Tests for fcp_base.cmi.identity — Node Identity and CMI Credential."""
 
 import json
 import os
@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from fcp_core.store import Layout, atomic_write
-from fcp_core.cmi.identity import (
+from fcp_base.store import Layout, atomic_write
+from fcp_base.cmi.identity import (
     derive_node_identity,
     read_genesis_omega,
     generate_cmi_credential,

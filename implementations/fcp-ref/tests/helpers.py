@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from fcp_core.store import Layout
+from fcp_base.store import Layout
 
 
 def make_layout() -> tuple[Layout, Path]:

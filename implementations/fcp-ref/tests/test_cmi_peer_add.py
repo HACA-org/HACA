@@ -4,15 +4,15 @@ import json
 import shutil
 import unittest
 
-from fcp_core import sleep as sleep_mod
-from fcp_core.store import Layout, atomic_write, append_jsonl, read_json
+from fcp_base import sleep as sleep_mod
+from fcp_base.store import Layout, atomic_write, append_jsonl, read_json
 from tests.helpers import make_layout
 
 
 def _inject_evolution_auth(layout: Layout, content: dict) -> None:
     """Write a minimal EVOLUTION_AUTH record to integrity.log (after a SLEEP_COMPLETE)."""
     # First write SLEEP_COMPLETE so the collector finds proposals after it
-    from fcp_core.acp import make as acp_encode
+    from fcp_base.acp import make as acp_encode
     sleep_entry = acp_encode(
         env_type="MSG",
         source="sil",
