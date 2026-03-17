@@ -1,5 +1,5 @@
 """
-Compliance checker — FCP-Core §13.
+Compliance checker — FCP §13.
 
 Programmatically verifies the checkboxes that can be checked statically:
 entity structure, integrity document, chain continuity, skills, session token.

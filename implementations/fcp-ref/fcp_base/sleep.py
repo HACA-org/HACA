@@ -1,5 +1,5 @@
 """
-Sleep Cycle orchestrator — FCP-Core §7.
+Sleep Cycle orchestrator — FCP §7.
 
 Four sequential stages:
   Stage 0: Semantic Drift Detection (SIL)

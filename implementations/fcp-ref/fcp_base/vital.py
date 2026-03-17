@@ -1,5 +1,5 @@
 """
-Vital Check — FCP-Core §10.3.
+Vital Check — FCP §10.3.
 
 Runs on two triggers (whichever comes first):
   - cycle_threshold T completed Cognitive Cycles since last check

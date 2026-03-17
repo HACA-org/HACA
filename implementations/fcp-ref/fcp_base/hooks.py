@@ -1,5 +1,5 @@
 """
-Lifecycle Hooks — FCP-Core §9.7.
+Lifecycle Hooks — FCP §9.7.
 
 Executes scripts in hooks/<event>/ in sorted order.
 Hook failure never aborts the triggering operation — logged and continues.

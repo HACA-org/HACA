@@ -1,11 +1,11 @@
 """
-CLI entry point — FCP-Core §12.1.
+CLI entry point — FCP §12.1.
 
 Usage (always run from inside the entity root):
-  ./fcp-core                          — boot and run a session
-  ./fcp-core init                     — initialise entity root in cwd
-  ./fcp-core doctor [--fix]           — check/repair without booting
-  ./fcp-core decommission --archive | --destroy
+  ./fcp                          — boot and run a session
+  ./fcp init                     — initialise entity root in cwd
+  ./fcp doctor [--fix]           — check/repair without booting
+  ./fcp decommission --archive | --destroy
 """
 
 from __future__ import annotations
@@ -96,23 +96,23 @@ def _main() -> None:
         return
 
     print(f"unknown command: {cmd}")
-    print("usage: ./fcp-core [init | model | doctor [--fix] | decommission --archive|--destroy | --auto <cron_id>]")
+    print("usage: ./fcp [init | model | doctor [--fix] | decommission --archive|--destroy | --auto <cron_id>]")
     sys.exit(1)
 
 
 def _print_help() -> None:
     print("""
-  ./fcp-core                         — boot entity and start session
-  ./fcp-core init                    — initialize a new entity
-  ./fcp-core model                   — interactive model picker
-  ./fcp-core doctor [--fix]          — check integrity; --fix to repair
-  ./fcp-core decommission --archive  — archive entity (reversible)
-  ./fcp-core decommission --destroy  — destroy entity permanently
-  ./fcp-core --auto <cron_id>        — run scheduled task autonomously
-  ./fcp-core --verbose               — boot with verbose mode enabled
-  ./fcp-core --debugger[=all|chat|boot]
-                                     — boot with debugger mode enabled
-  ./fcp-core help | --help | -h      — this message
+  ./fcp                         — boot entity and start session
+  ./fcp init                    — initialize a new entity
+  ./fcp model                   — interactive model picker
+  ./fcp doctor [--fix]          — check integrity; --fix to repair
+  ./fcp decommission --archive  — archive entity (reversible)
+  ./fcp decommission --destroy  — destroy entity permanently
+  ./fcp --auto <cron_id>        — run scheduled task autonomously
+  ./fcp --verbose               — boot with verbose mode enabled
+  ./fcp --debugger[=all|chat|boot]
+                                — boot with debugger mode enabled
+  ./fcp help | --help | -h      — this message
 """)
 
 
@@ -175,7 +175,7 @@ def _run_normal(layout: "Layout") -> None:
         from .hooks import run_hook
         run_hook(layout, "on_session_close", {"close_reason": close_reason})
 
-        print("[FCP-Core] Running Sleep Cycle...")
+        print("[FCP] Running Sleep Cycle...")
         try:
             run_sleep_cycle(layout)
         except Exception as exc:
@@ -185,9 +185,9 @@ def _run_normal(layout: "Layout") -> None:
             break
 
         if close_reason == "endure_approved":
-            print("[FCP-Core] Evolution approved. Rebooting...")
+            print("[FCP] Evolution approved. Rebooting...")
         else:
-            print("[FCP-Core] Starting new session...")
+            print("[FCP] Starting new session...")
         # Re-run boot for fresh context
         try:
             boot_run(layout)
@@ -198,7 +198,7 @@ def _run_normal(layout: "Layout") -> None:
         if layout.skills_index.exists():
             index = read_json(layout.skills_index)
 
-    print("[FCP-Core] Session complete.")
+    print("[FCP] Session complete.")
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +380,7 @@ def _run_doctor(layout: "Layout", args: list[str]) -> None:
 
     failed = [f for f in findings if not f.passed]
     if failed:
-        print(f"\n  {len(failed)} issue(s) found. Run ./fcp-core doctor --fix to repair.")
+        print(f"\n  {len(failed)} issue(s) found. Run ./fcp doctor --fix to repair.")
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +410,7 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
     # Check for partial decommission
     partial = _decom.detect_partial(layout)
     if partial:
-        print(f"[FCP-Core] Partial decommission detected (phase: {partial.get('phase')}, mode: {partial.get('mode')}).")
+        print(f"[FCP] Partial decommission detected (phase: {partial.get('phase')}, mode: {partial.get('mode')}).")
         answer = input("Resume? [yes/no] ").strip().lower()
         if answer != "yes":
             print("Aborted.")
@@ -425,7 +425,7 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
 
     # --destroy requires explicit confirmation
     if do_destroy:
-        print(f"[FCP-Core] WARNING: This will permanently destroy the entity at {layout.root}.")
+        print(f"[FCP] WARNING: This will permanently destroy the entity at {layout.root}.")
         answer = input("Type 'yes' to confirm destruction: ").strip().lower()
         if answer != "yes":
             print("Aborted.")
@@ -477,7 +477,7 @@ def _run_model(layout: "Layout") -> None:
     try:
         baseline = read_json(layout.baseline)
     except Exception:
-        print("[ERROR] Could not read baseline.json — run ./fcp-core init first.")
+        print("[ERROR] Could not read baseline.json — run ./fcp init first.")
         sys.exit(1)
 
     cpe_cfg = baseline.get("cpe", {})
@@ -526,7 +526,7 @@ def _run_model(layout: "Layout") -> None:
     cpe_cfg["model"] = model
     baseline["cpe"] = cpe_cfg
     atomic_write(layout.baseline, baseline)
-    print(f"[FCP-Core] Model set to {backend}:{model}")
+    print(f"[FCP] Model set to {backend}:{model}")
 
 
 # ---------------------------------------------------------------------------
@@ -631,7 +631,7 @@ def _save_api_key(entity_name: str, env_var: str, api_key: str) -> None:
 
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     os.chmod(env_file, 0o600)
-    print(f"  API key saved to {env_file} (export {env_var} or source it before running ./fcp-core)")
+    print(f"  API key saved to {env_file} (export {env_var} or source it before running ./fcp)")
 
 
 def _read_fcp_version(fcp_ref_root: Path) -> str:
@@ -912,7 +912,7 @@ def _run_init(fcp_ref_root: Path) -> None:
     baseline = read_json(defaults_path) if defaults_path.exists() else {}
     baseline["entity_id"] = entity_root.name
     baseline["fcp_version"] = fcp_version
-    baseline["haca_version"] = "1.0.0"
+    baseline["haca_version"] = "HACA-Arch-1.0.0"
     baseline["haca_profile"] = haca_profile
     baseline["cpe"] = {"backend": backend, "model": model, "topology": "transparent"}
     if profile == "haca-evolve":
@@ -999,7 +999,7 @@ def _print_boot_header(layout: "Layout", index: dict) -> None:
         f"boot: {ctx_str} ctx | sessions: {s['sessions']} | cycles: {s['cycles']}",
         f"memories: {s['memories']} | evolutions: {evol_str} | skills: {s['skills']}",
     ]
-    _print_block("FCP-Core", header_lines, color="\x1b[90m")  # dark gray
+    _print_block("FCP", header_lines, color="\x1b[90m")  # dark gray
     notif_str = f" You have {s['notifications']} new notifications in /inbox." if s["notifications"] else ""
     print(f"Type your message or /help.{notif_str}")
 

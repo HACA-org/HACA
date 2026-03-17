@@ -222,7 +222,7 @@ def _validate_structural_baseline(layout: Layout) -> None:
 
 def _enroll_operator() -> tuple[str, str]:
     """Step 4: interactive Operator enrollment via terminal prompt."""
-    print("\n=== FCP-Core First Activation ===")
+    print("\n=== FCP First Activation ===")
     print("This entity has not been activated yet.")
     print("Please provide the Operator details to bind this entity.\n")
 

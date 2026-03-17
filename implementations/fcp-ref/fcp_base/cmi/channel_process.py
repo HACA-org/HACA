@@ -1,5 +1,5 @@
 """
-CMI Channel Process — FCP-Core CMI §3, §4, §7.
+CMI Channel Process — FCP CMI §3, §4, §7.
 
 Launched by the FCP as a subprocess for each open Mesh Channel.
 One process per channel, ephemeral — exits when the channel closes.

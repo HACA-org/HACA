@@ -1,5 +1,5 @@
 """
-Operator Interface — FCP-Core §12.
+Operator Interface — FCP §12.
 
 §12.2  Interactive loop (input → inject as MSG → session cycle)
 §12.3.1 Platform commands (/status, /doctor, /model, /endure, /inbox, /work, /skill, /verbose, /debugger)
@@ -888,7 +888,7 @@ def _cron_register_host(task: dict, layout: Layout) -> None:
     schedule = task.get("schedule", "")
     if not schedule or not cron_id:
         return
-    fcp_bin = layout.root / "fcp-core"
+    fcp_bin = layout.root / "fcp"
     cron_line = f"{schedule} {fcp_bin} --auto {cron_id}  # fcp:{cron_id}"
     # read current crontab, append, write back
     r = subprocess.run(["crontab", "-l"], capture_output=True, text=True)

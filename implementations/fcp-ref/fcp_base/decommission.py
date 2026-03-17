@@ -1,5 +1,5 @@
 """
-Decommission — FCP-Core §11.
+Decommission — FCP §11.
 
 Sequence:
   1. Write decommission flag (phase: "sleep")
@@ -113,8 +113,8 @@ def run(layout: Layout, mode: str, sleep_fn, partial: dict | None = None) -> Non
         if mode == "archive":
             archive_path = archive(layout)
             _clear_flag(layout)
-            print(f"[FCP-Core] Entity archived → {archive_path}")
+            print(f"[FCP] Entity archived → {archive_path}")
         else:
             # destroy: flag is inside the tree — will be deleted with it
             shutil.rmtree(layout.root)
-            print("[FCP-Core] Entity destroyed.")
+            print("[FCP] Entity destroyed.")

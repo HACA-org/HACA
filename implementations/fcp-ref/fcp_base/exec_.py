@@ -1,5 +1,5 @@
 """
-EXEC — Execution Layer.  FCP-Core §9
+EXEC — Execution Layer.  FCP §9
 
 Dispatches skill requests against skills/index.json (no per-execution re-validation).
 Manages the Action Ledger for irreversible skills.

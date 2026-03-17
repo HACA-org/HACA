@@ -1,5 +1,5 @@
 """
-Session loop — FCP-Core §6.
+Session loop — FCP §6.
 
 Drives the cognitive cycle:
   drain io/inbox/ → consolidate → invoke CPE with growing chat_history

@@ -1,5 +1,5 @@
 """
-MIL — Memory Interface Layer.  §4.2 / FCP-Core §7–8
+MIL — Memory Interface Layer.  §4.2 / FCP §7–8
 
 Exclusive write authority over mnemonic content (memory/ directory).
 Does not interpret or evaluate stored data — reads and writes on request.
