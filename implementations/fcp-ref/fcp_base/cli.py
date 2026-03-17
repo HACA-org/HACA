@@ -546,12 +546,12 @@ _API_KEY_ENV: dict[str, str] = {
 }
 
 
-def _pick_from_list(prompt: str, items: list[str], default_idx: int = 0) -> str:
+def _pick_from_list(prompt: str, items: list[str], default_idx: int = 0, indent: str = "") -> str:
     """Generic interactive arrow-key picker. Falls back to text input on error."""
     import tty, termios
 
     if not items:
-        return input(f"{prompt}: ").strip()
+        return input(f"{indent}{prompt}: ").strip()
 
     selected = default_idx
     first_render = True
@@ -562,11 +562,11 @@ def _pick_from_list(prompt: str, items: list[str], default_idx: int = 0) -> str:
             sys.stdout.write(f"\033[{len(items)}A")
         first_render = False
         for i, name in enumerate(items):
-            prefix = " > " if i == idx else "   "
+            prefix = f"{indent} > " if i == idx else f"{indent}   "
             sys.stdout.write(f"\r{prefix}{name}\033[K\n")
         sys.stdout.flush()
 
-    print(f"{prompt} (↑↓ to move, Enter to confirm):")
+    print(f"{indent}{prompt} (↑↓ to move, Enter to confirm):")
     _render(selected)
 
     fd = sys.stdin.fileno()
@@ -748,7 +748,7 @@ def _run_init(fcp_ref_root: Path) -> None:
         "HACA-Core   — Zero-autonomy",
         "HACA-Evolve — Supervised autonomy",
     ]
-    profile_choice = _pick_from_list("Profile", profile_items, default_idx=0)
+    profile_choice = _pick_from_list("Profile", profile_items, default_idx=0, indent="  ")
     profile = "haca-core" if profile_items.index(profile_choice) == 0 else "haca-evolve"
     haca_profile = "HACA-Core-1.0.0" if profile == "haca-core" else "HACA-Evolve-1.0.0"
 
@@ -786,7 +786,7 @@ def _run_init(fcp_ref_root: Path) -> None:
             "public  — Public channels only",
             "both    — Private and public channels",
         ]
-        cmi_choice = _pick_from_list("      CMI access", cmi_items, default_idx=0)
+        cmi_choice = _pick_from_list("CMI access", cmi_items, default_idx=0, indent="      ")
         cmi_scope = cmi_choice.split()[0]
 
         print()
