@@ -918,19 +918,25 @@ def _cron_unregister_host(cron_id: str, layout: Layout) -> None:
 
 def _cmd_cmi(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /cmi status | peers | channel list | channel open <id> | channel close <id> | bb <id>")
+        _cmi_usage()
         return
     sub = args[0].lower()
     if sub == "status":
         _cmi_status(layout)
-    elif sub == "peers":
-        _cmi_peers(layout)
+    elif sub == "export":
+        _cmi_export(layout)
+    elif sub == "contacts":
+        _cmi_contacts(layout, args[1:])
     elif sub == "channel":
         _cmi_channel(layout, args[1:])
     elif sub == "bb" and len(args) > 1:
         _cmi_bb(layout, args[1])
     else:
-        print("  usage: /cmi status | peers | channel list | channel open <id> | channel close <id> | bb <id>")
+        _cmi_usage()
+
+
+def _cmi_usage() -> None:
+    print("  usage: /cmi status | export | contacts [list|add] | channel [list|open|close] <id> | bb <id>")
 
 
 def _cmi_status(layout: Layout) -> None:
@@ -996,19 +1002,127 @@ def _cmi_peers(layout: Layout) -> None:
         print(f"  {alias}  [{label}]  {ni[:20]}...  {endpoint}")
 
 
+def _cmi_export(layout: Layout) -> None:
+    """Export this entity's invite token for sharing with a peer Operator."""
+    from .cmi.identity import export_invite_token
+    try:
+        token = export_invite_token(layout)
+    except RuntimeError as exc:
+        print(f"  error: {exc}")
+        return
+    print("  invite token (share this with the peer Operator):")
+    print()
+    print(f"  {token}")
+    print()
+    print("  peer adds it with: /cmi contacts add")
+
+
+def _cmi_contacts(layout: Layout, args: list[str]) -> None:
+    sub = args[0].lower() if args else "list"
+    if sub == "list":
+        _cmi_contacts_list(layout)
+    elif sub == "add":
+        _cmi_contacts_add(layout)
+    else:
+        print("  usage: /cmi contacts [list|add]")
+
+
+def _cmi_contacts_list(layout: Layout) -> None:
+    """List trusted contacts from baseline.cmi.contacts."""
+    baseline = {}
+    if layout.baseline.exists():
+        try:
+            baseline = read_json(layout.baseline)
+        except Exception:
+            pass
+    contacts = baseline.get("cmi", {}).get("contacts", [])
+    # also support legacy trusted_peers key
+    if not contacts:
+        contacts = baseline.get("cmi", {}).get("trusted_peers", [])
+    if not contacts:
+        print("  no contacts — use /cmi contacts add to add one")
+        return
+    for c in contacts:
+        label = c.get("label", c.get("alias", "?"))
+        node_id = c.get("node_id", c.get("node_identity", "?"))
+        endpoint = c.get("endpoint", "?")
+        added = c.get("added_at", "")
+        print(f"  {label}  {node_id[:20]}...  {endpoint}  added:{added}")
+
+
+def _cmi_contacts_add(layout: Layout) -> None:
+    """Interactively add a contact from a peer's invite token."""
+    from .cmi.identity import import_invite_token
+
+    print("  paste the invite token from the peer Operator:")
+    try:
+        token = input("  token> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n  cancelled")
+        return
+
+    if not token:
+        print("  cancelled — no token provided")
+        return
+
+    try:
+        contact = import_invite_token(token)
+    except ValueError as exc:
+        print(f"  error: {exc}")
+        return
+
+    print()
+    print(f"  label    : {contact['label']}")
+    print(f"  node_id  : {contact['node_id']}")
+    print(f"  endpoint : {contact['endpoint']}")
+    print(f"  pubkey   : {contact['pubkey'][:16]}...")
+    print()
+
+    try:
+        confirm = input("  add this contact? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\n  cancelled")
+        return
+
+    if confirm != "y":
+        print("  cancelled")
+        return
+
+    # Write contact to baseline.cmi.contacts
+    baseline = {}
+    if layout.baseline.exists():
+        try:
+            baseline = read_json(layout.baseline)
+        except Exception:
+            pass
+
+    cmi_cfg = baseline.setdefault("cmi", {})
+    contacts = cmi_cfg.setdefault("contacts", [])
+
+    # Check for duplicate node_id
+    if any(c.get("node_id") == contact["node_id"] for c in contacts):
+        print(f"  contact already exists: {contact['label']}")
+        return
+
+    contacts.append(contact)
+    atomic_write(layout.baseline, baseline)
+    print(f"  contact added: {contact['label']}")
+
+
 def _cmi_channel(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /cmi channel list | open <id> | close <id>")
+        print("  usage: /cmi channel list | open [<id>] | close <id>")
         return
     sub = args[0].lower()
     if sub == "list":
         _cmi_channel_list(layout)
-    elif sub == "open" and len(args) > 1:
-        _cmi_channel_open(layout, args[1])
+    elif sub == "open":
+        chan_id = args[1] if len(args) > 1 else None
+        _cmi_channel_open(layout, chan_id)
     elif sub == "close" and len(args) > 1:
         _cmi_channel_close(layout, args[1])
     else:
-        print("  usage: /cmi channel list | open <id> | close <id>")
+        print("  usage: /cmi channel list | open [<id>] | close <id>")
 
 
 def _cmi_channel_list(layout: Layout) -> None:
@@ -1034,8 +1148,61 @@ def _cmi_channel_list(layout: Layout) -> None:
         print(f"         {task[:72]}")
 
 
-def _cmi_channel_open(layout: Layout, chan_id: str) -> None:
-    """Launch CMI subprocess for a declared channel."""
+def _cmi_channel_create_interactive(layout: Layout, baseline: dict, cred: dict) -> str | None:
+    """Interactively create a new channel entry in baseline and return its chan_id."""
+    import time as _time
+
+    contacts = baseline.get("cmi", {}).get("contacts", [])
+    if not contacts:
+        print("  no contacts available — add one first with /cmi contacts add")
+        return None
+
+    print("  available contacts:")
+    for i, c in enumerate(contacts):
+        print(f"    [{i}] {c.get('label', '?')}  {c.get('node_id', '?')[:20]}...  {c.get('endpoint', '?')}")
+    print()
+
+    try:
+        sel = input("  select contact index> ").strip()
+        idx = int(sel)
+        if idx < 0 or idx >= len(contacts):
+            raise ValueError()
+    except (ValueError, KeyboardInterrupt, EOFError):
+        print("  cancelled")
+        return None
+
+    contact = contacts[idx]
+
+    try:
+        task = input("  task description> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n  cancelled")
+        return None
+
+    if not task:
+        print("  cancelled — task is required")
+        return None
+
+    chan_id = f"chan_{int(_time.time())}"
+    channel = {
+        "id": chan_id,
+        "task": task,
+        "role": "host",
+        "status": "created",
+        "participants": [contact["node_id"]],
+    }
+
+    cmi_cfg = baseline.setdefault("cmi", {})
+    channels = cmi_cfg.setdefault("channels", [])
+    channels.append(channel)
+    atomic_write(layout.baseline, baseline)
+
+    print(f"  channel created: {chan_id}  task: {task[:60]}")
+    return chan_id
+
+
+def _cmi_channel_open(layout: Layout, chan_id: str | None) -> None:
+    """Launch CMI subprocess for a channel. Interactively creates one if chan_id is None."""
     import subprocess
     from .cmi.identity import load_cmi_credential
 
@@ -1045,13 +1212,24 @@ def _cmi_channel_open(layout: Layout, chan_id: str) -> None:
         print("  CMI not activated — no credential found")
         return
 
-    # Validate chan_id exists in baseline
     baseline = {}
     if layout.baseline.exists():
         try:
             baseline = read_json(layout.baseline)
         except Exception:
             pass
+
+    # Interactive channel creation if no chan_id provided
+    if chan_id is None:
+        chan_id = _cmi_channel_create_interactive(layout, baseline, cred)
+        if chan_id is None:
+            return
+        # Reload baseline after creation
+        try:
+            baseline = read_json(layout.baseline)
+        except Exception:
+            pass
+
     channels = baseline.get("cmi", {}).get("channels", [])
     ch = next((c for c in channels if c.get("id") == chan_id), None)
     if ch is None:
@@ -1250,9 +1428,12 @@ def _cmd_help() -> None:
 
   CMI (Cognitive Mesh Interface):
     /cmi status                  — node identity, endpoint, active channels
-    /cmi peers                   — list trusted peers and trust labels
+    /cmi export                  — generate invite token to share with a peer Operator
+    /cmi contacts                — list trusted contacts
+    /cmi contacts add            — add a contact from a peer's invite token (interactive)
     /cmi channel list            — list declared channels from baseline
-    /cmi channel open <id>       — launch CMI process for a channel
+    /cmi channel open            — create and launch a new channel (interactive)
+    /cmi channel open <id>       — launch CMI process for an existing channel
     /cmi channel close <id>      — signal close to an active channel
     /cmi bb <id>                 — display Blackboard contents for a channel
 

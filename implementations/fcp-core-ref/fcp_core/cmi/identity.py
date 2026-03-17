@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import secrets
 from datetime import datetime, timezone
@@ -152,6 +153,76 @@ def load_cmi_credential(layout: "Layout") -> dict | None:
         return read_json(layout.cmi_credential)
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Invite token — portable contact card for out-of-band exchange
+# ---------------------------------------------------------------------------
+
+def export_invite_token(layout: "Layout") -> str:
+    """Generate a base64-encoded invite token for this entity.
+
+    The token contains all information a peer needs to add this entity as a
+    trusted contact: node_id, pubkey, and endpoint (read from baseline.cmi.host).
+
+    Returns the token as a base64 string ready for copy/paste.
+    Raises RuntimeError if credential or baseline is missing.
+    """
+    import base64
+    import time
+    from ..store import read_json
+
+    cred = load_cmi_credential(layout)
+    if cred is None:
+        raise RuntimeError("CMI credential not found — run /cmi status to diagnose")
+
+    baseline = {}
+    try:
+        baseline = read_json(layout.baseline)
+    except Exception:
+        pass
+
+    endpoint = baseline.get("cmi", {}).get("host", "")
+    label = baseline.get("entity_id", "unknown")
+
+    token_data = {
+        "node_id": cred["node_identity"],
+        "label": label,
+        "endpoint": endpoint,
+        "pubkey": cred["pubkey"],
+        "issued_at": int(time.time()),
+    }
+    raw = json.dumps(token_data, separators=(",", ":")).encode()
+    return base64.b64encode(raw).decode()
+
+
+def import_invite_token(token: str) -> dict:
+    """Decode and validate an invite token from a peer.
+
+    Returns the contact dict with keys: node_id, label, endpoint, pubkey, added_at.
+    Raises ValueError if the token is malformed or missing required fields.
+    """
+    import base64
+    import time
+
+    try:
+        raw = base64.b64decode(token.strip())
+        data = json.loads(raw)
+    except Exception as exc:
+        raise ValueError(f"invalid invite token: {exc}") from exc
+
+    required = ("node_id", "label", "endpoint", "pubkey")
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        raise ValueError(f"invite token missing fields: {', '.join(missing)}")
+
+    return {
+        "node_id": data["node_id"],
+        "label": data["label"],
+        "endpoint": data["endpoint"],
+        "pubkey": data["pubkey"],
+        "added_at": int(time.time()),
+    }
 
 
 # ---------------------------------------------------------------------------
