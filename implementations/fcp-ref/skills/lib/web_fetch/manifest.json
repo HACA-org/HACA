@@ -11,8 +11,14 @@
   "params": {
     "type": "object",
     "properties": {
-      "url": {"type": "string", "description": "URL to fetch. Must match an allowlisted prefix if allowlist is non-empty."}
+      "url": {
+        "type": "string",
+        "description": "URL to fetch. Must match an allowlisted prefix if allowlist is non-empty."
+      }
     },
-    "required": ["url"]
-  }
+    "required": [
+      "url"
+    ]
+  },
+  "execution": "script"
 }

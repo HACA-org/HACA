@@ -10,8 +10,14 @@
   "params": {
     "type": "object",
     "properties": {
-      "name": {"type": "string", "description": "Name of the skill to audit."}
+      "name": {
+        "type": "string",
+        "description": "Name of the skill to audit."
+      }
     },
-    "required": ["name"]
-  }
+    "required": [
+      "name"
+    ]
+  },
+  "execution": "script"
 }

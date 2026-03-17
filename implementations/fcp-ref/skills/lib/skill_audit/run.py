@@ -12,7 +12,9 @@ import tempfile
 from pathlib import Path
 
 REQUIRED_MANIFEST_FIELDS = ["name", "version", "description", "timeout_seconds",
-                             "background", "irreversible", "class"]
+                             "background", "irreversible", "class", "execution"]
+
+VALID_EXECUTION_TYPES = {"script", "text"}
 
 VALID_CLASSES = {"builtin", "operator", "custom"}
 
@@ -64,6 +66,10 @@ def _check_manifest(manifest: dict, name: str, issues: list[str]) -> None:
     cls = manifest.get("class")
     if cls is not None and cls not in VALID_CLASSES:
         issues.append(f"invalid class {cls!r} — must be one of {sorted(VALID_CLASSES)}")
+
+    execution = manifest.get("execution")
+    if execution is not None and execution not in VALID_EXECUTION_TYPES:
+        issues.append(f"invalid execution {execution!r} — must be one of {sorted(VALID_EXECUTION_TYPES)}")
 
 
 # ---------------------------------------------------------------------------
@@ -228,23 +234,38 @@ def main() -> None:
     if readme.exists():
         _check_text("README.md", readme.read_text(encoding="utf-8", errors="replace"), issues)
 
-    # executable checks (optional — zero-code skills are valid)
+    execution_type = manifest.get("execution", "script")
     run_py = skill_dir / "run.py"
     run_sh = skill_dir / "run.sh"
     run_bin = skill_dir / "run"
+    has_executable = run_py.exists() or run_sh.exists() or run_bin.exists()
 
-    if run_py.exists():
-        _check_executable_py(run_py, name, declared_permissions, issues)
-    elif run_sh.exists():
-        if not os.access(run_sh, os.X_OK):
-            issues.append("run.sh is not executable (chmod +x required)")
-        src = run_sh.read_text(encoding="utf-8", errors="replace")
-        _check_text("run.sh", src, issues)
-        if re.search(r'\bgit\s+\w', src, re.IGNORECASE):
-            issues.append("forbidden: git CLI usage detected in run.sh")
-    elif run_bin.exists():
-        if not os.access(run_bin, os.X_OK):
-            issues.append("run is not executable (chmod +x required)")
+    if execution_type == "text":
+        # text-only skill: must have instructions file, must NOT have executable
+        instructions_file = manifest.get("instructions", "README.md")
+        instructions_path = skill_dir / instructions_file
+        if not instructions_path.exists():
+            issues.append(f"text-only skill missing instructions file: {instructions_file!r}")
+        else:
+            _check_text(instructions_file, instructions_path.read_text(encoding="utf-8", errors="replace"), issues)
+        if has_executable:
+            issues.append("text-only skill should not have an executable (run.py/run.sh/run)")
+    else:
+        # script skill: must have executable
+        if run_py.exists():
+            _check_executable_py(run_py, name, declared_permissions, issues)
+        elif run_sh.exists():
+            if not os.access(run_sh, os.X_OK):
+                issues.append("run.sh is not executable (chmod +x required)")
+            src = run_sh.read_text(encoding="utf-8", errors="replace")
+            _check_text("run.sh", src, issues)
+            if re.search(r'\bgit\s+\w', src, re.IGNORECASE):
+                issues.append("forbidden: git CLI usage detected in run.sh")
+        elif run_bin.exists():
+            if not os.access(run_bin, os.X_OK):
+                issues.append("run is not executable (chmod +x required)")
+        else:
+            issues.append("script skill missing executable (run.py, run.sh, or run)")
 
     # index check — only for installed skills (not stage)
     if not in_stage:

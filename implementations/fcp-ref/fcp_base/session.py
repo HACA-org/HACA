@@ -733,18 +733,12 @@ def _dispatch_sil(
 def _skill_info(
     layout: Layout, skill_name: str, index: dict[str, Any]
 ) -> dict[str, Any]:
-    """Return the markdown content of a skill's manifest, or an error."""
+    """Return the manifest JSON of a skill, or an error."""
     for entry in index.get("skills", []):
         if entry.get("name") == skill_name:
             rel = entry.get("manifest", "")
             if rel:
                 mpath = layout.root / rel
-                # look for a README.md next to the manifest
-                readme = mpath.parent / "README.md"
-                if readme.exists():
-                    return {"type": "skill_info", "skill": skill_name,
-                            "content": readme.read_text(encoding="utf-8")}
-                # fall back to the manifest JSON itself
                 if mpath.exists():
                     return {"type": "skill_info", "skill": skill_name,
                             "content": mpath.read_text(encoding="utf-8")}

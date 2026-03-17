@@ -6,7 +6,9 @@
   "background": false,
   "irreversible": false,
   "class": "builtin",
-  "permissions": ["network"],
+  "permissions": [
+    "network"
+  ],
   "params": {
     "type": "object",
     "properties": {
@@ -17,7 +19,11 @@
       "type": {
         "type": "string",
         "description": "Message type: 'general' (broadcast to all), 'peer' (directed, visible to all), 'bb' (Blackboard contribution, durable).",
-        "enum": ["general", "peer", "bb"]
+        "enum": [
+          "general",
+          "peer",
+          "bb"
+        ]
       },
       "content": {
         "type": "string",
@@ -28,6 +34,11 @@
         "description": "Target Node Identity for 'peer' messages. Required when type is 'peer'."
       }
     },
-    "required": ["chan_id", "type", "content"]
-  }
+    "required": [
+      "chan_id",
+      "type",
+      "content"
+    ]
+  },
+  "execution": "script"
 }

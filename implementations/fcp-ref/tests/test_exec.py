@@ -138,7 +138,7 @@ class TestActionLedger(unittest.TestCase):
         self.assertIn("complete", types)
 
 
-class TestZeroCodeSkill(unittest.TestCase):
+class TestTextOnlySkill(unittest.TestCase):
     def setUp(self) -> None:
         self.layout, self.tmp = make_layout()
         skill_dir = self.layout.skills_dir / "narrator"
@@ -146,11 +146,12 @@ class TestZeroCodeSkill(unittest.TestCase):
         manifest = {
             "name": "narrator",
             "version": "1.0.0",
-            "description": "Zero-code skill",
+            "description": "Text-only skill",
             "timeout_seconds": 5,
             "background": False,
             "irreversible": False,
             "class": "custom",
+            "execution": "text",
             "permissions": [],
         }
         atomic_write(skill_dir / "manifest.json", manifest)
@@ -164,17 +165,41 @@ class TestZeroCodeSkill(unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)
 
-    def test_zero_code_skill_returns_readme(self) -> None:
-        output = exec_.dispatch(self.layout, "narrator", {}, self.index)
-        self.assertIn("Narrator", output)
-        self.assertIn("narrated", output)
+    def test_text_skill_without_worker_raises(self) -> None:
+        # worker_skill not available in test env — ExecError expected
+        with self.assertRaises(exec_.ExecError):
+            exec_.dispatch(self.layout, "narrator", {}, self.index)
 
-    def test_zero_code_skill_no_readme_raises(self) -> None:
-        # remove README so there's nothing to return
+    def test_text_skill_missing_instructions_raises(self) -> None:
+        # remove README so instructions file is missing
         readme = self.layout.skills_dir / "narrator" / "README.md"
         readme.unlink()
         with self.assertRaises(exec_.ExecError):
             exec_.dispatch(self.layout, "narrator", {}, self.index)
+
+    def test_script_skill_without_executable_raises(self) -> None:
+        # script execution type with no run.py/run.sh/run → ExecError
+        skill_dir = self.layout.skills_dir / "bare_script"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "name": "bare_script",
+            "version": "1.0.0",
+            "description": "Script skill with no executable",
+            "timeout_seconds": 5,
+            "background": False,
+            "irreversible": False,
+            "class": "custom",
+            "execution": "script",
+            "permissions": [],
+        }
+        atomic_write(skill_dir / "manifest.json", manifest)
+        index = _make_index([{
+            "name": "bare_script",
+            "class": "custom",
+            "manifest": "skills/bare_script/manifest.json",
+        }])
+        with self.assertRaises(exec_.ExecError):
+            exec_.dispatch(self.layout, "bare_script", {}, index)
 
 
 class TestCheckSilHeartbeat(unittest.TestCase):

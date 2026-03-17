@@ -135,6 +135,52 @@ def check_sil_heartbeat(layout: Layout, component: str = "exec") -> bool:
 # Internal: skill lookup and execution
 # ---------------------------------------------------------------------------
 
+def _run_text_skill(
+    layout: Layout,
+    skill_name: str,
+    params: dict[str, Any],
+    instructions_path: Path,
+    timeout: int,
+) -> str:
+    """Execute a text-only skill by delegating to worker_skill internally."""
+    instructions = instructions_path.read_text(encoding="utf-8")
+    context_parts = [f"Skill: {skill_name}"]
+    if params:
+        context_parts.append(f"Parameters: {json.dumps(params, ensure_ascii=False)}")
+    context = "\n".join(context_parts)
+
+    worker_entry = _find_skill({"skills": [
+        {"name": "worker_skill", "class": "builtin", "manifest": f"skills/lib/worker_skill/manifest.json"}
+    ]}, "worker_skill")
+    # locate worker_skill run.py directly
+    worker_run = layout.skills_lib_dir / "worker_skill" / "run.py"
+    if not worker_run.exists():
+        raise ExecError(f"worker_skill not available — cannot execute text-only skill {skill_name!r}")
+
+    input_data = json.dumps({
+        "skill": "worker_skill",
+        "params": {
+            "task": instructions,
+            "context": context,
+            "persona": f"You are executing the '{skill_name}' skill. Follow the instructions precisely and return a structured result.",
+        },
+        "entity_root": str(layout.root),
+    })
+
+    result = subprocess.run(
+        ["python3", str(worker_run)],
+        input=input_data,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=str(layout.root),
+    )
+
+    if result.returncode != 0:
+        raise ExecError(result.stdout.strip() or result.stderr.strip() or f"text skill exited {result.returncode}")
+    return result.stdout
+
+
 def _exe_cmd(exe: Path) -> list[str]:
     if exe.suffix == ".py":
         return ["python3", str(exe)]
@@ -181,9 +227,16 @@ def _run_skill(
             break
 
     if exe is None:
-        readme = exe_dir / "README.md"
-        if readme.exists():
-            return readme.read_text(encoding="utf-8")
+        execution = manifest.get("execution", "script")
+        if execution == "text":
+            instructions_file = manifest.get("instructions", "README.md")
+            instructions_path = exe_dir / instructions_file
+            if not instructions_path.exists():
+                raise ExecError(
+                    f"Text-only skill {skill_name!r}: instructions file "
+                    f"{instructions_file!r} not found in {exe_dir}"
+                )
+            return _run_text_skill(layout, skill_name, params, instructions_path, timeout)
         raise ExecError(f"No executable found for skill {skill_name!r} in {exe_dir}")
 
     cmd = _exe_cmd(Path(str(exe)))

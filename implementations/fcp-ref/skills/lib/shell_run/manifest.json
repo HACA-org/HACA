@@ -27,5 +27,6 @@
     "required": [
       "command"
     ]
-  }
+  },
+  "execution": "script"
 }

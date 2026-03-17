@@ -6,14 +6,29 @@
   "background": false,
   "irreversible": true,
   "class": "builtin",
-  "permissions": ["workspace_write"],
+  "permissions": [
+    "workspace_write"
+  ],
   "params": {
     "type": "object",
     "properties": {
-      "path": {"type": "string", "description": "Path within workspace_focus to stage and commit."},
-      "message": {"type": "string", "description": "Commit message."},
-      "remote": {"type": "boolean", "description": "If true, push to origin after committing."}
+      "path": {
+        "type": "string",
+        "description": "Path within workspace_focus to stage and commit."
+      },
+      "message": {
+        "type": "string",
+        "description": "Commit message."
+      },
+      "remote": {
+        "type": "boolean",
+        "description": "If true, push to origin after committing."
+      }
     },
-    "required": ["path", "message"]
-  }
+    "required": [
+      "path",
+      "message"
+    ]
+  },
+  "execution": "script"
 }

@@ -6,20 +6,29 @@
   "background": false,
   "irreversible": false,
   "class": "builtin",
-  "permissions": ["network"],
+  "permissions": [
+    "network"
+  ],
   "params": {
     "type": "object",
     "properties": {
       "op": {
         "type": "string",
         "description": "Operation: 'bb' to read the Blackboard, 'status' to get channel status and participants.",
-        "enum": ["bb", "status"]
+        "enum": [
+          "bb",
+          "status"
+        ]
       },
       "chan_id": {
         "type": "string",
         "description": "Channel identifier (e.g. chan_<uuid>)."
       }
     },
-    "required": ["op", "chan_id"]
-  }
+    "required": [
+      "op",
+      "chan_id"
+    ]
+  },
+  "execution": "script"
 }

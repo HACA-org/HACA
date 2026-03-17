@@ -10,10 +10,24 @@
   "params": {
     "type": "object",
     "properties": {
-      "task": {"type": "string", "description": "Task description to give the worker sub-agent."},
-      "persona": {"type": "string", "description": "System prompt / persona for the worker. Defaults to a generic focused sub-agent."},
-      "context": {"type": "string", "description": "Additional context prepended to the task message."}
+      "task": {
+        "type": "string",
+        "description": "Task description to give the worker sub-agent."
+      },
+      "persona": {
+        "type": "string",
+        "description": "System prompt / persona for the worker. Defaults to a generic focused sub-agent."
+      },
+      "context": {
+        "type": "string",
+        "description": "Additional context prepended to the task message."
+      }
     },
-    "required": ["task", "context", "persona"]
-  }
+    "required": [
+      "task",
+      "context",
+      "persona"
+    ]
+  },
+  "execution": "script"
 }
