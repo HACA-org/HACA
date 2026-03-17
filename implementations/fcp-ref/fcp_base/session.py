@@ -50,6 +50,7 @@ def run_session(
     if tools is None:
         tools = _tool_declarations(layout, index)
     adapter_ref = adapter if isinstance(adapter, AdapterRef) else AdapterRef(adapter)
+    _set_endure_approved(False)
 
 
     # --- Build system prompt and initial chat history once at session start ---
@@ -226,14 +227,14 @@ def run_session(
                 close_reason = "endure_approved"
                 session_closed = True
 
+        if session_closed:
+            break
+
         # tool results go into chat history as full payloads.
         # result_recall remains available as fallback for results from previous sessions.
         if tool_results:
             chat_history.append({"role": "user", "content": "\n".join(tool_results)})
             stimulus_ready = True  # tool results need a follow-up CPE cycle
-
-        if session_closed:
-            break
 
         # --- loop detection: same set of (tool, input, result) tuples repeated >= threshold ---
         if tool_calls:
