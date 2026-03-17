@@ -69,16 +69,22 @@ A **Cognitive Profile** selects the complete set of axioms, memory policies, and
 
 ## Filesystem Cognitive Platform (FCP)
 
-**FCP** is the canonical implementation of HACA, proving that a robust, portable, and audit-friendly cognitive system can be built using only standard POSIX filesystem primitives (atomic rename, append-only logs).
+**FCP** is the canonical reference implementation of HACA, proving that a robust, portable, and audit-friendly cognitive system can be built using only standard POSIX filesystem primitives (atomic rename, append-only logs).
 
-### Profile Specifications
-The FCP specification defines two operational profiles, each catering to different levels of autonomy and operator oversight:
+FCP ships as a single CLI (`./fcp`) that supports both HACA profiles. The profile is chosen at initialisation (`./fcp init`) and is immutable after the First Activation Protocol (FAP) — it becomes part of the entity's structural baseline.
 
-- **[FCP-Core Specification](implementations/fcp-core-spec/)**: Full compliance with **HACA-Core** (Zero-Autonomy). All structural changes require explicit operator authorization via the `Endure` protocol.
-- **FCP-Evolve**: *[Planned]* — Compliance with **HACA-Evolve** (Supervised-Autonomy). Allows autonomous structural calibration within a defined, operator-authorized scope.
+### Profiles
+
+| Profile | HACA compliance | Autonomy |
+|---------|----------------|----------|
+| **FCP-Core** | HACA-Core 1.0.0 | Zero — every structural change requires explicit Operator approval |
+| **FCP-Evolve** | HACA-Evolve 1.0.0 | Supervised — acts autonomously within a declared scope; proposes outside it |
 
 ### Reference Implementation
-- **[FCP-Core-Ref](implementations/fcp-core-ref/)**: The minimal, spec-complete reference implementation for the **FCP-Core** profile. It is a validation target designed to demonstrate a HACA-compliant filesystem entity in practice.
+
+- **[FCP-Spec](implementations/fcp-spec/)** — The FCP specification, divided into three documents: `FCP-Base` covers the shared runtime components common to all profiles (boot protocol, memory model, integrity pipeline, execution layer); `FCP-Core` specifies the Zero-Autonomy profile; `FCP-Evolve` specifies the Supervised-Autonomy profile. *(FCP-Base and FCP-Evolve in progress)*
+
+- **[FCP-Ref](implementations/fcp-ref/)** — The reference implementation of FCP, validating both profiles against the spec. A single CLI (`./fcp`) initialises and operates entities of either profile. Entities are self-contained filesystem trees — all runtime code, persona, skills, and state live under a single directory created by `./fcp init`. Requires Python ≥ 3.10, no external dependencies for core operation.
 
 ---
 
