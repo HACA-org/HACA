@@ -125,8 +125,10 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
                 "slugs": inner.get("slugs", []),
             })
             _write_evolution_auth(layout, content, auth_digest)
+            _write_evolution_stimuli(layout, content, approved=True)
         else:
             _write_evolution_rejected(layout, content)
+            _write_evolution_stimuli(layout, content, approved=False)
         pfile = p["file"]
         if isinstance(pfile, Path):
             pfile.unlink(missing_ok=True)
@@ -687,12 +689,14 @@ def _endure_decide(layout: Layout, idx_str: str, approve: bool) -> None:
     if approve:
         auth_digest = _sha256_str(content)
         _write_evolution_auth(layout, content, auth_digest)
+        _write_evolution_stimuli(layout, content, approved=True)
         print(f"  approved: [{idx}] — session will close for Sleep Cycle and reboot")
         set_endure_approved(True)
         from .hooks import run_hook
         run_hook(layout, "on_evolution_authorized", {"content": content[:256], "auth_digest": auth_digest})
     else:
         _write_evolution_rejected(layout, content)
+        _write_evolution_stimuli(layout, content, approved=False)
         print(f"  rejected: [{idx}]")
         from .hooks import run_hook
         run_hook(layout, "on_evolution_rejected", {"content": content[:256]})
@@ -1617,6 +1621,33 @@ def resolve_alias(layout: Layout, line: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _write_evolution_stimuli(layout: Layout, content: str, approved: bool) -> None:
+    """Write first_stimuli with evolution result — only for haca-evolve entities."""
+    try:
+        profile = read_json(layout.baseline).get("profile", "haca-core")
+    except Exception:
+        profile = "haca-core"
+    if profile != "haca-evolve":
+        return
+    try:
+        payload = json.loads(content)
+        description = payload.get("description", "evolution proposal")
+    except Exception:
+        description = "evolution proposal"
+    if approved:
+        message = (
+            f"[EVOLUTION COMPLETE] Your evolution proposal was approved and applied: "
+            f"{description}. "
+            "Review the changes and confirm they are working as expected."
+        )
+    else:
+        message = (
+            f"[EVOLUTION REJECTED] Your evolution proposal was rejected by the Operator: "
+            f"{description}."
+        )
+    atomic_write(layout.first_stimuli, {"source": "evolution", "message": message})
 
 
 def _write_evolution_auth(layout: Layout, content: str, auth_digest: str) -> None:

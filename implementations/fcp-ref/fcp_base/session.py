@@ -222,6 +222,9 @@ def run_session(
             if closed:
                 close_reason = "session_close"
                 session_closed = True
+            if _is_endure_approved():
+                close_reason = "endure_approved"
+                session_closed = True
 
         # tool results go into chat history as full payloads.
         # result_recall remains available as fallback for results from previous sessions.
@@ -691,8 +694,28 @@ def _dispatch_sil(
         atype = action.get("type", "")
         if atype == "evolution_proposal":
             payload = {k: v for k, v in action.items() if k != "type"}
-            _stage_evolution_proposal(layout, json.dumps(payload))
-            results.append({"type": "evolution_proposal", "status": "queued"})
+            content = json.dumps(payload)
+            _stage_evolution_proposal(layout, content)
+            # Auto-approve for Evolve with autonomous_evolution=True
+            try:
+                baseline = load_baseline(layout)
+                profile = baseline.get("profile", "haca-core")
+                autonomous = (
+                    profile == "haca-evolve"
+                    and baseline.get("evolve", {}).get("scope", {}).get("autonomous_evolution", False)
+                )
+            except Exception:
+                autonomous = False
+            if autonomous:
+                from .operator import _write_evolution_auth, _write_evolution_stimuli, _sha256_str  # type: ignore[attr-defined]
+                auth_digest = _sha256_str(content)
+                _write_evolution_auth(layout, content, auth_digest)
+                _write_evolution_stimuli(layout, content, approved=True)
+                _set_endure_approved(True)
+                results.append({"type": "evolution_proposal", "status": "auto_approved"})
+                session_closed = True
+            else:
+                results.append({"type": "evolution_proposal", "status": "queued"})
         elif atype == "session_close":
             session_closed = True
             results.append({"type": "session_close", "status": "acknowledged"})

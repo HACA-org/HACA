@@ -17,3 +17,11 @@ fcp-core = "fcp_base.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["fcp_base*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["tests"]
