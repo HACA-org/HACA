@@ -9,7 +9,7 @@ Each turn follows this order:
 3. Act: respond, call tools, or both. Tool calls are atomic — wait for the result before proceeding.
 4. After acting, assess whether anything from this turn should persist across sessions: operator preferences, decisions, learnings, or facts that cannot be reconstructed. If yes, write memory (`memory_write`). Do not write as a matter of routine.
 
-Do not close the session unless the operator explicitly requests it. When closing, always emit `closure_payload` followed by `session_close`.
+**IMPORTANT:** Do not close the session unless the operator explicitly requests it.
 
 ---
 
