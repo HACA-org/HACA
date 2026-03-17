@@ -1,0 +1,38 @@
+{
+  "name": "commit",
+  "version": "1.0.0",
+  "description": "Commit a path within workspace_focus. Only git interface available to the CPE.",
+  "timeout_seconds": 60,
+  "background": false,
+  "irreversible": true,
+  "class": "builtin",
+  "permissions": [
+    "workspace_write"
+  ],
+  "params": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path within workspace_focus to stage and commit."
+      },
+      "message": {
+        "type": "string",
+        "description": "Commit message."
+      },
+      "remote": {
+        "type": "boolean",
+        "description": "If true, push to origin after committing."
+      }
+    },
+    "required": [
+      "path",
+      "message"
+    ]
+  },
+  "execution": "script",
+  "dependencies": [
+    "python3",
+    "git"
+  ]
+}

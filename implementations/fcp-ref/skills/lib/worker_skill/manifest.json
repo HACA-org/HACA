@@ -1,0 +1,36 @@
+{
+  "name": "worker_skill",
+  "version": "1.0.0",
+  "description": "Text-only sub-agent for isolated analysis tasks (summarization, cross-reference, classification). No tool or filesystem access.",
+  "timeout_seconds": 120,
+  "background": false,
+  "irreversible": false,
+  "class": "builtin",
+  "permissions": [],
+  "params": {
+    "type": "object",
+    "properties": {
+      "task": {
+        "type": "string",
+        "description": "Task description to give the worker sub-agent."
+      },
+      "persona": {
+        "type": "string",
+        "description": "System prompt / persona for the worker. Defaults to a generic focused sub-agent."
+      },
+      "context": {
+        "type": "string",
+        "description": "Additional context prepended to the task message."
+      }
+    },
+    "required": [
+      "task",
+      "context",
+      "persona"
+    ]
+  },
+  "execution": "script",
+  "dependencies": [
+    "python3"
+  ]
+}

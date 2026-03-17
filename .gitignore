@@ -13,6 +13,8 @@ Thumbs.db
 .gemini/
 .antigravity/
 .cursor/
+.agent/
+.agents/
 *.sublime-project
 *.sublime-workspace
 
@@ -28,7 +30,7 @@ __pycache__/
 
 # --- HACA / FCP reference implementation ---
 # Entity runtime state (state/, memory/, io/, workspace/) is handled by the nested
-# .gitignore in implementations/fcp-core-ref/.
+# .gitignore in implementations/fcp-ref/.
 implementations/fcp-core-ref-test
 
 # --- Logs ---

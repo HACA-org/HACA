@@ -1,0 +1,26 @@
+{
+  "name": "skill_audit",
+  "version": "1.0.0",
+  "description": "Validate a skill manifest, executable, and index consistency.",
+  "timeout_seconds": 30,
+  "background": false,
+  "irreversible": false,
+  "class": "builtin",
+  "permissions": [],
+  "params": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Name of the skill to audit."
+      }
+    },
+    "required": [
+      "name"
+    ]
+  },
+  "execution": "script",
+  "dependencies": [
+    "python3"
+  ]
+}
