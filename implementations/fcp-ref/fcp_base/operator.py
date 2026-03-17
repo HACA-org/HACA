@@ -431,11 +431,16 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
     sub = args[0].lower()
     if sub == "set" and len(args) > 1:
         subdir = args[1]
-        target = (layout.workspace_dir / subdir).resolve()
         try:
-            target.relative_to(layout.workspace_dir)
+            profile = read_json(layout.baseline).get("profile", "haca-core")
+        except Exception:
+            profile = "haca-core"
+        boundary = layout.root if profile == "haca-evolve" else layout.workspace_dir
+        target = (boundary / subdir).resolve() if subdir not in (".", "") else boundary.resolve()
+        try:
+            target.relative_to(boundary)
         except ValueError:
-            print(f"  path outside workspace: {subdir}")
+            print(f"  path outside {'entity root' if profile == 'haca-evolve' else 'workspace'}: {subdir}")
             return
         if not target.exists():
             target.mkdir(parents=True)
