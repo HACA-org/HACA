@@ -37,20 +37,25 @@ def main() -> None:
     persona += _WORKER_CONSTRAINT
 
     sys.path.insert(0, str(entity_root))
-    from fcp_core.cpe.base import detect_adapter
+    from fcp_core.cpe.base import detect_adapter, make_adapter
 
-    # read model from baseline.json if available
+    # read backend/model from baseline.json if available
+    backend = ""
     model = ""
+    api_key = ""
     baseline_path = entity_root / "state" / "baseline.json"
     if baseline_path.exists():
         try:
             baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-            model = baseline.get("cpe", {}).get("model", "")
+            cpe_cfg = baseline.get("cpe", {})
+            backend = cpe_cfg.get("backend", "")
+            model = cpe_cfg.get("model", "")
+            api_key = cpe_cfg.get("api_key", "")
         except Exception:
             pass
 
     try:
-        adapter = detect_adapter(model=model)
+        adapter = make_adapter(backend, api_key, model) if backend else detect_adapter(model=model)
     except Exception as exc:
         print(json.dumps({"error": f"no CPE adapter available: {exc}"}))
         sys.exit(1)
