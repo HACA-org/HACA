@@ -1,3 +1,45 @@
-DEV-NOTES.md
+# --- System and OS ---
 .DS_Store
-.claude
+Thumbs.db
+*.tmp
+*.bak
+*.swp
+*~
+
+# --- IDEs and Editors ---
+.vscode/
+.idea/
+.claude/
+.gemini/
+.antigravity/
+.cursor/
+*.sublime-project
+*.sublime-workspace
+
+# --- Environment and Dependencies ---
+.env
+.venv
+venv/
+env/
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+
+# --- HACA / FCP reference implementation ---
+# Entity runtime state (state/, memory/, io/, workspace/) is handled by the nested
+# .gitignore in implementations/fcp-core-ref/.
+implementations/fcp-core-ref-test
+
+# --- Logs ---
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Project specific ---
+DEV-NOTES.md
+tmp/
+coverage/
+dist/
+build/

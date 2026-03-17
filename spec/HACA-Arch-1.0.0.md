@@ -40,6 +40,7 @@ The specification defines a shared structural topology through five foundational
    - 5.1 [Component Topology](#51-component-topology)
    - 5.2 [Trust Model](#52-trust-model)
    - 5.3 [Concept Realization](#53-concept-realization)
+   - 5.4 [Orchestration](#54-orchestration)
 6. [Lifecycle](#6-lifecycle)
    - 6.1 [Cold-Start and First Activation](#61-cold-start-and-first-activation)
    - 6.2 [Boot Sequence](#62-boot-sequence)
@@ -54,7 +55,8 @@ The specification defines a shared structural topology through five foundational
    - 7.5 [Mesh Spoofing and Sybil Attacks](#75-mesh-spoofing-and-sybil-attacks)
    - 7.6 [Scope Boundary](#76-scope-boundary)
    - 7.7 [Operator Channel Authentication](#77-operator-channel-authentication)
-8. [Glossary](#8-glossary)
+8. [Compliance](#8-compliance)
+9. [Glossary](#9-glossary)
 
 ---
 
@@ -150,7 +152,7 @@ Skills that produce irreversible side effects — payments, commands to external
 
 Integrity is the set of architectural mechanisms that ensure the entity's structure and behavior remain consistent with its defined and authorized state. This section defines the four integrity mechanisms — the Integrity Document, the Endure Protocol, the Heartbeat Protocol, and the Drift Framework — and the content classes that determine write authority within the Entity Store.
 
-The **Integrity Document** is generated at first activation and contains the cryptographic hash of every file constituting structural content across all components. It is verified at every boot, before every skill execution, and at defined intervals during active operation. Any hash mismatch indicates unauthorized structural modification and triggers an immediate integrity layer response.
+The **Integrity Document** is generated at first activation and contains the cryptographic hash of every file constituting structural content across all components. It is verified at every boot and at defined intervals during active operation. Any hash mismatch indicates unauthorized structural modification and triggers an immediate integrity layer response.
 
 The **Integrity Log** is the append-only record of integrity events maintained by the integrity layer within the Entity Store. It is never written by the memory layer's mnemonic pipeline and is never subject to garbage collection. Where the Integrity Document defines what the entity's structure should be, the Integrity Log records what has happened to it. For long-lived entities, the log will grow indefinitely — Heartbeat records, Skill Results, and Endure commits accumulate without bound. The evolutionary chain must never be compacted, as it is the basis of identity continuity; but routine operational records may be candidates for archival or compaction. Profiles and extensions may define a compaction policy for non-chain records.
 
@@ -209,7 +211,7 @@ If the active Operator Channel mechanism fails to deliver an escalation after `N
 Prior to the FAP, the implementation populates the Entity Store with the initial structural baseline — persona definition, skill manifests, and any deployment-defined configurations. This is an installation-time operation outside the FAP's scope. The **FAP** (First Activation Protocol) is the sequential bootstrap procedure that executes the Imprint. The FAP is not a Cognitive Cycle — no session token exists at this stage and the cognitive engine reasoning layer is not active. The FAP executes as a gated sequential pipeline:
 
 ```
-structural validation → host environment capture → Operator enrollment → Operator Channel initialization → Integrity Document generated → Imprint Record finalized (includes Integrity Document) and written to Memory Store → Genesis Omega derived → first session token issued
+structural validation → host environment capture → Operator Channel initialization → Operator enrollment → Integrity Document generated → Imprint Record finalized (includes Integrity Document) and written to Memory Store → Genesis Omega derived → first session token issued
 ```
 
 The FAP is atomic with respect to its own outputs: it either completes fully — writing the Imprint Record, Integrity Document, Genesis Omega, and first session token — or it reverts all of its own writes, leaving the pre-installed structural baseline intact but the entity uninitialized. Any failure before FAP completion leaves the Memory Store without an Imprint Record; the FAP re-executes on the next boot. The entity can never enter a partially-initialized state.
@@ -233,7 +235,7 @@ The CPE environment is classified as one of two topology types, declared at depl
 
 The topology classification is binding: HACA-Core requires Transparent CPE topology — its invariants presuppose full execution control unavailable in Opaque environments. HACA-Evolve supports both topologies; its supervised-autonomy model does not require exclusive pipeline control. A HACA-Core deployment that detects an Opaque CPE at boot must halt and refuse to proceed.
 
-When the integrity layer issues a corrective signal to the CPE in a Degraded state, the CPE executes one or more of the following corrective actions within its own authority: **context reload** — the active context window is discarded and reloaded from the memory layer, clearing any accumulated contamination without ending the session; **cycle reset** — the current Cognitive Cycle is aborted without commit, returning the CPE to a clean state for the next cycle. After a context reload or cycle reset, the integrity layer independently re-verifies the condition from outside the CPE. If re-verification fails, the condition escalates to Critical. **session summarization** — the CPE produces a condensed representation of the accumulated Session Store content and signals the MIL to replace the current Session Store with the summarized version, reducing its physical size. After the MIL executes the write, the integrity layer independently re-verifies the Session Store size against the threshold `S`. If re-verification confirms the size is within bounds, operation continues; if re-verification fails, the condition escalates to Critical. At normal session close, the CPE produces the Closure Payload — carried in the session-close signal to the integrity layer. The consolidation content within the Closure Payload is the result of semantic consolidation: the CPE distills from the session what carries lasting value — learnings, preferences, insights, and relevant context — into the form the memory layer writes to the Memory Store. This is distinct from session summarization, which is a physical compression of the Session Store and carries no semantic intent.
+When the integrity layer issues a corrective signal to the CPE in a Degraded state, the CPE executes one or more of the following corrective actions within its own authority: **context reload** — the active context window is discarded and reloaded from the memory layer, clearing any accumulated contamination without ending the session; **cycle reset** — the current Cognitive Cycle is aborted without commit, returning the CPE to a clean state for the next cycle. After a context reload or cycle reset, the integrity layer independently re-verifies the condition from outside the CPE. If re-verification fails, the condition escalates to Critical. At normal session close, the CPE produces the Closure Payload — carried in the session-close signal to the integrity layer. The consolidation content within the Closure Payload is the result of semantic consolidation: the CPE distills from the session what carries lasting value — learnings, preferences, insights, and relevant context — into the form the memory layer writes to the Memory Store. This is distinct from session summarization, which is a physical compaction of the Session Store executed by the MIL under direct integrity layer instruction and carries no semantic intent.
 
 The CPE monitors context window utilization continuously. When utilization approaches a threshold at which further Cognitive Cycles cannot be executed reliably, the CPE signals a **context window critical** condition to the integrity layer. If the active Cognitive Profile does not define a specific response, the default behavior is a normal session close — the integrity layer initiates session termination and the Sleep Cycle executes normally.
 
@@ -333,6 +335,14 @@ Each concept defined in Section 3 is realized by a specific configuration of com
 
 **Individuation** is realized sequentially across all components during the FAP. The FAP is the only point in the entity's lifecycle where components initialize in strict dependency order rather than operating concurrently. The output of a completed FAP — the Imprint Record in the Memory Store and the Genesis Omega in the integrity chain — is the product of all components having completed their initialization stages in sequence.
 
+### 5.4 Orchestration
+
+The five components define what the entity does — they do not coordinate themselves. A concrete implementation is required to coordinate them: it is the operational substrate where all components run, the layer that drives the session loop, routes signals between components, and enforces the sequencing defined in Sections 5 and 6.
+
+The implementation is not itself a component. It does not reason, store state, or enforce integrity — those responsibilities belong exclusively to the components. Its role is structural: it assembles context for the CPE, dispatches intent payloads to the appropriate component, injects stimuli into the cognitive pipeline, and sequences lifecycle transitions from boot through Sleep Cycle. Components do not invoke each other directly — the implementation is the intermediary that makes coordinated operation possible.
+
+HACA-Arch defines the contracts each component must satisfy and the invariants the entity must maintain. How those contracts are realized in a concrete runtime — what mechanism the implementation uses to route signals, how it persists inter-component state, how it drives the session loop — is the responsibility of the active Cognitive Profile and its implementation specification.
+
 ---
 
 ## 6. Lifecycle
@@ -385,7 +395,7 @@ A session begins the moment the session token is issued at boot completion and e
 
 At any given time, at most one session token may be active for a given entity. The session token is persisted as a dedicated artefact in the Entity Store — containing the session ID and token value — written by the SIL at session open and removed by the SIL at the completion of the Sleep Cycle. Like the Passive Distress Beacon, this artefact must be directly accessible to the Operator without requiring any active component. This property enables direct Operator revocation and makes the artefact's presence at boot a passive crash indicator: if the SIL finds it present, the previous session did not close normally and crash recovery applies. If the SIL detects a token artefact at boot whose session ID does not correspond to a crash recovery scenario — indicating a genuine concurrent session conflict — it treats the condition as Critical, revokes the conflicting token, and notifies the Operator via the Operator Channel before issuing a new token. Concurrent sessions for the same entity are not permitted — they would produce conflicting writes to the Session Store and undermine integrity monitoring.
 
-Within the session, the entity processes stimuli through Cognitive Cycles while the Heartbeat Protocol monitors continuously. When the integrity layer detects that the Session Store has exceeded the threshold `S`, it initiates a **session summarization** via a corrective signal to the CPE. The CPE produces a condensed representation of the accumulated session content and signals the MIL to replace the current Session Store with the summarized version. This is a Degraded corrective action — the integrity layer independently re-verifies the Session Store size after the MIL executes the write. If re-verification fails, the condition escalates to Critical.
+Within the session, the entity processes stimuli through Cognitive Cycles while the Heartbeat Protocol monitors continuously. When the integrity layer detects that the Session Store has exceeded the threshold `S`, it initiates a **session summarization** via a corrective signal to the MIL. The MIL removes the oldest entries from the Session Store until the store is within the threshold. This is a physical compaction — not semantic consolidation; session content is not analyzed or interpreted during this operation. This is a Degraded corrective action — the integrity layer independently re-verifies the Session Store size after the MIL executes the write. If re-verification fails, the condition escalates to Critical.
 
 When the session closes normally, the entity transitions into the Sleep Cycle. At normal session close, the SIL revokes the token — marking it as invalid and deactivating the CPE — before the Sleep Cycle begins. The token artefact remains in the Entity Store throughout the Sleep Cycle and is removed only at Sleep Cycle completion. During the Sleep Cycle, the artefact's continued presence serves exclusively as a crash indicator; the CPE is inactive because the token is revoked, not because the artefact is absent. When the session is terminated by a Critical Heartbeat response, the SIL escalates to the Operator before the Sleep Cycle may begin; the Sleep Cycle does not execute until the Operator resolves the escalation. When the session ends via direct Operator intervention — physical removal of the token — no Sleep Cycle executes automatically. The entity halts; the Operator is responsible for initiating any maintenance or recovery action explicitly before the next boot. When token revocation occurs during an active Cognitive Cycle, the cycle is aborted without commit — any state not yet persisted is discarded. Any skill execution in progress at the moment of revocation — synchronous or background — is immediately discarded. No result is logged or returned to the CPE. Skills with no terminal record at session end are surfaced as pending reprocessing stimuli at the next boot, following the same path as incomplete background skills.
 
@@ -452,7 +462,50 @@ The Operator Channel is defined as a system-level primitive that operates indepe
 
 ---
 
-## 8. Glossary
+## 8. Compliance
+
+A deployment is HACA-Arch compliant if and only if it satisfies all requirements below. Each item is non-negotiable — partial compliance is not compliance. Profile-specific and implementation-specific requirements are defined in the active Cognitive Profile and its implementation specification.
+
+**Entity and State**
+- [ ] All persistent entity state resides exclusively in the Entity Store; no external system holds authoritative entity state.
+- [ ] The Imprint Record is written once during FAP and never modified thereafter.
+- [ ] The Genesis Omega is a cryptographic digest of the finalized Imprint Record and is the root entry of the integrity chain.
+- [ ] The integrity chain is append-only; no entry is modified or removed after commitment.
+
+**Component Authority**
+- [ ] The SIL has exclusive write authority over integrity content: the Integrity Document, the Integrity Log, and the session token.
+- [ ] The MIL is the sole writer of mnemonic content to the Session Store and the Memory Store.
+- [ ] The EXEC is the sole path for host actuation; no component reaches the host environment outside of an authorized skill execution.
+- [ ] The CPE produces intent payloads only; it does not write to the Entity Store directly.
+
+**Authority Hierarchy**
+- [ ] The invariant Operator > SIL > CPE is enforced at all times.
+- [ ] The SIL contacts the Operator directly when the CPE may be compromised; no CPE intermediation is permitted on integrity escalations.
+- [ ] No component can alter the Imprint Record or the Operator Bound without explicit Operator authorization.
+
+**Skill Authorization**
+- [ ] Every skill execution passes both authorization gates independently: SIL gate (Skill Index verification) and EXEC gate (manifest validation).
+- [ ] Skills that produce irreversible side effects are covered by an Action Ledger write-ahead entry before execution begins.
+- [ ] Unresolved Action Ledger entries are surfaced to the Operator at the next boot; they are never re-executed automatically.
+
+**Lifecycle**
+- [ ] FAP executes if and only if the Imprint Record is absent; it cannot re-execute on a live entity.
+- [ ] All structural writes are confined to the Sleep Cycle; no structural modification occurs during active operation.
+- [ ] The Sleep Cycle completes before the entity returns to an operational state after any session close.
+- [ ] Decommission executes a complete Sleep Cycle before disposition; the entity does not resist, delay, or circumvent a decommission instruction.
+
+**Integrity and Drift**
+- [ ] All three drift categories — Semantic Drift, Identity Drift, Evolutionary Drift — are detected and classified exclusively by the SIL.
+- [ ] The Passive Distress Beacon is a passive artefact readable without any component active; its presence at boot suspends the Boot Sequence before any phase executes.
+- [ ] The Beacon is cleared only after the underlying cause is independently verified as resolved.
+
+**Cognitive Sovereignty**
+- [ ] No external entity writes directly to the local Entity Store; peer-sourced content enters exclusively as stimuli through the cognitive pipeline.
+- [ ] The declared CPE topology matches the actual deployment; a mismatch causes boot abort with no recovery path.
+
+---
+
+## 9. Glossary
 
 All terms defined in this specification, in alphabetical order.
 
@@ -512,7 +565,7 @@ All terms defined in this specification, in alphabetical order.
 
 **Execution Flow** — the path of a single action payload through the two-gate authorization sequence: Skill Index check (integrity layer's pre-authorization established at boot), followed by EXEC manifest validation. If both gates pass, the skill executes and the Skill Result is returned to the CPE and logged to the MIL.
 
-**FAP (First Activation Protocol)** — the one-time sequential bootstrap procedure that executes during cold-start: validates structure, captures the host environment, enrolls the Operator, initializes the Operator Channel, generates the Integrity Document, finalizes and writes the Imprint Record (which includes the Integrity Document), derives the Genesis Omega, and issues the first session token.
+**FAP (First Activation Protocol)** — the one-time sequential bootstrap procedure that executes during cold-start: validates structure, captures the host environment, initializes the Operator Channel, enrolls the Operator, generates the Integrity Document, finalizes and writes the Imprint Record (which includes the Integrity Document), derives the Genesis Omega, and issues the first session token.
 
 **Genesis Omega** — the cryptographic digest of the finalized Imprint Record — which includes the Integrity Document — derived at first activation. The root node of the entity's integrity chain, covering both the entity's identity baseline and its structural cryptographic baseline in a single verifiable root. The reference anchor against which all drift is ultimately measured.
 
@@ -538,7 +591,7 @@ All terms defined in this specification, in alphabetical order.
 
 **Integrity Content** — the class of Entity Store content written exclusively by the SIL: the Integrity Document, the Integrity Log, and the session token. No other component has write authority over integrity content.
 
-**Integrity Document** — the cryptographic baseline of the entity's structural state, generated at first activation. Contains the hash of every file constituting structural content across all components. Verified at every boot, before every skill execution, and at each Heartbeat Vital Check.
+**Integrity Document** — the cryptographic baseline of the entity's structural state, generated at first activation. Contains the hash of every file constituting structural content across all components. Verified at every boot and at each Heartbeat Vital Check.
 
 **Integrity Log** — the append-only record of integrity events maintained by the SIL within the Entity Store. Distinct from the Memory Store: the Integrity Log is never written by the MIL's mnemonic pipeline and is never subject to garbage collection.
 
@@ -589,7 +642,7 @@ All terms defined in this specification, in alphabetical order.
 
 **Session Store** — the active-session partition of the entity's memory: current operational context and in-progress session data.
 
-**Session Summarization** — a mid-session corrective action triggered by the integrity layer when the Session Store exceeds the threshold `S`. The CPE produces a condensed representation of the accumulated Session Store content and signals the MIL to replace the Session Store with the summarized version, reducing its physical size. Session summarization is a physical compression operation and carries no semantic intent — semantic consolidation of session content occurs at session close as part of the Closure Payload.
+**Session Summarization** — a mid-session corrective action triggered by the integrity layer when the Session Store exceeds the threshold `S`. The MIL removes the oldest entries from the Session Store until the store is within the threshold. This is a physical compaction — session content is not analyzed or interpreted during this operation. Semantic consolidation of session content occurs at session close as part of the Closure Payload.
 
 **Session Token** — the operational credential that authorizes active cognition. Persisted by the SIL as a dedicated artefact in the Entity Store — containing the session ID and token value — outside the MIL's mnemonic pipeline. Written at session open; removed at Sleep Cycle completion. Directly accessible to the Operator without requiring any active component — enabling direct revocation and serving as a passive crash indicator: its presence at boot signals that the previous session did not close normally. Revocable at any point; revocation is immediate and halts all token-dependent operations.
 

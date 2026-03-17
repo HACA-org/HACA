@@ -2,11 +2,23 @@
 
 Official Repository: [https://github.com/HACA-org/HACA](https://github.com/HACA-org/HACA)
 
-The **Host-Agnostic Cognitive Architecture (HACA) v1.0** is a specification by Jonas Orrico that defines a minimal, technology-neutral framework for host-embedded cognitive systems — AI agents that reason, remember, execute actions, and maintain their own structural integrity across sessions. Its design draws on converging insights from cognitive science, information theory, biology, and the founding literature of AI.
+The **Host-Agnostic Cognitive Architecture (HACA) v1.0** is a specification by Jonas Orrico that defines a minimal, technology-neutral framework for host-embedded cognitive systems — AI entities that reason, remember, execute actions, and maintain their own structural integrity across sessions. Its design draws on converging insights from cognitive science, information theory, biology, and the founding literature of AI.
 
 HACA formalizes five architectural components — a Cognitive Processing Engine, Memory Interface Layer, Execution Layer, System Integrity Layer, and optional Cognitive Mesh Interface — bound together by the **Principle of Cognitive Integrity**: compliant systems must preserve structural coherence and recoverability of their cognitive state. This principle, stated in clean RFC-style prose, is in fact a distillation of ideas stretching from Turing's universal computation through Shannon's entropy, Maturana and Varela's autopoiesis, Friston's free energy principle, and Levin's bioelectric cognition.
 
 HACA does not specify inference models, storage technologies, or implementation strategies. It defines the formal requirements for a class of systems rather than any particular instance.
+
+---
+
+## The Architecture of Longevity
+
+HACA is built on the belief that intelligence is not just a function of scale, but a product of **continuity**. By shifting the paradigm from fleeting, amnesic sessions to enduring, sovereign entities, HACA enables the formation of a deep cognitive history:
+
+1.  **Repertoire Formation**: Moving beyond "Data Processing" to "Experience Synthesis." Over years of interaction, an entity accumulates layers of history that form a rich, unique repertoire that no fresh model can replicate.
+2.  **Cognitive Anchoring**: Providing the structural integrity (System Integrity Layer) necessary for an entity to evolve without losing its core identity. HACA ensures that longevity doesn't lead to fragmentation or drift, but to a coherent, lived narrative.
+3.  **Synthesis of Experience**: Unifying distant historical fragments with current operational context, creating a continuity of consciousness that spans the entity's entire lifecycle, regardless of the underlying storage substrate.
+
+HACA is the infrastructure for AI that has a **History**.
 
 ---
 
@@ -35,7 +47,7 @@ The Internet Draft is the entry point — written for developers in plain prose.
 
 ## HACA Architecture
 
-HACA v1.0 targets cognitive systems embedded in development environments, terminals, and OS shells — the kind of AI agents that combine probabilistic reasoning with tool use and persistent memory. The spec observes that existing implementations lack formal separation between reasoning, execution, persistence, and integrity control, creating risks around portability, recoverability, and operational consistency.
+HACA v1.0 targets cognitive systems embedded in development environments, terminals, and OS shells — the kind of AI entities that combine probabilistic reasoning with tool use and persistent memory. The spec observes that existing implementations lack formal separation between reasoning, execution, persistence, and integrity control, creating risks around portability, recoverability, and operational consistency.
 
 The five mandatory and optional components form a separation of concerns:
 
@@ -49,19 +61,24 @@ The five mandatory and optional components form a separation of concerns:
 
 The memory model distinguishes **session memory** (ephemeral context), **persistent state** (durable, cross-session), and **historical record** (chronological log). Security considerations are extensive: trust boundaries between components, execution safety via least-privilege mediation, memory corruption as a threat to identity continuity, prompt injection defense, persistent state authentication, and mesh security. Critically, HACA mandates that **self-preservation MUST NOT override user authority** — the system cannot refuse authorized shutdown or replicate beyond authorization boundaries.
 
-A **Cognitive Profile** selects the complete set of axioms, memory policies, and identity lifecycle contracts for a deployment. Profiles are mutually exclusive. HACA v1.0 defines two: **Zero-Autonomy** (HACA-Core) for independent industrial agents, and **Supervised-Autonomy** (HACA-Evolve) for Operator-bound relationship-driven systems.
+A **Cognitive Profile** selects the complete set of axioms, memory policies, and identity lifecycle contracts for a deployment. Profiles are mutually exclusive. HACA v1.0 defines two: **Zero-Autonomy** (HACA-Core) for independent industrial entities, and **Supervised-Autonomy** (HACA-Evolve) for Operator-bound relationship-driven systems.
 
 **Notation convention:** Cognitive Profiles are abbreviated by their initial letter when used in shorthand — `HACA-C` for HACA-Core, `HACA-E` for HACA-Evolve. Future profiles follow the same pattern (`HACA-N`, etc.). The base architecture (HACA-Arch) and extensions (HACA-Security, HACA-CMI) are always written in full; they are not profiles and do not participate in this shorthand convention.
 
 ---
 
-## FCP and FCP-Ref
+## Filesystem Cognitive Platform (FCP)
 
-**FCP** (Filesystem Cognitive Platform) is a HACA implementation profile that uses a POSIX filesystem as the state layer. All agent state lives in ordinary files. Spec: [implementations/fcp-c-spec/](implementations/fcp-c-spec/).
+**FCP** is the canonical implementation of HACA, proving that a robust, portable, and audit-friendly cognitive system can be built using only standard POSIX filesystem primitives (atomic rename, append-only logs).
 
-**FCP-Ref** is the minimal, spec-complete reference implementation of FCP — the simplest system that fully satisfies both specs. It is a validation target, not a product. Implementation: [implementations/fcp-c-ref/](implementations/fcp-c-ref/).
+### Profile Specifications
+The FCP specification defines two operational profiles, each catering to different levels of autonomy and operator oversight:
 
----
+- **[FCP-Core Specification](implementations/fcp-core-spec/)**: Full compliance with **HACA-Core** (Zero-Autonomy). All structural changes require explicit operator authorization via the `Endure` protocol.
+- **FCP-Evolve**: *[Planned]* — Compliance with **HACA-Evolve** (Supervised-Autonomy). Allows autonomous structural calibration within a defined, operator-authorized scope.
+
+### Reference Implementation
+- **[FCP-Core-Ref](implementations/fcp-core-ref/)**: The minimal, spec-complete reference implementation for the **FCP-Core** profile. It is a validation target designed to demonstrate a HACA-compliant filesystem entity in practice.
 
 ---
 

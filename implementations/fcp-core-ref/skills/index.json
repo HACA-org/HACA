@@ -1,0 +1,66 @@
+{
+  "version": "1.0",
+  "skills": [
+    {
+      "name": "cmi_req",
+      "desc": "Read state from an active CMI channel. 'bb' returns all Blackboard entries; 'status' returns channel status and enrolled participants. Available during active and closing states. Closed channels return an error.",
+      "manifest": "skills/lib/cmi_req/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "cmi_send",
+      "desc": "Send a message to an active CMI channel. Routes through the local CMI endpoint declared in the structural baseline.",
+      "manifest": "skills/lib/cmi_send/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "commit",
+      "desc": "Commit a path within workspace_focus. Only git interface available to the CPE.",
+      "manifest": "skills/lib/commit/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "file_reader",
+      "desc": "Read a file within workspace/. Rejects any path outside workspace/.",
+      "manifest": "skills/lib/file_reader/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "file_writer",
+      "desc": "Write a file within workspace/. Rejects any path outside workspace/.",
+      "manifest": "skills/lib/file_writer/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "shell_run",
+      "desc": "Execute an allowed shell command within workspace_focus.",
+      "manifest": "skills/lib/shell_run/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "skill_audit",
+      "desc": "Validate a skill manifest, executable, and index consistency.",
+      "manifest": "skills/lib/skill_audit/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "skill_create",
+      "desc": "Scaffold a new skill in workspace/stage/<name>/ for installation via evolution_proposal.",
+      "manifest": "skills/lib/skill_create/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "web_fetch",
+      "desc": "Fetch the content of a URL and return it as text. Permitted URL prefixes declared as allowlist in this manifest.",
+      "manifest": "skills/lib/web_fetch/manifest.json",
+      "class": "builtin"
+    },
+    {
+      "name": "worker_skill",
+      "desc": "Text-only sub-agent for isolated analysis tasks (summarization, cross-reference, classification). No tool or filesystem access.",
+      "manifest": "skills/lib/worker_skill/manifest.json",
+      "class": "builtin"
+    }
+  ],
+  "aliases": {}
+}

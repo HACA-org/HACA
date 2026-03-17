@@ -1,0 +1,1 @@
+{"name": "ping", "description": "Responds with pong.", "aliases": ["/ping"], "permissions": [], "params": {}, "timeout_seconds": 10, "irreversible": false}
