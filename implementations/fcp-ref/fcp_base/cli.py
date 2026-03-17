@@ -709,24 +709,28 @@ def _run_init(fcp_ref_root: Path) -> None:
     dest_input = _ask("Path", str(Path.cwd()))
     entity_root = Path(dest_input).expanduser().resolve()
 
-    already_init = (
-        (entity_root / "fcp_base").exists()
-        or (entity_root / "state").exists()
-        or (entity_root / "memory").exists()
-    )
-    if already_init:
-        existing = [
-            d for d in ("fcp_base", "state", "memory")
-            if (entity_root / d).exists()
-        ]
-        print(f"\n  [!] {entity_root} already contains an entity")
-        print(f"      ({', '.join(existing + ['/']) if existing else ''} found).")
-        if not _confirm("Re-initialise? This will erase fcp_base/, state/, memory/ and io/"):
+    _ENTITY_MARKERS = ["fcp_base", "boot.md", "state", "memory", "skills", "hooks", "workspace", "fcp"]
+    existing_markers = [m for m in _ENTITY_MARKERS if (entity_root / m).exists()]
+    is_operational = len(existing_markers) == len(_ENTITY_MARKERS)
+    is_nonempty = len(existing_markers) > 0 or (entity_root.exists() and any(entity_root.iterdir()))
+
+    if is_operational:
+        print(f"\n  [!] An existing entity was found at {entity_root}.")
+        print(f"      Re-initialising will reset state/, memory/ and io/ (back to FAP).")
+        print(f"      fcp_base/, skills/, hooks/, boot.md and persona/ will be preserved.")
+        if not _confirm("Re-initialise?"):
             sys.exit(0)
-        for d in ["fcp_base", "state", "memory", "io"]:
+        for d in ["state", "memory", "io"]:
             p = entity_root / d
             if p.exists():
                 shutil.rmtree(p)
+    elif is_nonempty:
+        print(f"\n  [!] {entity_root} is not empty but does not look like a complete entity.")
+        missing = [m for m in _ENTITY_MARKERS if m not in existing_markers]
+        print(f"      Missing: {', '.join(missing)}")
+        print(f"      Continuing will write all entity files, overwriting any existing content.")
+        if not _confirm("Continue anyway?"):
+            sys.exit(0)
 
     # ── Step 2: Profile ─────────────────────────────────────────────────────
     _hr("2. Profile")
