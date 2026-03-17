@@ -696,7 +696,7 @@ def _dispatch_sil(
         if atype == "evolution_proposal":
             payload = {k: v for k, v in action.items() if k != "type"}
             content = json.dumps(payload)
-            _stage_evolution_proposal(layout, content)
+            proposal_file = _stage_evolution_proposal(layout, content)
             # Auto-approve for Evolve with autonomous_evolution=True
             try:
                 baseline = load_baseline(layout)
@@ -712,6 +712,7 @@ def _dispatch_sil(
                 auth_digest = _sha256_str(content)
                 _write_evolution_auth(layout, content, auth_digest)
                 _write_evolution_stimuli(layout, content, approved=True)
+                proposal_file.unlink(missing_ok=True)
                 _set_endure_approved(True)
                 results.append({"type": "evolution_proposal", "status": "auto_approved"})
                 session_closed = True
@@ -1039,7 +1040,7 @@ def _readline_with_history(prompt: str) -> str:
     return input(prompt)
 
 
-def _stage_evolution_proposal(layout: Layout, content: str) -> None:
+def _stage_evolution_proposal(layout: Layout, content: str) -> Path:
     ts = int(time.time() * 1000)
     envelope = acp_encode(
         env_type="MSG",
@@ -1050,6 +1051,7 @@ def _stage_evolution_proposal(layout: Layout, content: str) -> None:
     tmp = dest.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
     os.replace(tmp, dest)
+    return dest
 
 
 def _build_tools_index(layout: Layout, index: dict[str, Any]) -> str:
