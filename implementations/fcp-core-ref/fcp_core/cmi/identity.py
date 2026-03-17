@@ -70,7 +70,7 @@ def read_genesis_omega(layout: "Layout") -> str:
         if not line:
             continue
         entry = json.loads(line)
-        if entry.get("seq") == 1 and entry.get("type") == "GENESIS":
+        if entry.get("seq") == 1 and entry.get("type", "").upper() == "GENESIS":
             ih = entry.get("imprint_hash")
             if not ih:
                 raise RuntimeError("GENESIS entry has no imprint_hash")

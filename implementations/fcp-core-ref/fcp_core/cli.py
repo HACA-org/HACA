@@ -700,8 +700,24 @@ def _run_init(entity_root: Path) -> None:
         if api_key:
             _save_api_key(entity_root.name, env_var, api_key)
 
+    # optional CMI setup
+    cmi_cfg: dict = {}
+    try:
+        enable_cmi = input("Enable CMI? [y/N] ").strip().lower()
+    except EOFError:
+        enable_cmi = "n"
+    if enable_cmi == "y":
+        try:
+            cmi_host = input("CMI endpoint (e.g. localhost:7000): ").strip()
+        except EOFError:
+            cmi_host = ""
+        if cmi_host:
+            cmi_cfg = {"enabled": True, "host": cmi_host}
+        else:
+            print("  skipping CMI — no endpoint provided (activate later with /cmi start)")
+
     from .store import atomic_write
-    atomic_write(entity_root / "state" / "baseline.json", {
+    baseline: dict = {
         "version": "1.0.0",
         "entity_id": entity_root.name,
         "cpe": {"backend": backend, "model": model, "topology": "transparent"},
@@ -715,7 +731,18 @@ def _run_init(entity_root: Path) -> None:
         "integrity_chain": {"checkpoint_interval": 10},
         "pre_session_buffer": {"max_entries": 20},
         "operator_channel": {"notifications_dir": "state/operator_notifications"},
-    })
+    }
+    if cmi_cfg:
+        baseline["cmi"] = cmi_cfg
+    atomic_write(entity_root / "state" / "baseline.json", baseline)
+
+    if cmi_cfg:
+        from .cmi.identity import generate_cmi_credential
+        from .store import Layout
+        layout = Layout(entity_root)
+        layout.cmi_dir.mkdir(parents=True, exist_ok=True)
+        cred = generate_cmi_credential(layout)
+        print(f"  CMI credential generated — node: {cred['node_identity']}")
 
     atomic_write(entity_root / "state" / "integrity.json", {
         "version": "1.0", "algorithm": "sha256",

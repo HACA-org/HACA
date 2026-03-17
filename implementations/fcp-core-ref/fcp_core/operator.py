@@ -923,11 +923,17 @@ def _cmd_cmi(layout: Layout, args: list[str]) -> None:
     sub = args[0].lower()
     if sub == "status":
         _cmi_status(layout)
-    elif sub == "export":
+    elif sub == "start":
+        _cmi_start(layout)
+    elif sub == "stop":
+        _cmi_stop(layout)
+    elif sub == "token":
         _cmi_export(layout)
+    elif sub == "invite":
+        _cmi_contacts_add(layout)
     elif sub == "contacts":
         _cmi_contacts(layout, args[1:])
-    elif sub == "channel":
+    elif sub in ("chan", "channel"):
         _cmi_channel(layout, args[1:])
     elif sub == "bb" and len(args) > 1:
         _cmi_bb(layout, args[1])
@@ -936,7 +942,102 @@ def _cmd_cmi(layout: Layout, args: list[str]) -> None:
 
 
 def _cmi_usage() -> None:
-    print("  usage: /cmi status | export | contacts [list|add] | channel [list|open|close] <id> | bb <id>")
+    print("  usage: /cmi start | stop | status | token | invite | contacts [list|add|remove] | chan [list|open|close] | bb <id>")
+
+
+def _cmi_start(layout: Layout) -> None:
+    """Activate CMI: generate credential if needed, configure endpoint, trigger endure."""
+    import json as _json
+    from .cmi.identity import generate_cmi_credential, load_cmi_credential
+    from .store import read_json, atomic_write
+
+    cred = load_cmi_credential(layout)
+    if cred is None:
+        try:
+            cred = generate_cmi_credential(layout)
+            print(f"  credential generated — node: {cred['node_identity']}")
+        except RuntimeError as exc:
+            print(f"  error: {exc}")
+            return
+
+    baseline: dict = {}
+    if layout.baseline.exists():
+        try:
+            baseline = read_json(layout.baseline)
+        except Exception:
+            pass
+
+    cmi_cfg = baseline.get("cmi", {})
+    existing_host = cmi_cfg.get("host", "")
+    if existing_host:
+        try:
+            new_host = input(f"  CMI endpoint [{existing_host}]: ").strip()
+        except EOFError:
+            new_host = ""
+        host = new_host if new_host else existing_host
+    else:
+        try:
+            host = input("  CMI endpoint [localhost:7000]: ").strip()
+        except EOFError:
+            host = ""
+        if not host:
+            host = "localhost:7000"
+
+    # build proposal content — sleep cycle applies and covers in Integrity Document
+    credential_content = _json.dumps({
+        "node_identity": cred["node_identity"],
+        "privkey": cred["privkey"],
+        "pubkey": cred["pubkey"],
+        "created_at": cred["created_at"],
+    }, indent=2)
+    content = _json.dumps({
+        "changes": [
+            {
+                "op": "json_merge",
+                "target": "state/baseline.json",
+                "patch": {"cmi": {"enabled": True, "host": host}},
+            },
+            {
+                "op": "file_write",
+                "target": "state/cmi/credential.json",
+                "content": credential_content,
+            },
+        ]
+    })
+    auth_digest = _sha256_str(content)
+    _write_evolution_auth(layout, content, auth_digest)
+    set_endure_approved(True)
+    print("  CMI activation queued — session will close for Sleep Cycle and reboot")
+
+
+def _cmi_stop(layout: Layout) -> None:
+    """Deactivate CMI: set enabled=false in baseline, trigger endure."""
+    import json as _json
+    from .store import read_json
+
+    baseline: dict = {}
+    if layout.baseline.exists():
+        try:
+            baseline = read_json(layout.baseline)
+        except Exception:
+            pass
+    if not baseline.get("cmi", {}).get("enabled", False):
+        print("  CMI is already disabled")
+        return
+
+    content = _json.dumps({
+        "changes": [
+            {
+                "op": "json_merge",
+                "target": "state/baseline.json",
+                "patch": {"cmi": {"enabled": False}},
+            },
+        ]
+    })
+    auth_digest = _sha256_str(content)
+    _write_evolution_auth(layout, content, auth_digest)
+    set_endure_approved(True)
+    print("  CMI deactivation queued — session will close for Sleep Cycle and reboot")
 
 
 def _cmi_status(layout: Layout) -> None:
@@ -945,7 +1046,7 @@ def _cmi_status(layout: Layout) -> None:
     cred = load_cmi_credential(layout)
     if cred is None:
         print("  CMI not activated — no credential found")
-        print("  (enable CMI via evolution_proposal to generate credentials)")
+        print("  (run /cmi start to activate)")
         return
     print(f"  node identity : {cred['node_identity']}")
     baseline = {}
@@ -955,7 +1056,7 @@ def _cmi_status(layout: Layout) -> None:
         except Exception:
             pass
     cmi_cfg = baseline.get("cmi", {})
-    endpoint = cmi_cfg.get("endpoint", "(not configured)")
+    endpoint = cmi_cfg.get("host", "(not configured)")
     enabled = cmi_cfg.get("enabled", False)
     print(f"  endpoint      : {endpoint}")
     print(f"  enabled       : {enabled}")
@@ -1014,7 +1115,7 @@ def _cmi_export(layout: Layout) -> None:
     print()
     print(f"  {token}")
     print()
-    print("  peer adds it with: /cmi contacts add")
+    print("  peer adds it with: /cmi invite")
 
 
 def _cmi_contacts(layout: Layout, args: list[str]) -> None:
@@ -1023,8 +1124,10 @@ def _cmi_contacts(layout: Layout, args: list[str]) -> None:
         _cmi_contacts_list(layout)
     elif sub == "add":
         _cmi_contacts_add(layout)
+    elif sub == "remove" and len(args) > 1:
+        _cmi_contacts_remove(layout, args[1])
     else:
-        print("  usage: /cmi contacts [list|add]")
+        print("  usage: /cmi contacts [list|add|remove <node_id>]")
 
 
 def _cmi_contacts_list(layout: Layout) -> None:
@@ -1096,6 +1199,13 @@ def _cmi_contacts_add(layout: Layout) -> None:
         except Exception:
             pass
 
+    # Block self-add
+    from .cmi.identity import load_cmi_credential
+    own_cred = load_cmi_credential(layout)
+    if own_cred and contact["node_id"] == own_cred.get("node_identity"):
+        print("  error: cannot add own entity as contact")
+        return
+
     cmi_cfg = baseline.setdefault("cmi", {})
     contacts = cmi_cfg.setdefault("contacts", [])
 
@@ -1109,9 +1219,31 @@ def _cmi_contacts_add(layout: Layout) -> None:
     print(f"  contact added: {contact['label']}")
 
 
+def _cmi_contacts_remove(layout: Layout, node_id: str) -> None:
+    """Remove a contact by node_id (or label prefix) from baseline.cmi.contacts."""
+    baseline: dict = {}
+    if layout.baseline.exists():
+        try:
+            baseline = read_json(layout.baseline)
+        except Exception:
+            pass
+    cmi_cfg = baseline.get("cmi", {})
+    contacts = cmi_cfg.get("contacts", [])
+    # match by node_id or label
+    match = [c for c in contacts if c.get("node_id") == node_id or c.get("label") == node_id]
+    if not match:
+        print(f"  contact not found: {node_id}")
+        return
+    entry = match[0]
+    cmi_cfg["contacts"] = [c for c in contacts if c.get("node_id") != entry["node_id"]]
+    baseline["cmi"] = cmi_cfg
+    atomic_write(layout.baseline, baseline)
+    print(f"  contact removed: {entry.get('label', node_id)}")
+
+
 def _cmi_channel(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /cmi channel list | open [<id>] | close <id>")
+        print("  usage: /cmi chan list | open [<id>] | close <id>")
         return
     sub = args[0].lower()
     if sub == "list":
@@ -1122,7 +1254,7 @@ def _cmi_channel(layout: Layout, args: list[str]) -> None:
     elif sub == "close" and len(args) > 1:
         _cmi_channel_close(layout, args[1])
     else:
-        print("  usage: /cmi channel list | open [<id>] | close <id>")
+        print("  usage: /cmi chan list | open [<id>] | close <id>")
 
 
 def _cmi_channel_list(layout: Layout) -> None:
@@ -1135,8 +1267,7 @@ def _cmi_channel_list(layout: Layout) -> None:
             pass
     channels = baseline.get("cmi", {}).get("channels", [])
     if not channels:
-        print("  no channels configured")
-        print("  (declare channels via evolution_proposal)")
+        print("  no channels configured — use /cmi chan open to create one")
         return
     for ch in channels:
         cid = ch.get("id", "?")
@@ -1427,14 +1558,17 @@ def _cmd_help() -> None:
     /cron remove <id> [--all]    — remove task and unregister from host crontab
 
   CMI (Cognitive Mesh Interface):
+    /cmi start                   — activate CMI (generates credential, configures endpoint, triggers endure)
+    /cmi stop                    — deactivate CMI (preserves credential and contacts, triggers endure)
     /cmi status                  — node identity, endpoint, active channels
-    /cmi export                  — generate invite token to share with a peer Operator
-    /cmi contacts                — list trusted contacts
-    /cmi contacts add            — add a contact from a peer's invite token (interactive)
-    /cmi channel list            — list declared channels from baseline
-    /cmi channel open            — create and launch a new channel (interactive)
-    /cmi channel open <id>       — launch CMI process for an existing channel
-    /cmi channel close <id>      — signal close to an active channel
+    /cmi token                   — generate invite token to share with a peer Operator
+    /cmi invite                  — add a contact from a peer's invite token (interactive)
+    /cmi contacts list           — list trusted contacts
+    /cmi contacts remove <id>    — remove a contact by node_id or label
+    /cmi chan list                — list declared channels from baseline
+    /cmi chan open                — create and launch a new channel (interactive)
+    /cmi chan open <id>           — launch CMI process for an existing channel
+    /cmi chan close <id>          — signal close to an active channel
     /cmi bb <id>                 — display Blackboard contents for a channel
 
   Debug:
