@@ -1520,14 +1520,15 @@ def _cmd_help() -> None:
     print("""
   Platform commands:
 
-  Entity & session:
+  Session:
     /status                      — entity status overview
     /doctor [--fix]              — check and optionally repair integrity
+    /model [list]                — interactive model picker (active model highlighted)
     /exit | /bye | /close        — close session
     /new | /clear | /reset       — forced close + clean session restart
     /compact                     — compress session context without closing
 
-  Memory & inbox:
+  Memory:
     /memory [query]              — list memory store contents (episodic + semantic)
     /inbox list                  — list system notifications
     /inbox view <id>             — view notification by index
@@ -1540,17 +1541,19 @@ def _cmd_help() -> None:
     /work clone <repo>           — clone repo and set as workspace focus
     /work clear                  — unset workspace focus
 
-  Skills & execution:
+  Skills:
     /skill list                  — list installed skills
     /skill add                   — create new skill
+    /skill run <name>            — run a skill directly
     /skill audit <name>          — audit a skill
 
-  Model, endure & cron:
-    /model [list]                — interactive model picker (active model highlighted)
+  Evolution:
     /endure list                 — list pending Evolution Proposals
     /endure approve <id>         — approve proposal by index
     /endure reject <id>          — reject proposal by index
     /endure sync [--remote]      — commit entity root to version control
+
+  Agenda:
     /cron list                   — list scheduled tasks
     /cron add                    — create task interactively (Operator-initiated)
     /cron approve <id>           — approve pending task proposal; registers cron on host
