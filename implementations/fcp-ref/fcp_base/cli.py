@@ -634,27 +634,30 @@ def _save_api_key(entity_name: str, env_var: str, api_key: str) -> None:
     print(f"  API key saved to {env_file} (export {env_var} or source it before running ./fcp-core)")
 
 
-def _run_init(fcp_ref_root: Path) -> None:
-    """Interactive init — creates a new entity root from fcp-ref templates.
+def _read_fcp_version(fcp_ref_root: Path) -> str:
+    """Read FCP version from pyproject.toml in fcp_ref_root."""
+    try:
+        import re
+        text = (fcp_ref_root / "pyproject.toml").read_text(encoding="utf-8")
+        m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return "unknown"
 
-    Asks the operator for:
-      1. Destination path
-      2. Profile (haca-core or haca-evolve)
-      3. Evolve scope (if haca-evolve)
-      4. Dependencies check (placeholder)
-      5. CPE backend and model
-    Then copies a snapshot of fcp-ref structural content into the entity root
-    and creates all runtime directories.
-    """
+
+def _run_init(fcp_ref_root: Path) -> None:
+    """Interactive init — creates a new entity root from fcp-ref templates."""
     import json
     import shutil
 
-    W = 54
+    W = 60
 
     def _hr(label: str = "") -> None:
         if label:
             pad = W - len(label) - 4
-            print(f"\n  -- {label} {'-' * pad}")
+            print(f"\n  ── {label} {'─' * pad}")
         else:
             print(f"  {'─' * W}")
 
@@ -676,84 +679,111 @@ def _run_init(fcp_ref_root: Path) -> None:
             return default
         return val.startswith("y")
 
+    fcp_version = _read_fcp_version(fcp_ref_root)
+
     # ── Header ──────────────────────────────────────────────────────────────
     print()
     print(f"  {'─' * W}")
-    print(f"  FCP — First Cognitive Platform")
+    print(f"  FCP — Filesystem Cognitive Platform  v{fcp_version}")
     print(f"  Host-Agnostic Cognitive Architecture (HACA) v1.0")
     print(f"  {'─' * W}")
-    print(f"  This wizard will create a new persistent cognitive entity.")
+    print(f"  HACA is an open architecture specification for persistent")
+    print(f"  cognitive entities. FCP is a reference implementation.")
+    print()
+    print(f"  This software may contain errors. Contributions are welcome.")
+    print(f"  Report issues and security vulnerabilities at:")
+    print(f"  https://github.com/HACA-org/HACA")
+    print()
+    print(f"  Do not use in production without a prior security review.")
     print(f"  {'─' * W}")
     print()
+    if not _confirm("Continue?"):
+        sys.exit(0)
 
     # ── Step 1: Destination ─────────────────────────────────────────────────
     _hr("1. Entity destination")
+    print()
     print("  Where should the entity root be created?")
     print("  Leave blank to use the current directory.")
     print()
     dest_input = _ask("Path", str(Path.cwd()))
     entity_root = Path(dest_input).expanduser().resolve()
 
-    already_init = (entity_root / "state").exists() or (entity_root / "memory").exists()
+    already_init = (
+        (entity_root / "fcp_base").exists()
+        or (entity_root / "state").exists()
+        or (entity_root / "memory").exists()
+    )
     if already_init:
-        print(f"\n  [!] {entity_root} already contains an entity (state/ or memory/ exists).")
-        if not _confirm("Re-initialise? This will erase state/, memory/ and io/"):
+        existing = [
+            d for d in ("fcp_base", "state", "memory")
+            if (entity_root / d).exists()
+        ]
+        print(f"\n  [!] {entity_root} already contains an entity")
+        print(f"      ({', '.join(existing + ['/']) if existing else ''} found).")
+        if not _confirm("Re-initialise? This will erase fcp_base/, state/, memory/ and io/"):
             sys.exit(0)
-        for d in ["state", "memory", "io"]:
+        for d in ["fcp_base", "state", "memory", "io"]:
             p = entity_root / d
             if p.exists():
                 shutil.rmtree(p)
 
     # ── Step 2: Profile ─────────────────────────────────────────────────────
     _hr("2. Profile")
-    print("  Choose a profile for this entity:\n")
-    print("  1. HACA-Core — Zero-autonomy")
-    print("     Every structural change and evolution requires explicit Operator")
-    print("     approval. Designed for enterprise and adversarial environments.")
     print()
-    print("  2. HACA-Evolve — Supervised autonomy")
-    print("     The entity acts and evolves independently within a declared scope,")
-    print("     under Operator supervision. Designed for long-term assistants")
-    print("     and companions.")
+    print("  HACA-Core — Zero-autonomy")
+    print("    Every structural change and evolution requires explicit Operator")
+    print("    approval. Designed for enterprise and adversarial environments.")
     print()
-    profile_input = _ask("Profile [1/2]", "1")
-    if profile_input not in ("1", "2"):
-        print("  [ERROR] Invalid choice.")
-        sys.exit(1)
-    profile = "haca-core" if profile_input == "1" else "haca-evolve"
-    print(f"\n  Selected: {profile}")
+    print("  HACA-Evolve — Supervised autonomy")
+    print("    The entity acts and evolves independently within a declared scope,")
+    print("    under Operator supervision. Designed for long-term assistants")
+    print("    and companions.")
+    print()
+    profile_items = [
+        "HACA-Core   — Zero-autonomy",
+        "HACA-Evolve — Supervised autonomy",
+    ]
+    profile_choice = _pick_from_list("Profile", profile_items, default_idx=0)
+    profile = "haca-core" if profile_items.index(profile_choice) == 0 else "haca-evolve"
+    haca_profile = "HACA-Core-1.0.0" if profile == "haca-core" else "HACA-Evolve-1.0.0"
 
     # ── Step 3: Evolve scope (only for haca-evolve) ─────────────────────────
     evolve_scope: dict = {}
     if profile == "haca-evolve":
         _hr("3. Autonomous scope")
+        print()
         print("  Define what this entity is authorised to do autonomously.")
-        print("  These permissions can be revoked by re-initialising.\n")
+        print("  These permissions can be revoked by re-initialising.")
+        print()
 
         print("  [1] Autonomous structural evolution")
         print("      The entity may modify its own entity root freely, including")
         print("      its own code. WARNING: this grants unrestricted write access")
         print("      to the entire entity root.")
-        allow_evolution = _confirm("  Authorise autonomous structural evolution?")
+        allow_evolution = _confirm("      Authorise?")
 
         print()
         print("  [2] Autonomous skill creation and installation")
         print("      The entity may create and install new skills without approval.")
         print("      WARNING: skills run as Python code with full access to the")
         print("      entity root. Only enable if you trust the entity's judgment.")
-        allow_skills = _confirm("  Authorise autonomous skill creation and installation?")
+        allow_skills = _confirm("      Authorise?")
 
         print()
         print("  [3] Cognitive Mesh Interface (CMI) access")
         print("      The entity may connect to other entities via CMI channels.")
         print("      WARNING: CMI allows the entity to send and receive messages")
         print("      from other entities. Ensure you trust the mesh you join.")
-        print("      1. Private channels only")
-        print("      2. Public channels only")
-        print("      3. Both private and public")
-        print("      0. No CMI access")
-        cmi_input = _ask("  CMI access [0/1/2/3]", "0")
-        cmi_scope = {"0": "none", "1": "private", "2": "public", "3": "both"}.get(cmi_input, "none")
+        print()
+        cmi_items = [
+            "none    — No CMI access",
+            "private — Private channels only",
+            "public  — Public channels only",
+            "both    — Private and public channels",
+        ]
+        cmi_choice = _pick_from_list("      CMI access", cmi_items, default_idx=0)
+        cmi_scope = cmi_choice.split()[0]
 
         print()
         print("  [4] Operator memory")
@@ -762,15 +792,14 @@ def _run_init(fcp_ref_root: Path) -> None:
         print("      tokens, passwords). NOTE: you are also responsible for not")
         print("      sharing secrets directly in conversation — the entity cannot")
         print("      protect what it never receives.")
-        allow_memory = _confirm("  Authorise saving your preferences and information?")
+        allow_memory = _confirm("      Authorise?")
 
         print()
         print("  [5] Scope renewal interval")
         print("      These authorisations will expire and the entity will pause")
-        print("      until you renew them. How many days between renewals?")
-        print("      Enter 0 to disable expiry.")
+        print("      until you renew them. Enter 0 to disable expiry.")
         while True:
-            renewal_input = _ask("  Renewal interval in days", "30")
+            renewal_input = _ask("      Renewal interval in days", "30")
             try:
                 renewal_days = int(renewal_input)
                 if renewal_days >= 0:
@@ -789,23 +818,26 @@ def _run_init(fcp_ref_root: Path) -> None:
 
     # ── Step 4: Dependencies ─────────────────────────────────────────────────
     _hr("4. Dependencies")
+    print()
     import sys as _sys
     py_ver = _sys.version_info
     py_ok = py_ver >= (3, 10)
     py_str = f"{py_ver.major}.{py_ver.minor}.{py_ver.micro}"
-    print(f"  python3 >= 3.10    {'✓ ' + py_str if py_ok else '✗ ' + py_str + ' — REQUIRED'}")
+    print(f"  Required:")
+    print(f"    python >= 3.10    {'✓ ' + py_str if py_ok else '✗ ' + py_str + ' — REQUIRED'}")
     if not py_ok:
         print("\n  [ERROR] Python 3.10 or higher is required.")
         sys.exit(1)
     print()
-    print("  Optional dependencies (not yet available — coming in a future release):")
-    print("  rich       — enhanced terminal formatting")
-    print("  textual    — interactive TUI (web panel, session dashboard)")
+    print(f"  Optional (not yet available — coming in a future release):")
+    print(f"    rich              — enhanced terminal formatting")
+    print(f"    textual           — interactive TUI (web panel, session dashboard)")
 
     # ── Step 5: CPE backend and model ────────────────────────────────────────
     _hr("5. CPE backend and model")
+    print()
     from .cpe.base import BACKENDS, KNOWN_MODELS, fetch_ollama_models
-    backend = _pick_from_list("CPE backend", BACKENDS)
+    backend = _pick_from_list("Backend", BACKENDS)
 
     api_key_saved: str | None = None
     if backend == "ollama":
@@ -828,6 +860,7 @@ def _run_init(fcp_ref_root: Path) -> None:
 
     # ── Step 6: Copy snapshot and create runtime dirs ────────────────────────
     _hr("6. Creating entity")
+    print()
     entity_root.mkdir(parents=True, exist_ok=True)
 
     profile_dir = fcp_ref_root / ("fcp-core" if profile == "haca-core" else "fcp-evolve")
@@ -874,6 +907,9 @@ def _run_init(fcp_ref_root: Path) -> None:
     defaults_path = profile_dir / "defaults" / "baseline.json"
     baseline = read_json(defaults_path) if defaults_path.exists() else {}
     baseline["entity_id"] = entity_root.name
+    baseline["fcp_version"] = fcp_version
+    baseline["haca_version"] = "1.0.0"
+    baseline["haca_profile"] = haca_profile
     baseline["cpe"] = {"backend": backend, "model": model, "topology": "transparent"}
     if profile == "haca-evolve":
         baseline["evolve"] = {"scope": evolve_scope}
@@ -896,11 +932,12 @@ def _run_init(fcp_ref_root: Path) -> None:
     print(f"  {'─' * W}")
     print(f"  Entity created successfully")
     print(f"  {'─' * W}")
-    print(f"  path:      {entity_root}")
-    print(f"  profile:   {profile}")
-    print(f"  backend:   {backend} / {model}")
+    print(f"  path:         {entity_root}")
+    print(f"  profile:      {haca_profile}")
+    print(f"  fcp version:  v{fcp_version}")
+    print(f"  backend:      {backend} / {model}")
     if api_key_saved:
-        print(f"  api key:   saved ({api_key_saved})")
+        print(f"  api key:      saved ({api_key_saved})")
     if profile == "haca-evolve":
         print(f"  scope:")
         print(f"    autonomous evolution:  {'yes' if evolve_scope['autonomous_evolution'] else 'no'}")
@@ -911,9 +948,9 @@ def _run_init(fcp_ref_root: Path) -> None:
         print(f"    renewal:               {'every ' + str(renewal) + ' days' if renewal > 0 else 'disabled'}")
     print(f"  {'─' * W}")
     print(f"  dependencies:")
-    print(f"    python3 {py_str}    ✓")
-    print(f"    rich               — not installed (optional)")
-    print(f"    textual            — not installed (optional)")
+    print(f"    python {py_str}          ✓")
+    print(f"    rich                   — not installed (optional)")
+    print(f"    textual                — not installed (optional)")
     print(f"  {'─' * W}")
     print()
     print(f"  First boot will run FAP (First Activation Protocol).")
