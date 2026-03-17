@@ -93,9 +93,11 @@ def run_session(
     # Vital Check state — triggers on cycle_threshold or interval_seconds
     _baseline = None
     _vital_state = None
+    _ctx_window = 0
     try:
         from .formats import StructuralBaseline
         _baseline = StructuralBaseline.from_dict(read_json(layout.baseline))
+        _ctx_window = _baseline.context_window_budget_tokens
         _session_id = ""
         if layout.session_token.exists():
             _session_id = str(read_json(layout.session_token).get("session_id", ""))
@@ -194,7 +196,7 @@ def run_session(
         if response.text:
             _append_msg(layout, "cpe", response.text)
             _model_label = getattr(adapter_ref.current, "_model", "")
-            _print_cpe_block(response.text, _model_label)
+            _print_cpe_block(response.text, _model_label, response.input_tokens, response.output_tokens, _ctx_window)
             chat_history.append({"role": "assistant", "content": response.text})
         if response.tool_use_calls and not response.text:
             # assistant turn with tool use only — needs empty content tracked
@@ -913,13 +915,24 @@ _GRAY = "\x1b[90m"
 _WIDTH = 50
 
 
-def _print_cpe_block(text: str, model: str = "") -> None:
+def _print_cpe_block(
+    text: str,
+    model: str = "",
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    ctx_window: int = 0,
+) -> None:
     """Print a CPE response with top and bottom separator lines."""
     label = f"CPE:{model}" if model else "CPE"
     border = "─" * max(0, _WIDTH - len(label) - 3)
     print(f"\n{_GRAY}─── {label} {border}{_RESET}")
     print(text)
-    print(f"{_GRAY}{'─' * _WIDTH}{_RESET}")
+    stats = f"{input_tokens:,} ↑ / {output_tokens:,} ↓"
+    if ctx_window:
+        pct = round(input_tokens / ctx_window * 100, 1)
+        stats += f" | ctx: {pct}%"
+    footer_border = "─" * max(0, _WIDTH - len(stats) - 3)
+    print(f"{_GRAY}─── {stats} {footer_border}{_RESET}")
 
 
 
