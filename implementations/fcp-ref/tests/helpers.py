@@ -42,7 +42,7 @@ def make_layout() -> tuple[Layout, Path]:
     baseline: dict[str, Any] = {
         "version": "1.0.0",
         "entity_id": "test-entity",
-        "profile": "HACA-Core",
+        "profile": "haca-core",
         "cpe": {"backend": "ollama", "model": "llama3.2", "topology": "transparent"},
         "context_window": {"budget_tokens": 200000, "critical_pct": 80},
         "context_budget": {"session_critical_threshold": 100000},
@@ -101,6 +101,27 @@ def make_layout() -> tuple[Layout, Path]:
     # empty working memory
     _atomic_write(tmp / "memory" / "working-memory.json", {"entries": []})
 
+    return layout, tmp
+
+
+def make_evolve_layout(scope: dict[str, Any] | None = None) -> tuple[Layout, Path]:
+    """Create a temp dir with a HACA-Evolve entity structure. Returns (layout, tmpdir)."""
+    layout, tmp = make_layout()
+    evolve_scope = scope or {
+        "autonomous_evolution": True,
+        "autonomous_skills": True,
+        "cmi_access": "both",
+        "operator_memory": True,
+        "renewal_days": 30,
+    }
+    baseline_path = tmp / "state" / "baseline.json"
+    with open(baseline_path, encoding="utf-8") as f:
+        import json as _json
+        baseline = _json.load(f)
+    baseline["profile"] = "haca-evolve"
+    baseline["drift"] = {"comparison_mechanism": "hash", "threshold": 0.15}
+    baseline["evolve"] = {"scope": evolve_scope}
+    _atomic_write(baseline_path, baseline)
     return layout, tmp
 
 
