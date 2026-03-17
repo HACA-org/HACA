@@ -1521,69 +1521,69 @@ def _cmd_help() -> None:
   Platform commands:
 
   Session:
-    /status                      — entity status overview
-    /doctor [--fix]              — check and optionally repair integrity
-    /model [list]                — interactive model picker (active model highlighted)
-    /exit | /bye | /close        — close session
-    /new | /clear | /reset       — forced close + clean session restart
-    /compact                     — compress session context without closing
+    /status                   — entity status overview
+    /model [list]             — interactive model picker (active model highlighted)
+    /exit | /bye | /close     — close session
+    /new | /clear | /reset    — forced close + clean session restart
+    /compact                  — compress session context without closing
 
   Memory:
-    /memory [query]              — list memory store contents (episodic + semantic)
-    /inbox list                  — list system notifications
-    /inbox view <id>             — view notification by index
-    /inbox dismiss <id>          — remove notification by index
-    /inbox clear                 — remove all notifications
+    /memory [query]           — list memory store contents (episodic + semantic)
+    /inbox list               — list system notifications
+    /inbox view <id>          — view notification by index
+    /inbox dismiss <id>       — remove notification by index
+    /inbox clear              — remove all notifications
 
   Workspace:
-    /work status                 — show active workspace focus
-    /work set <subdir>           — set workspace focus
-    /work clone <repo>           — clone repo and set as workspace focus
-    /work clear                  — unset workspace focus
+    /work status              — show active workspace focus
+    /work set <subdir>        — set workspace focus
+    /work clone <repo>        — clone repo and set as workspace focus
+    /work clear               — unset workspace focus
 
   Skills:
-    /skill list                  — list installed skills
-    /skill add                   — create new skill
-    /skill run <name>            — run a skill directly
-    /skill audit <name>          — audit a skill
+    /skill list               — list installed skills
+    /skill add                — create new skill
+    /skill run <name>         — run a skill directly
+    /skill audit <name>       — audit a skill
 
   Evolution:
-    /endure list                 — list pending Evolution Proposals
-    /endure approve <id>         — approve proposal by index
-    /endure reject <id>          — reject proposal by index
-    /endure sync [--remote]      — commit entity root to version control
+    /endure list              — list pending Evolution Proposals
+    /endure approve <id>      — approve proposal by index
+    /endure reject <id>       — reject proposal by index
+    /endure sync [--remote]   — commit entity root to version control
 
   Agenda:
-    /cron list                   — list scheduled tasks
-    /cron add                    — create task interactively (Operator-initiated)
-    /cron approve <id>           — approve pending task proposal; registers cron on host
-    /cron reject <id>            — reject pending task proposal
-    /cron remove <id> [--all]    — remove task and unregister from host crontab
+    /cron list                — list scheduled tasks
+    /cron add                 — create task interactively (Operator-initiated)
+    /cron approve <id>        — approve pending task proposal; registers cron on host
+    /cron reject <id>         — reject pending task proposal
+    /cron remove <id> [--all] — remove task and unregister from host crontab
 
   CMI (Cognitive Mesh Interface):
-    /cmi start                   — activate CMI (generates credential, configures endpoint, triggers endure)
-    /cmi stop                    — deactivate CMI (preserves credential and contacts, triggers endure)
-    /cmi status                  — node identity, endpoint, active channels
-    /cmi token                   — generate invite token to share with a peer Operator
-    /cmi invite                  — add a contact from a peer's invite token (interactive)
-    /cmi contacts list           — list trusted contacts
-    /cmi contacts remove <id>    — remove a contact by node_id or label
-    /cmi chan list                — list declared channels from baseline
-    /cmi chan open                — create and launch a new channel (interactive)
-    /cmi chan open <id>           — launch CMI process for an existing channel
-    /cmi chan close <id>          — signal close to an active channel
-    /cmi bb <id>                 — display Blackboard contents for a channel
+    /cmi start                — activate CMI (generates credential, configures endpoint, triggers endure)
+    /cmi stop                 — deactivate CMI (preserves credential and contacts, triggers endure)
+    /cmi status               — node identity, endpoint, active channels
+    /cmi token                — generate invite token to share with a peer Operator
+    /cmi invite               — add a contact from a peer's invite token (interactive)
+    /cmi contacts list        — list trusted contacts
+    /cmi contacts remove <id> — remove a contact by node_id or label
+    /cmi chan list             — list declared channels from baseline
+    /cmi chan open             — create and launch a new channel (interactive)
+    /cmi chan open <id>        — launch CMI process for an existing channel
+    /cmi chan close <id>       — signal close to an active channel
+    /cmi bb <id>               — display Blackboard contents for a channel
 
   Debug:
-    /verbose [--off]             — enable component message summary (--off to disable)
+    /doctor [--fix]           — check and optionally repair integrity
+    /verbose [--off]          — enable component message summary (--off to disable)
     /debugger [--all|--chat|--boot|--off]
-                                 — inspect CPE context (disables verbose)
-                                   --all:  full context (default)
-                                   --chat: session history only
-                                   --boot: system + instruction block only
-                                   --off:  disable debugger
+                              — inspect CPE context (disables verbose)
+                                --all:  full context (default)
+                                --chat: session history only
+                                --boot: system + instruction block only
+                                --off:  disable debugger
 
-    /help                        — this message
+    /help                     — this message
 """)
 
 
