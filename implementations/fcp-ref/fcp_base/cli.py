@@ -841,18 +841,18 @@ def _run_init(fcp_ref_root: Path) -> None:
     _hr("5. CPE backend and model")
     print()
     from .cpe.base import BACKENDS, KNOWN_MODELS, fetch_ollama_models
-    backend = _pick_from_list("Backend", BACKENDS)
+    backend = _pick_from_list("Backend", BACKENDS, indent="  ")
 
     api_key_saved: str | None = None
     if backend == "ollama":
         ollama_models = fetch_ollama_models()
         if ollama_models:
-            model = _pick_from_list("Model", ollama_models)
+            model = _pick_from_list("Model", ollama_models, indent="  ")
         else:
             model = _ask("Model", "llama3.2")
     else:
         model_list = KNOWN_MODELS[backend]
-        model = _pick_from_list("Model", model_list)
+        model = _pick_from_list("Model", model_list, indent="  ")
         env_var = _API_KEY_ENV[backend]
         try:
             api_key = input(f"  {env_var}: ").strip()
