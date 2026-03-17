@@ -1,0 +1,53 @@
+{
+  "version": "1.0.0",
+  "entity_id": null,
+  "profile": "haca-evolve",
+  "cpe": {
+    "backend": null,
+    "model": null,
+    "topology": "transparent"
+  },
+  "context_window": {
+    "budget_tokens": 200000,
+    "critical_pct": 80
+  },
+  "drift": {
+    "comparison_mechanism": "hash",
+    "threshold": 0.15
+  },
+  "session_store": {
+    "rotation_threshold_bytes": 1000000
+  },
+  "working_memory": {
+    "max_entries": 50
+  },
+  "heartbeat": {
+    "interval_seconds": 30,
+    "cycle_threshold": 10
+  },
+  "watchdog": {
+    "sil_threshold_seconds": 25
+  },
+  "fault": {
+    "n_retry": 3,
+    "n_boot": 3,
+    "n_channel": 3,
+    "max_cycles": 50
+  },
+  "integrity_chain": {
+    "checkpoint_interval": 10
+  },
+  "pre_session_buffer": {
+    "max_entries": 20
+  },
+  "operator_channel": {
+    "notifications_dir": "state/operator_notifications"
+  },
+  "cmi": {
+    "enabled": false,
+    "host": "localhost:7000"
+  },
+  "evolve": {
+    "scope": []
+  }
+}
