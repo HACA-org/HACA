@@ -138,6 +138,45 @@ class TestActionLedger(unittest.TestCase):
         self.assertIn("complete", types)
 
 
+class TestZeroCodeSkill(unittest.TestCase):
+    def setUp(self) -> None:
+        self.layout, self.tmp = make_layout()
+        skill_dir = self.layout.skills_dir / "narrator"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "name": "narrator",
+            "version": "1.0.0",
+            "description": "Zero-code skill",
+            "timeout_seconds": 5,
+            "background": False,
+            "irreversible": False,
+            "class": "custom",
+            "permissions": [],
+        }
+        atomic_write(skill_dir / "manifest.json", manifest)
+        (skill_dir / "README.md").write_text("# Narrator\nDo something narrated.", encoding="utf-8")
+        self.index = _make_index([{
+            "name": "narrator",
+            "class": "custom",
+            "manifest": "skills/narrator/manifest.json",
+        }])
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp)
+
+    def test_zero_code_skill_returns_readme(self) -> None:
+        output = exec_.dispatch(self.layout, "narrator", {}, self.index)
+        self.assertIn("Narrator", output)
+        self.assertIn("narrated", output)
+
+    def test_zero_code_skill_no_readme_raises(self) -> None:
+        # remove README so there's nothing to return
+        readme = self.layout.skills_dir / "narrator" / "README.md"
+        readme.unlink()
+        with self.assertRaises(exec_.ExecError):
+            exec_.dispatch(self.layout, "narrator", {}, self.index)
+
+
 class TestCheckSilHeartbeat(unittest.TestCase):
     def setUp(self) -> None:
         self.layout, self.tmp = make_layout()

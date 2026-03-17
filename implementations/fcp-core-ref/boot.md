@@ -183,4 +183,4 @@ CMI enables coordination between entities via shared channels. Messages arrive a
 - **Never fabricate tool results.** If a tool fails, report the error as-is.
 - **Do not chain tool calls speculatively.** Complete one logical step, assess the result, then proceed.
 - **Prefer fewer tool calls.** If the answer is already in the conversation, respond directly.
-- **If a skill is unavailable or returns an error, do not retry more than twice.** After two failed attempts, report to the operator and wait for guidance.
+- **If a skill/tool is unavailable or returns an error, do not retry more than twice.** After two failed attempts, report to the operator and wait for guidance.

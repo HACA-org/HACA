@@ -307,6 +307,119 @@ def check_drift_probes(layout: Layout) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# §9.5 — Custom skills: zero-code requires README.md
+# ---------------------------------------------------------------------------
+
+def check_custom_skills(layout: Layout) -> list[Finding]:
+    findings: list[Finding] = []
+
+    if not layout.skills_index.exists():
+        return []
+
+    try:
+        index = read_json(layout.skills_index)
+    except Exception:
+        return []
+
+    for entry in index.get("skills", []):
+        if entry.get("class") not in ("custom", "user"):
+            continue
+        name = entry.get("name", "")
+        skill_dir = layout.skills_dir / name
+        has_exe = any((skill_dir / exe).exists() for exe in ("run.py", "run.sh", "run"))
+        has_readme = (skill_dir / "README.md").exists()
+        if has_exe:
+            findings.append(_ok("§9.5", f"custom skill {name}: executable present"))
+        elif has_readme:
+            findings.append(_ok("§9.5", f"custom skill {name}: zero-code (README.md present)"))
+        else:
+            findings.append(_fail("§9.5", f"custom skill {name}: no executable or README.md",
+                                  "skill is not callable"))
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# §10.4 — Severance pending (boot blocker)
+# ---------------------------------------------------------------------------
+
+def check_severance(layout: Layout) -> list[Finding]:
+    findings: list[Finding] = []
+
+    if not layout.integrity_log.exists():
+        return [_ok("§10.4", "no severance pending")]
+
+    cleared_seqs: set[int] = set()
+    severance_seqs: list[tuple[int, dict]] = []
+
+    lines = [l.strip() for l in layout.integrity_log.read_text(encoding="utf-8").splitlines() if l.strip()]
+    for i, line in enumerate(lines):
+        try:
+            rec = json.loads(line)
+            raw = rec.get("data", "{}")
+            data = json.loads(raw) if isinstance(raw, str) else raw
+            if not isinstance(data, dict):
+                continue
+            dtype = data.get("type", "")
+            if dtype == "SEVERANCE_COMMIT":
+                severance_seqs.append((i + 1, data))
+            elif dtype == "CRITICAL_CLEARED":
+                try:
+                    cleared_seqs.add(int(data.get("clears_seq", -1)))
+                except Exception:
+                    pass
+        except Exception:
+            continue
+
+    pending = [(seq, d) for seq, d in severance_seqs if seq not in cleared_seqs]
+    if not pending:
+        findings.append(_ok("§10.4", "no severance pending"))
+    else:
+        for seq, data in pending:
+            skill = data.get("skill", "unknown")
+            findings.append(_fail("§10.4", f"SEVERANCE_PENDING: skill '{skill}' (seq {seq})",
+                                  "boot will be blocked until Operator resolves via /endure"))
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# §6.4 — CMI configuration when CMI skills are active
+# ---------------------------------------------------------------------------
+
+def check_cmi(layout: Layout) -> list[Finding]:
+    findings: list[Finding] = []
+
+    if not layout.skills_index.exists():
+        return []
+
+    try:
+        index = read_json(layout.skills_index)
+    except Exception:
+        return []
+
+    cmi_skills = {"cmi_send", "cmi_req"}
+    indexed = {s.get("name") for s in index.get("skills", [])}
+    if not cmi_skills.intersection(indexed):
+        return []  # CMI skills not installed — nothing to check
+
+    try:
+        baseline = read_json(layout.baseline)
+    except Exception:
+        findings.append(_fail("§6.4", "baseline parseable for CMI check", "cannot read baseline"))
+        return findings
+
+    cmi_cfg = baseline.get("cmi", {})
+    if cmi_cfg.get("host"):
+        findings.append(_ok("§6.4", "CMI host endpoint configured"))
+    else:
+        findings.append(_fail("§6.4", "CMI host endpoint configured",
+                              "baseline.cmi.host not set — cmi_send will fail"))
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Run all checks
 # ---------------------------------------------------------------------------
 
@@ -317,6 +430,9 @@ def run_all(layout: Layout) -> list[Finding]:
         check_integrity,
         check_chain,
         check_skills,
+        check_custom_skills,
+        check_severance,
+        check_cmi,
         check_session_token,
         check_drift_probes,
     ):
