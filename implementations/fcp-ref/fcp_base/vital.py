@@ -212,6 +212,12 @@ def _check_skill_audit(layout: Layout) -> None:
 # ---------------------------------------------------------------------------
 
 def _check_identity_drift(layout: Layout) -> list[str]:
+    """Check persona files against Integrity Document.
+
+    HACA-Core: any drift → IDENTITY_DRIFT Critical immediately.
+    HACA-Evolve: drift → IDENTITY_DEGRADED warning; if a prior IDENTITY_DEGRADED
+                 was already recorded this session, escalate to Critical.
+    """
     if not layout.integrity_doc.exists():
         return []
     try:
@@ -230,19 +236,51 @@ def _check_identity_drift(layout: Layout) -> list[str]:
         rel = str(persona_file.relative_to(layout.root))
         expected = tracked.get(rel)
         if expected is None:
-            continue  # not tracked — skip
+            continue
         actual = _sha256_file(persona_file)
         if actual != expected:
             drifted.append(rel)
 
-    if drifted:
-        detail = {"drifted_files": drifted}
+    if not drifted:
+        return []
+
+    detail = {"drifted_files": drifted}
+
+    # Check profile
+    baseline_raw: dict = {}
+    try:
+        baseline_raw = read_json(layout.baseline)
+    except Exception:
+        pass
+    profile = baseline_raw.get("profile", "haca-core")
+
+    if profile == "haca-evolve":
+        # Check if IDENTITY_DEGRADED was already emitted — escalate if so
+        degraded_sentinel = layout.root / "state" / "sentinels" / "identity_degraded"
+        if degraded_sentinel.exists():
+            # Already degraded — escalate to Critical
+            degraded_sentinel.unlink(missing_ok=True)
+            log_critical(layout, "IDENTITY_DRIFT", detail)
+            write_notification(layout, "critical", {
+                "type": "IDENTITY_DRIFT",
+                "detail": detail,
+            })
+            return ["identity_drift"]
+        else:
+            # First occurrence — Degraded warning, set sentinel
+            degraded_sentinel.touch()
+            write_notification(layout, "warning", {
+                "type": "IDENTITY_DEGRADED",
+                "detail": detail,
+            })
+            return ["identity_degraded"]
+    else:
+        # HACA-Core: zero tolerance
         log_critical(layout, "IDENTITY_DRIFT", detail)
         write_notification(layout, "critical", {
             "type": "IDENTITY_DRIFT",
             "detail": detail,
         })
         return ["identity_drift"]
-    return []
 
 

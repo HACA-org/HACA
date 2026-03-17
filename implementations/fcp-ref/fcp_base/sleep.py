@@ -85,9 +85,19 @@ def run_sleep_cycle(layout: Layout) -> None:
 # ---------------------------------------------------------------------------
 
 def _stage0_drift(layout: Layout) -> bool:
-    """Run drift probes. Returns True if a DRIFT_FAULT was raised."""
+    """Run drift probes. Returns True if a DRIFT_FAULT was raised.
+
+    HACA-Core: any probe failure → DRIFT_FAULT (zero tolerance).
+    HACA-Evolve: probe failure only → DRIFT_FAULT if drift.threshold == 0.0;
+                 otherwise logs a warning and continues without raising a fault.
+    """
     if not layout.drift_probes.exists():
         return False
+
+    baseline = load_baseline(layout)
+    baseline_raw = read_json(layout.baseline) if layout.baseline.exists() else {}
+    profile = baseline_raw.get("profile", "haca-core")
+    drift_threshold = float(baseline_raw.get("drift", {}).get("threshold", 0.0))
 
     probes = read_jsonl(layout.drift_probes)
     fault = False
@@ -103,15 +113,23 @@ def _stage0_drift(layout: Layout) -> bool:
 
         result = _run_probe(target, reference, probe_type, layout)
         if not result:
-            fault = True
-            _write_drift_fault(layout, target_rel)
-            from .hooks import run_hook
-            run_hook(layout, "on_drift_fault", {
-                "target": target_rel,
-                "probe_type": probe_type,
-                "reference": reference,
-            })
-            break
+            if profile == "haca-evolve" and drift_threshold > 0.0:
+                # Evolve with non-zero threshold: warn but do not raise fault
+                from .sil import write_notification
+                write_notification(layout, "warning", {
+                    "type": "SEMANTIC_DRIFT_WARNING",
+                    "detail": {"target": target_rel, "probe_type": probe_type},
+                })
+            else:
+                fault = True
+                _write_drift_fault(layout, target_rel)
+                from .hooks import run_hook
+                run_hook(layout, "on_drift_fault", {
+                    "target": target_rel,
+                    "probe_type": probe_type,
+                    "reference": reference,
+                })
+                break
 
     _update_semantic_digest(layout, fault)
     return fault
@@ -246,11 +264,35 @@ def _rotate_session_store(layout: Layout) -> None:
 # Stage 3 — Endure Execution
 # ---------------------------------------------------------------------------
 
+def _op_in_scope(op: str, evolve_scope: dict) -> bool:
+    """Return True if the given op is covered by the Evolve scope declaration."""
+    if op in ("json_merge", "file_write", "file_delete"):
+        return bool(evolve_scope.get("autonomous_evolution"))
+    if op == "skill_install":
+        return bool(evolve_scope.get("autonomous_skills"))
+    if op == "cmi_peer_add":
+        return evolve_scope.get("cmi_access", "none") != "none"
+    # cron_add always requires explicit Operator approval
+    return False
+
+
 def _stage3_endure(layout: Layout) -> None:
-    """Execute authorized Evolution Proposals from integrity.log."""
+    """Execute authorized Evolution Proposals from integrity.log.
+
+    HACA-Core: all proposals are held pending Operator approval (EVOLUTION_AUTH
+               written only after Operator explicitly approves).
+    HACA-Evolve: proposals whose ops are fully covered by the declared scope are
+                 executed automatically; others still require approval.
+    """
     proposals = _collect_authorized_proposals(layout)
     if not proposals:
         return
+
+    baseline_raw = read_json(layout.baseline) if layout.baseline.exists() else {}
+    profile = baseline_raw.get("profile", "haca-core")
+    evolve_scope: dict = {}
+    if profile == "haca-evolve":
+        evolve_scope = baseline_raw.get("evolve", {}).get("scope", {})
 
     for proposal in proposals:
         seq = int(time.time() * 1000)
@@ -270,6 +312,17 @@ def _stage3_endure(layout: Layout) -> None:
 
         # apply structural changes
         changes: list[dict[str, Any]] = content.get("changes", []) if isinstance(content, dict) else []
+
+        # Evolve: skip proposal if any op is outside the declared scope
+        if profile == "haca-evolve" and evolve_scope:
+            out_of_scope = [c.get("op", "") for c in changes if not _op_in_scope(c.get("op", ""), evolve_scope)]
+            if out_of_scope:
+                write_notification(layout, "warning", {
+                    "type": "EVOLUTION_OUT_OF_SCOPE",
+                    "detail": {"ops": out_of_scope, "auth_digest": auth_digest},
+                })
+                continue
+
         for change in changes:
             op = change.get("op", "")
             if not op:

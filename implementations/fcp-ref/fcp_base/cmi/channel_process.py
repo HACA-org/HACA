@@ -281,19 +281,29 @@ class ChannelProcess:
         endpoint = payload.get("endpoint", "")
         token = payload.get("enrollment_token", "")
 
-        # Validate against trusted_peers
+        # Determine if this is a public channel (HACA-Evolve only)
+        profile = self._baseline.get("profile", "haca-core")
+        evolve_scope = self._baseline.get("evolve", {}).get("scope", {})
+        cmi_access = evolve_scope.get("cmi_access", "none") if profile == "haca-evolve" else "none"
+        public_allowed = cmi_access in ("public", "both")
+
+        # Validate against trusted_peers (required for Core; optional for Evolve public)
         peer_cfg = self._find_trusted_peer(node_identity)
         if peer_cfg is None:
-            self._log_mif("MIF-ENROLL", f"enrollment from unknown node: {node_identity[:20]}")
-            handler._forbidden("not in trusted peers")
-            return
+            if not public_allowed:
+                self._log_mif("MIF-ENROLL", f"enrollment from unknown node: {node_identity[:20]}")
+                handler._forbidden("not in trusted peers")
+                return
+            # Public channel: accept unknown peer with empty pubkey (signature skipped)
+            peer_cfg = {"node_identity": node_identity, "pubkey": ""}
 
-        # Verify signature over payload minus "sig"
+        # Verify signature over payload minus "sig" (skip if no pubkey on public channel)
         check = {k: v for k, v in payload.items() if k != "sig"}
-        if not self._verify(peer_cfg.get("pubkey", ""), check, sig):
-            self._log_mif("MIF-AUTH", f"enrollment auth failure: {node_identity[:20]}")
-            handler._forbidden("authentication failure")
-            return
+        if peer_cfg.get("pubkey"):
+            if not self._verify(peer_cfg.get("pubkey", ""), check, sig):
+                self._log_mif("MIF-AUTH", f"enrollment auth failure: {node_identity[:20]}")
+                handler._forbidden("authentication failure")
+                return
 
         # Validate Enrollment Token (private channels require a token)
         with self._lock:
