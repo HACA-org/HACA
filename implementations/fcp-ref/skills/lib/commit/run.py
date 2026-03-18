@@ -36,11 +36,31 @@ def main() -> None:
     focus = json.loads(focus_file.read_text(encoding="utf-8"))
     focus_path = Path(str(focus.get("path", ""))).resolve()
 
-    # commit is always restricted to workspace/ — even in Evolve
-    try:
-        focus_path.relative_to(workspace)
-    except ValueError:
-        print(json.dumps({"error": "commit requires workspace_focus inside workspace/"}))
+    def is_safe_commit_path(target_path: Path, entity_root: Path) -> bool:
+        workspace = entity_root / "workspace"
+        # Rule 1: Inside workspace/
+        try:
+            target_path.relative_to(workspace)
+            return True
+        except ValueError:
+            pass
+        
+        # Rule 2: If inside entity root but not in workspace -> DENY
+        try:
+            target_path.relative_to(entity_root)
+            return False
+        except ValueError:
+            pass
+            
+        # Rule 3: If outside, ensure it is NOT a parent of entity_root
+        if entity_root.is_relative_to(target_path):
+            return False
+            
+        return True # Completely outside and not a parent
+
+    # validate workspace_focus safety
+    if not is_safe_commit_path(focus_path, entity_root):
+        print(json.dumps({"error": "commit path rejected: must be inside workspace/ or strictly outside the entity root (parents prohibited)"}))
         sys.exit(1)
 
     target = (focus_path / path_param).resolve()

@@ -12,11 +12,18 @@ def main() -> None:
     params = req.get("params", {})
     entity_root = Path(req.get("entity_root", ".")).resolve()
 
+    # validate and load workspace_focus
+    focus_file = entity_root / "state" / "workspace_focus.json"
+    if not focus_file.exists():
+        print(json.dumps({"error": "workspace_focus not set"}))
+        sys.exit(1)
+    
     try:
-        profile = json.loads((entity_root / "state" / "baseline.json").read_text()).get("profile", "haca-core")
-    except Exception:
-        profile = "haca-core"
-    boundary = entity_root if profile == "haca-evolve" else entity_root / "workspace"
+        focus = json.loads(focus_file.read_text(encoding="utf-8"))
+        boundary = Path(str(focus.get("path", ""))).resolve()
+    except Exception as exc:
+        print(json.dumps({"error": f"failed to load workspace_focus: {exc}"}))
+        sys.exit(1)
 
     path_param = str(params.get("path", "")).strip()
     if not path_param:
@@ -27,8 +34,7 @@ def main() -> None:
     try:
         target.relative_to(boundary)
     except ValueError:
-        label = "entity root" if profile == "haca-evolve" else "workspace"
-        print(json.dumps({"error": f"path outside {label}: {path_param}"}))
+        print(json.dumps({"error": f"path outside workspace_focus: {path_param}"}))
         sys.exit(1)
 
     if not target.exists():

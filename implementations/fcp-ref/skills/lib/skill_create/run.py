@@ -33,16 +33,18 @@ def main() -> None:
         print(json.dumps({"status": "ok", "path": str(stage_dir), "base": base}))
     else:
         stage_dir.mkdir(parents=True)
-        # seed a minimal manifest template
+        # seed a complete manifest template
         manifest = {
             "name": name,
             "version": "1.0.0",
-            "description": "",
+            "description": "Short description of the skill's purpose.",
+            "execution": "text", # Options: 'script' (looking for run.py) or 'text' (using README.md logic)
             "timeout_seconds": 30,
             "background": False,
             "irreversible": False,
             "class": "custom",
-            "permissions": []
+            "permissions": [],
+            "dependencies": []
         }
         (stage_dir / "manifest.json").write_text(
             json.dumps(manifest, indent=2), encoding="utf-8"
