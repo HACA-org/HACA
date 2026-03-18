@@ -546,8 +546,23 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
         print("  /model is only available during an active session")
         return
     from .cpe.base import make_adapter
+    from .store import API_KEY_ENV, save_api_key, load_env_file
+    
+    api_key = ""
+    if backend != "ollama":
+        env_var = API_KEY_ENV.get(backend, "")
+        api_key = os.environ.get(env_var, "")
+        if not api_key:
+            # Fallback if somehow chosen but no key in env
+            try:
+                api_key = input(f"  {env_var} [not configured]: ").strip()
+                if api_key:
+                    save_api_key(layout.root.name, env_var, api_key)
+            except EOFError:
+                pass
+
     try:
-        new_adapter = make_adapter(backend=backend, model=new_model, api_key="")
+        new_adapter = make_adapter(backend=backend, model=new_model, api_key=api_key)
     except Exception as exc:
         print(f"  failed to create adapter: {exc}")
         return
@@ -565,11 +580,19 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
     import sys, tty, termios
     from .cpe.base import KNOWN_MODELS, BACKENDS, fetch_ollama_models
 
+    from .store import API_KEY_ENV, load_env_file
+
     # Build flat list of "backend:model" labels
     labels: list[str] = []
     pairs: list[tuple[str, str]] = []
 
     for backend in BACKENDS:
+        # User requested: only show models with registered keys (except ollama)
+        if backend != "ollama":
+            env_var = API_KEY_ENV.get(backend, "")
+            if not os.environ.get(env_var):
+                continue
+
         models = fetch_ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
         for m in models:
             active = backend == current_backend and m == current_model

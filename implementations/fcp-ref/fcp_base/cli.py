@@ -18,6 +18,17 @@ import sys
 import time
 from pathlib import Path
 
+from .store import (
+    API_KEY_ENV,
+    Layout,
+    append_jsonl,
+    atomic_write,
+    load_agenda,
+    load_env_file,
+    read_json,
+    save_api_key,
+)
+
 
 def main() -> None:
     try:
@@ -28,7 +39,7 @@ def main() -> None:
 
 
 def _main() -> None:
-    _load_env_file()
+    load_env_file()
     args = sys.argv[1:]
     entity_root = Path.cwd()
 
@@ -512,7 +523,7 @@ def _run_model(layout: "Layout") -> None:
 
     # API key (skip for ollama)
     if backend != "ollama":
-        env_var = _API_KEY_ENV.get(backend, "")
+        env_var = API_KEY_ENV.get(backend, "")
         if env_var:
             current_key_hint = "already configured" if os.environ.get(env_var) else "not configured"
             try:
@@ -520,8 +531,7 @@ def _run_model(layout: "Layout") -> None:
             except EOFError:
                 api_key = ""
             if api_key:
-                _save_api_key(layout.root.name, env_var, api_key)
-                _load_env_file()
+                save_api_key(layout.root.name, env_var, api_key)
 
     cpe_cfg["backend"] = backend
     cpe_cfg["model"] = model
@@ -540,11 +550,6 @@ def _run_model(layout: "Layout") -> None:
 # Init
 # ---------------------------------------------------------------------------
 
-_API_KEY_ENV: dict[str, str] = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "google": "GOOGLE_API_KEY",
-}
 
 
 def _pick_from_list(prompt: str, items: list[str], default_idx: int = 0, indent: str = "") -> str:
@@ -594,45 +599,6 @@ def _pick_from_list(prompt: str, items: list[str], default_idx: int = 0, indent:
 
     print()
     return items[selected]
-
-
-def _load_env_file() -> None:
-    """Load KEY=value pairs from ~/.fcp.env into os.environ (no-op if absent)."""
-    import os
-    env_file = Path.home() / ".fcp.env"
-    if not env_file.exists():
-        return
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        key = key.strip()
-        if key and not os.environ.get(key):
-            os.environ[key] = val.strip()
-
-
-def _save_api_key(entity_name: str, env_var: str, api_key: str) -> None:
-    """Append or update KEY=value in ~/.fcp.env."""
-    import os
-    env_file = Path.home() / ".fcp.env"
-    lines: list[str] = []
-    if env_file.exists():
-        lines = env_file.read_text(encoding="utf-8").splitlines()
-
-    prefix = f"{env_var}="
-    updated = False
-    for i, line in enumerate(lines):
-        if line.startswith(prefix):
-            lines[i] = f"{prefix}{api_key}"
-            updated = True
-            break
-    if not updated:
-        lines.append(f"{prefix}{api_key}")
-
-    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.chmod(env_file, 0o600)
-    print(f"  API key saved to {env_file} (export {env_var} or source it before running ./fcp)")
 
 
 def _read_fcp_version(fcp_ref_root: Path) -> str:
@@ -890,7 +856,7 @@ def _run_init(fcp_ref_root: Path) -> None:
     else:
         model_list = KNOWN_MODELS[backend]
         model = _pick_from_list("Model", model_list, indent="  ")
-        env_var = _API_KEY_ENV[backend]
+        env_var = API_KEY_ENV[backend]
         current_key_hint = "already configured" if os.environ.get(env_var) else ""
         hint_str = f" [{current_key_hint}]" if current_key_hint else ""
         try:
@@ -898,7 +864,7 @@ def _run_init(fcp_ref_root: Path) -> None:
         except EOFError:
             api_key = ""
         if api_key:
-            _save_api_key(entity_root.name, env_var, api_key)
+            save_api_key(entity_root.name, env_var, api_key)
             api_key_saved = env_var
 
     # ── Step 6: Copy snapshot and create runtime dirs ────────────────────────

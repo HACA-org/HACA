@@ -279,3 +279,53 @@ class Layout:
             self.workspace_stage_dir,
             self.active_context_dir,
         ]
+
+# ---------------------------------------------------------------------------
+# API Keys & Environment Management
+# ---------------------------------------------------------------------------
+
+API_KEY_ENV: dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "google": "GOOGLE_API_KEY",
+}
+
+
+def load_env_file() -> None:
+    """Load KEY=value pairs from ~/.fcp.env into os.environ (no-op if absent)."""
+    env_file = Path.home() / ".fcp.env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        # Fallback to file value if shell env is empty or missing
+        if key and not os.environ.get(key):
+            os.environ[key] = val.strip()
+
+
+def save_api_key(entity_name: str, env_var: str, api_key: str) -> None:
+    """Append or update KEY=value in ~/.fcp.env."""
+    env_file = Path.home() / ".fcp.env"
+    lines: list[str] = []
+    if env_file.exists():
+        lines = env_file.read_text(encoding="utf-8").splitlines()
+
+    found = False
+    new_lines = []
+    for line in lines:
+        if line.strip().startswith(f"{env_var}="):
+            new_lines.append(f"{env_var}={api_key}")
+            found = True
+        else:
+            new_lines.append(line)
+
+    if not found:
+        new_lines.append(f"{env_var}={api_key}")
+
+    env_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    env_file.chmod(0o600)
+    load_env_file()  # Refresh current process
