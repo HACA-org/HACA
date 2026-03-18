@@ -725,7 +725,7 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
 
 def _cmd_endure(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /endure list | approve <id> | reject <id> | sync [--remote]")
+        print("  usage: /endure list | approve <id> | reject <id>")
         return
     sub = args[0].lower()
     if sub == "list":
@@ -734,10 +734,8 @@ def _cmd_endure(layout: Layout, args: list[str]) -> None:
         _endure_decide(layout, args[1], approve=True)
     elif sub == "reject" and len(args) > 1:
         _endure_decide(layout, args[1], approve=False)
-    elif sub == "sync":
-        _endure_sync(layout, "--remote" in args)
     else:
-        print("  usage: /endure list | approve <id> | reject <id> | sync [--remote]")
+        print("  usage: /endure list | approve <id> | reject <id>")
 
 
 def _endure_proposals(layout: Layout) -> list[dict]:
@@ -803,24 +801,6 @@ def _endure_decide(layout: Layout, idx_str: str, approve: bool) -> None:
         pfile.unlink(missing_ok=True)
 
 
-def _endure_sync(layout: Layout, remote: bool) -> None:
-    import subprocess
-    r = subprocess.run(["git", "add", "-A"], capture_output=True, text=True, cwd=str(layout.root))
-    if r.returncode != 0:
-        print(f"  git add failed: {r.stderr.strip()}")
-        return
-    ts = int(time.time())
-    r2 = subprocess.run(
-        ["git", "commit", "-m", f"endure sync {ts}"],
-        capture_output=True, text=True, cwd=str(layout.root),
-    )
-    if r2.returncode != 0:
-        print(f"  git commit: {r2.stderr.strip() or 'nothing to commit'}")
-    else:
-        print(f"  committed: {r2.stdout.strip()}")
-    if remote:
-        r3 = subprocess.run(["git", "push", "origin"], capture_output=True, text=True, cwd=str(layout.root))
-        print(f"  push: {'ok' if r3.returncode == 0 else r3.stderr.strip()}")
 
 
 # --- Cron ---
@@ -1636,7 +1616,6 @@ def _cmd_help() -> None:
     /endure list              — list pending Evolution Proposals
     /endure approve <id>      — approve proposal by index
     /endure reject <id>       — reject proposal by index
-    /endure sync [--remote]   — commit entity root to version control
 
   Agenda:
     /cron list                — list scheduled tasks

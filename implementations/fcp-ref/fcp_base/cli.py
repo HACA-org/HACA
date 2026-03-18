@@ -120,6 +120,12 @@ def _main() -> None:
         _run_model(Layout(entity_root))
         return
 
+    if cmd == "endure" and rest and rest[0] == "sync":
+        from .store import Layout
+        _require_entity_root(entity_root)
+        _run_endure_sync(Layout(entity_root))
+        return
+
     if cmd == "--auto" and rest:
         from .store import Layout
         _require_entity_root(entity_root)
@@ -127,7 +133,7 @@ def _main() -> None:
         return
 
     print(f"unknown command: {cmd}")
-    print("usage: ./fcp [init | model | doctor [--fix] | decommission --archive|--destroy | --auto <cron_id>]")
+    print("usage: ./fcp [init | model | doctor [--fix] | decommission --archive|--destroy | endure sync | --auto <cron_id>]")
     sys.exit(1)
 
 
@@ -137,6 +143,7 @@ def _print_help() -> None:
   ./fcp init                    — initialize a new entity
   ./fcp model                   — interactive model picker
   ./fcp doctor [--fix]          — check integrity; --fix to repair
+  ./fcp endure sync             — sync entity root with git remote
   ./fcp decommission --archive  — archive entity (reversible)
   ./fcp decommission --destroy  — destroy entity permanently
   ./fcp --auto <cron_id>        — run scheduled task autonomously
@@ -371,6 +378,169 @@ def _run_auto_worker(layout: "Layout", task: dict, wake_up_message: str) -> None
 
 
 # ---------------------------------------------------------------------------
+# Endure Sync — git-based entity backup/restore, outside of session
+# ---------------------------------------------------------------------------
+
+def _run_endure_sync(layout: "Layout") -> None:
+    """Sync entity root with its git remote.
+
+    Flow:
+      1. Verify this is a git repo.
+      2. git fetch origin — update remote refs.
+      3. Compare local HEAD vs origin/<branch> and report status.
+      4. If there are local changes, offer to commit them first.
+      5. Present action menu based on divergence state.
+      6. Execute chosen action and report result.
+    """
+    root = str(layout.root)
+
+    def _git(*args: str) -> tuple[int, str, str]:
+        r = subprocess.run(
+            ["git", "-C", root, *args],
+            capture_output=True, text=True,
+        )
+        return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+    def _git_out(*args: str) -> str:
+        _, out, _ = _git(*args)
+        return out
+
+    # ── 1. Verify git repo ───────────────────────────────────────────────
+    code, _, _ = _git("rev-parse", "--git-dir")
+    if code != 0:
+        ui.print_err("This entity root is not a git repository.")
+        ui.print_err("Run 'git init' inside the entity root and add a remote to use sync.")
+        return
+
+    # ── 2. Verify remote exists ──────────────────────────────────────────
+    remotes = _git_out("remote")
+    if "origin" not in remotes.splitlines():
+        ui.print_err("No 'origin' remote configured.")
+        ui.print_err("Add one with: git remote add origin <url>")
+        return
+
+    # ── 3. Fetch ─────────────────────────────────────────────────────────
+    ui.print_info("Fetching from origin...")
+    code, _, err = _git("fetch", "origin")
+    if code != 0:
+        ui.print_err(f"git fetch failed: {err}")
+        return
+
+    # ── 4. Determine current branch and tracking ref ─────────────────────
+    branch = _git_out("rev-parse", "--abbrev-ref", "HEAD")
+    if branch == "HEAD":
+        ui.print_err("Detached HEAD — cannot sync. Check out a branch first.")
+        return
+
+    remote_ref = f"origin/{branch}"
+    remote_exists_code, _, _ = _git("rev-parse", "--verify", remote_ref)
+
+    # ── 5. Check working tree status ─────────────────────────────────────
+    _, status_out, _ = _git("status", "--porcelain")
+    has_local_changes = bool(status_out.strip())
+
+    # ── 6. Compare local vs remote ───────────────────────────────────────
+    print()
+    ui.hr("endure sync")
+
+    if remote_exists_code != 0:
+        ui.print_info(f"Branch '{branch}' has no upstream on origin yet.")
+        ahead = int(_git_out("rev-list", "--count", "HEAD") or "0")
+        behind = 0
+    else:
+        ahead_str = _git_out("rev-list", "--count", f"{remote_ref}..HEAD")
+        behind_str = _git_out("rev-list", "--count", f"HEAD..{remote_ref}")
+        ahead = int(ahead_str or "0")
+        behind = int(behind_str or "0")
+
+    # Status report
+    if has_local_changes:
+        ui.print_warn(f"Uncommitted local changes detected.")
+    if remote_exists_code != 0:
+        ui.print_info(f"Local branch '{branch}' not yet pushed to origin.")
+    elif ahead == 0 and behind == 0:
+        ui.print_ok("Entity is in sync with origin.")
+    elif ahead > 0 and behind == 0:
+        ui.print_info(f"Local is {ahead} commit(s) ahead of origin/{branch}.")
+    elif ahead == 0 and behind > 0:
+        ui.print_info(f"Local is {behind} commit(s) behind origin/{branch}.")
+    else:
+        ui.print_warn(f"Diverged: {ahead} local commit(s), {behind} remote commit(s).")
+
+    print()
+
+    # ── 7. Build action menu ─────────────────────────────────────────────
+    actions: list[str] = []
+
+    if has_local_changes:
+        actions.append("commit local changes")
+    if remote_exists_code != 0 or ahead > 0:
+        actions.append(f"push to origin/{branch}")
+    if behind > 0:
+        actions.append(f"pull from origin/{branch} (fast-forward)")
+    if ahead > 0 and behind > 0:
+        actions.append(f"rebase local on origin/{branch}")
+    actions.append("show git status")
+    actions.append("show log (last 10)")
+    actions.append("abort — do nothing")
+
+    choice = ui.pick_one("Action", actions, default_idx=0)
+    if choice is None or choice == "abort — do nothing":
+        ui.print_info("Sync aborted.")
+        return
+
+    print()
+
+    # ── 8. Execute chosen action ─────────────────────────────────────────
+    if choice == "commit local changes":
+        msg = ui.ask("Commit message", "endure sync")
+        if not msg:
+            msg = f"endure sync {int(time.time())}"
+        code, out, err = _git("add", "-A")
+        if code != 0:
+            ui.print_err(f"git add failed: {err}")
+            return
+        code, out, err = _git("commit", "-m", msg)
+        if code != 0:
+            ui.print_err(f"git commit failed: {err or out}")
+        else:
+            ui.print_ok(f"Committed: {out.splitlines()[0] if out else 'ok'}")
+
+    elif choice.startswith("push to origin/"):
+        code, out, err = _git("push", "origin", branch)
+        if code != 0:
+            ui.print_err(f"git push failed: {err}")
+        else:
+            ui.print_ok(f"Pushed to origin/{branch}.")
+
+    elif choice.startswith("pull from origin/"):
+        code, out, err = _git("pull", "--ff-only", "origin", branch)
+        if code != 0:
+            ui.print_err(f"git pull failed: {err}")
+            ui.print_info("Tip: use 'rebase local on origin' if fast-forward is not possible.")
+        else:
+            ui.print_ok(f"Pulled: {out.splitlines()[0] if out else 'ok'}")
+
+    elif choice.startswith("rebase local on origin/"):
+        code, out, err = _git("rebase", f"origin/{branch}")
+        if code != 0:
+            ui.print_err(f"git rebase failed: {err}")
+            ui.print_err("Resolve conflicts manually, then run 'git rebase --continue'.")
+        else:
+            ui.print_ok("Rebase complete.")
+
+    elif choice == "show git status":
+        code, out, _ = _git("status")
+        print(out)
+
+    elif choice == "show log (last 10)":
+        code, out, _ = _git("log", "--oneline", "-10")
+        print(out)
+
+    print()
+
+
+# ---------------------------------------------------------------------------
 # Doctor — operates without booting
 # ---------------------------------------------------------------------------
 
@@ -541,6 +711,40 @@ def _read_fcp_version(fcp_ref_root: Path) -> str:
     except Exception:
         pass
     return "unknown"
+
+
+def _write_entity_gitignore(entity_root: Path) -> None:
+    """Write a .gitignore tailored for an FCP entity root.
+
+    Excludes volatile runtime artefacts that should not be version-controlled:
+    session tokens, runtime logs, transient I/O queues, snapshots, etc.
+    Structural and mnemonic state (persona, skills, memory, baseline, chain)
+    are intentionally tracked.
+    """
+    content = """\
+# FCP entity root — generated by fcp init
+# Volatile runtime artefacts — do not commit
+io/inbox/
+io/spool/
+state/sentinels/
+state/snapshots/
+state/operator_notifications/
+state/integrity.log
+state/distress.beacon
+state/first-stimuli.json
+state/pending-closure.json
+workspace/stage/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Environment / secrets
+.env
+.fcp.env
+"""
+    gitignore = entity_root / ".gitignore"
+    gitignore.write_text(content, encoding="utf-8")
 
 
 def _run_init(fcp_ref_root: Path) -> None:
@@ -905,6 +1109,8 @@ def _run_init(fcp_ref_root: Path) -> None:
         git_ok = False
         try:
             subprocess.run(["git", "init", str(entity_root)], check=True, capture_output=True)
+            # Write entity-root .gitignore before staging
+            _write_entity_gitignore(entity_root)
             subprocess.run(["git", "-C", str(entity_root), "add", "."], check=True, capture_output=True)
             subprocess.run(
                 ["git", "-C", str(entity_root), "commit", "-m", f"chore: init entity (fcp v{fcp_version}, {haca_profile})"],
