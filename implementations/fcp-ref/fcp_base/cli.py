@@ -272,8 +272,8 @@ def _run_auto(layout: "Layout", cron_id: str) -> None:
         index = read_json(layout.skills_index)
 
     # Inject wake_up as first stimulus via first-stimuli.json
-    from .store import atomic_write
-    atomic_write(layout.first_stimuli, {"message": wake_up_message, "source": "cron", "cron_id": cron_id})
+    from .stimuli import inject_wakeup
+    inject_wakeup(layout, cron_id, wake_up_message)
 
     from .session import run_session
     run_session(layout, adapter, index)

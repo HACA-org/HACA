@@ -166,22 +166,8 @@ def run(layout: Layout) -> str:
         # ------------------------------------------------------------------
         # Step 9 — First stimuli: onboarding message for the CPE
         # ------------------------------------------------------------------
-        atomic_write(layout.first_stimuli, {
-            "source": "fap",
-            "message": (
-                "[FIRST SESSION] You have just been activated for the first time. "
-                f"Begin by introducing yourself to the Operator: your name, your profile ({baseline.haca_profile}), "
-                "your available skills, and your operational boundaries (including what requires "
-                "Operator authorization).\n\n"
-                "Then ask the Operator for the following information to personalize your collaboration:\n"
-                "- Preferred language for communication\n"
-                "- Area of work or project context\n"
-                "- Preferred communication style (concise, detailed, formal, informal)\n"
-                "- Any other preferences or constraints you should know\n\n"
-                "Save everything the Operator shares in structured memory "
-                "(slugs: operator-profile, session-preferences)."
-            ),
-        })
+        from .stimuli import inject_onboarding
+        inject_onboarding(layout, baseline.haca_profile)
         written.append(layout.first_stimuli)
 
         return session_id

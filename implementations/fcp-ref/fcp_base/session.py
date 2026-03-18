@@ -57,22 +57,19 @@ def run_session(
     system, chat_history = build_boot_context(layout, index)
     _vlog("fcp", f"boot context: system={len(system)} chars, history={len(chat_history)} msgs")
 
+    from .stimuli import pop_stimulus
     first_stimuli_injected = False
     # Consume first_stimuli if present (e.g. FAP onboarding, post-evolution notice)
-    if layout.first_stimuli.exists():
-        try:
-            fs = read_json(layout.first_stimuli)
-            msg = str(fs.get("message", ""))
-            if msg:
-                env = acp_encode(env_type="MSG", source="fcp",
-                                 data={"type": "FIRST_STIMULI", "source": fs.get("source", "fcp"), "msg": msg})
-                append_jsonl(layout.session_store, env)
-                chat_history.append({"role": "user", "content": msg})
-                first_stimuli_injected = True
-                _vlog("fcp", f"first_stimuli injected (source={fs.get('source')})")
-        except Exception:
-            pass
-        layout.first_stimuli.unlink(missing_ok=True)
+    fs = pop_stimulus(layout)
+    if fs:
+        msg = str(fs.get("message", ""))
+        if msg:
+            env = acp_encode(env_type="MSG", source="fcp",
+                             data={"type": "FIRST_STIMULI", "source": fs.get("source", "fcp"), "msg": msg})
+            append_jsonl(layout.session_store, env)
+            chat_history.append({"role": "user", "content": msg})
+            first_stimuli_injected = True
+            _vlog("fcp", f"first_stimuli injected (source={fs.get('source')})")
 
     if inject:
         for env in inject:
