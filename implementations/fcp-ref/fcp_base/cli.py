@@ -30,6 +30,13 @@ from .store import (
 )
 
 
+def _require_entity_root(entity_root: Path) -> None:
+    if not (entity_root / ".fcp-entity").exists():
+        print(f"[ERROR] Not an FCP entity root: {entity_root}")
+        print("        Run './fcp init' to initialise one, or cd into an existing entity.")
+        sys.exit(1)
+
+
 def main() -> None:
     try:
         _main()
@@ -71,6 +78,7 @@ def _main() -> None:
         # normal boot + session
         from .store import Layout
         from .operator import set_verbose, set_debugger
+        _require_entity_root(entity_root)
         if verbose and not _dbg_mode:
             set_verbose(True)
         if _dbg_mode:
@@ -93,21 +101,25 @@ def _main() -> None:
 
     if cmd == "doctor":
         from .store import Layout
+        _require_entity_root(entity_root)
         _run_doctor(Layout(entity_root), rest)
         return
 
     if cmd == "decommission":
         from .store import Layout
+        _require_entity_root(entity_root)
         _run_decommission(Layout(entity_root), rest)
         return
 
     if cmd == "model":
         from .store import Layout
+        _require_entity_root(entity_root)
         _run_model(Layout(entity_root))
         return
 
     if cmd == "--auto" and rest:
         from .store import Layout
+        _require_entity_root(entity_root)
         _run_auto(Layout(entity_root), rest[0])
         return
 
@@ -556,6 +568,10 @@ def _pick_from_list(prompt: str, items: list[str], default_idx: int = 0, indent:
     """Generic interactive arrow-key picker. Falls back to text input on error."""
     import tty, termios
 
+    if not sys.stdin.isatty():
+        # Fallback for non-interactive environments
+        return input(f"{indent}{prompt}: ").strip()
+
     if not items:
         return input(f"{indent}{prompt}: ").strip()
 
@@ -568,8 +584,11 @@ def _pick_from_list(prompt: str, items: list[str], default_idx: int = 0, indent:
             sys.stdout.write(f"\033[{len(items)}A")
         first_render = False
         for i, name in enumerate(items):
-            prefix = f"{indent} > " if i == idx else f"{indent}   "
-            sys.stdout.write(f"\r{prefix}{name}\033[K\n")
+            if i == idx:
+                # Highlight selected with bold cyan
+                sys.stdout.write(f"\r{indent} \x1b[1;96m> {name}\x1b[0m\033[K\n")
+            else:
+                sys.stdout.write(f"\r{indent}   {name}\033[K\n")
         sys.stdout.flush()
 
     print(f"{indent}{prompt} (↑↓ to move, Enter to confirm):")
@@ -599,6 +618,65 @@ def _pick_from_list(prompt: str, items: list[str], default_idx: int = 0, indent:
 
     print()
     return items[selected]
+
+
+def _pick_multiple_from_list(prompt: str, items: list[str], defaults: list[bool], indent: str = "") -> list[bool]:
+    """Interactive multi-select picker (Space to toggle, Enter to confirm)."""
+    import tty, termios
+
+    if not sys.stdin.isatty():
+        return defaults
+
+    if not items:
+        return defaults
+
+    states = list(defaults)
+    selected = 0
+    first_render = True
+
+    def _render(idx: int) -> None:
+        nonlocal first_render
+        if not first_render:
+            sys.stdout.write(f"\033[{len(items)}A")
+        first_render = False
+        for i, name in enumerate(items):
+            mark = "[x]" if states[i] else "[ ]"
+            if i == idx:
+                # Highlight selected with bold cyan
+                sys.stdout.write(f"\r{indent} \x1b[1;96m> {mark} {name}\x1b[0m\033[K\n")
+            else:
+                sys.stdout.write(f"\r{indent}   {mark} {name}\033[K\n")
+        sys.stdout.flush()
+
+    print(f"{indent}{prompt} (↑↓ to move, Space to toggle, Enter to confirm):")
+    _render(selected)
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch == " ":
+                states[selected] = not states[selected]
+            elif ch in ("\r", "\n"):
+                break
+            elif ch == "\x03":
+                raise KeyboardInterrupt
+            elif ch == "\x1b":
+                ch2 = sys.stdin.read(1)
+                ch3 = sys.stdin.read(1)
+                if ch2 == "[":
+                    if ch3 == "A" and selected > 0:
+                        selected -= 1
+                    elif ch3 == "B" and selected < len(items) - 1:
+                        selected += 1
+            _render(selected)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    print()
+    return states
 
 
 def _read_fcp_version(fcp_ref_root: Path) -> str:
@@ -634,14 +712,19 @@ def _run_init(fcp_ref_root: Path) -> None:
         return val or default
 
     def _confirm(prompt: str, default: bool = False) -> bool:
-        hint = "Y/n" if default else "y/N"
-        try:
-            val = input(f"  {prompt} [{hint}]: ").strip().lower()
-        except EOFError:
-            val = ""
-        if not val:
-            return default
-        return val.startswith("y")
+        if not sys.stdin.isatty():
+            hint = "Y/n" if default else "y/N"
+            try:
+                val = input(f"  {prompt} [{hint}]: ").strip().lower()
+            except EOFError:
+                val = ""
+            if not val:
+                return default
+            return val.startswith("y")
+        
+        items = ["Yes", "No"]
+        choice = _pick_from_list(prompt, items, default_idx=(0 if default else 1), indent="  ")
+        return choice == "Yes"
 
     fcp_version = _read_fcp_version(fcp_ref_root)
 
@@ -657,7 +740,16 @@ def _run_init(fcp_ref_root: Path) -> None:
     print()
     print(f"  Contributions are welcome. Report issues and security")
     print(f"  vulnerabilities at: https://github.com/HACA-org/HACA")
+    print(f"  {'─' * W}")
+    print()
+    print(f"  [!] WARNING: EXPERIMENTAL SYSTEM")
+    print(f"  {'─' * W}")
+    print(f"  Despite integrated safety mechanisms, this is experimental")
+    print(f"  software. Use may result in data loss, host environment")
+    print(f"  damage, or leakage of sensitive information.")
+    print()
     print(f"  Do not use in production without a prior security review.")
+    print(f"  By continuing, you acknowledge and accept these risks.")
     print(f"  {'─' * W}")
     print()
     if not _confirm("Continue?"):
@@ -692,25 +784,40 @@ def _run_init(fcp_ref_root: Path) -> None:
 
     if is_fcp_entity:
         print(f"\n  [!] Existing FCP entity detected at {entity_root}.")
-        _hr("Select an action")
-        print("    [1] Quick Reset (FAP) — Wipe state/, memory/, io/ only.")
-        print("    [2] Custom Re-init — Select core sections to update/preserve.")
-        print("    [3] Cancel.")
-        choice = _ask("Choice", "1")
+        action_items = [
+            "Quick Reset (FAP)  — Wipe dynamic state (state/, memory/, io/)",
+            "Custom Re-init     — Granularly choose what to keep/overwrite",
+            "Cancel",
+        ]
+        choice_label = _pick_from_list("Select an action", action_items, default_idx=0, indent="  ")
+        choice_idx = action_items.index(choice_label)
         
-        if choice == "3":
+        if choice_idx == 2: # Cancel
             sys.exit(0)
-        elif choice == "1":
+        elif choice_idx == 0: # Quick Reset
             fap_only = True
         else: # Custom Re-init
             _hr("Update configuration")
-            print("      Current files will be OVERWRITTEN by templates unless kept.")
-            keep_persona = _confirm("      [?] KEEP current persona/ (highly recommended)?", default=True)
-            keep_skills = _confirm("      [?] KEEP current skills/ (protect custom tools)?", default=True)
-            keep_fcp_base = _confirm("      [?] KEEP current fcp_base/ (engine core)?", default=False)
-            keep_tests = _confirm("      [?] KEEP current tests/?", default=True)
-            keep_hooks = _confirm("      [?] KEEP current hooks/?", default=True)
-            keep_boot = _confirm("      [?] KEEP current boot.md?", default=True)
+            print("      Current files will be OVERWRITTEN by templates unless kept (checked).")
+            
+            reinit_items = [
+                "persona/   (personality and operator history)",
+                "skills/    (custom tools and reasoning units)",
+                "fcp_base/  (FCP core engine modules)",
+                "tests/     (unit and integrated validations)",
+                "hooks/     (event-driven lifecycle scripts)",
+                "boot.md    (operational rules and boot protocol)",
+            ]
+            # default: keep almost everything except fcp_base (usually what people want to update)
+            reinit_defaults = [True, True, False, True, True, True]
+            
+            states = _pick_multiple_from_list(
+                "Select components to KEEP (skip to overwrite)",
+                reinit_items,
+                reinit_defaults,
+                indent="      "
+            )
+            keep_persona, keep_skills, keep_fcp_base, keep_tests, keep_hooks, keep_boot = states
 
         # Cleanup dynamic state
         for d in ["state", "memory", "io"]:
@@ -734,6 +841,12 @@ def _run_init(fcp_ref_root: Path) -> None:
         print()
         if not _confirm("Are you ABSOLUTELY sure you want to proceed?"):
             sys.exit(0)
+
+    # ── Git init ────────────────────────────────────────────────────────────
+    git_init = False
+    if not (entity_root / ".git").exists():
+        print()
+        git_init = _confirm("Initialise a git repository in the entity root?", default=True)
 
     # ── Step 2: Profile ─────────────────────────────────────────────────────
     _hr("2. Profile")
@@ -968,6 +1081,23 @@ def _run_init(fcp_ref_root: Path) -> None:
         p.write_text("", encoding="utf-8")
     atomic_write(entity_root / "memory" / "working-memory.json", {"entries": []})
 
+    # ── Git init + initial commit ────────────────────────────────────────────
+    if git_init:
+        import subprocess
+        git_ok = False
+        try:
+            subprocess.run(["git", "init", str(entity_root)], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(entity_root), "add", "."], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(entity_root), "commit", "-m", f"chore: init entity (fcp v{fcp_version}, {haca_profile})"],
+                check=True, capture_output=True,
+            )
+            git_ok = True
+        except subprocess.CalledProcessError as exc:
+            print(f"  [!] git failed: {exc.stderr.decode().strip()}")
+        except FileNotFoundError:
+            print("  [!] git not found — skipping.")
+
     # ── Step 7: Summary ──────────────────────────────────────────────────────
     print()
     print(f"  {'─' * W}")
@@ -979,6 +1109,8 @@ def _run_init(fcp_ref_root: Path) -> None:
     print(f"  backend:      {backend} / {model}")
     if api_key_saved:
         print(f"  api key:      saved ({api_key_saved})")
+    if git_init:
+        print(f"  git:          {'initial commit created' if git_ok else 'init failed (see above)'}")
     if profile == "haca-evolve":
         print(f"  scope:")
         print(f"    autonomous evolution:  {'yes' if evolve_scope['autonomous_evolution'] else 'no'}")
