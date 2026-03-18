@@ -1,3 +1,11 @@
+"""
+Stimuli — FCP §6.1.
+
+Manages the first-stimulus file (io/first_stimuli.json): written by the
+operator before session start to inject an initial user message, consumed
+once by the session loop at boot.
+"""
+
 from __future__ import annotations
 import json
 from .store import Layout, atomic_write, read_json

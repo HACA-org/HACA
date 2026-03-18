@@ -24,7 +24,10 @@ from .acp import drain_inbox, make as acp_encode
 from .cpe.base import AdapterRef, CPEAdapter, CPEResponse
 from .mil import memory_recall, process_closure, result_recall, summarize_session, write_episodic
 from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger, is_compact_pending as _is_compact_pending, set_compact_pending as _set_compact_pending, is_endure_approved as _is_endure_approved, set_endure_approved as _set_endure_approved
+from .sil import sha256_str as _sha256_str, write_evolution_auth as _write_evolution_auth
+from .stimuli import inject_evolution_result as _write_evolution_stimuli
 from .store import Layout, append_jsonl, atomic_write, load_baseline, read_json, read_jsonl
+from . import ui
 from . import vital as _vital
 
 
@@ -705,10 +708,9 @@ def _dispatch_sil(
             except Exception:
                 autonomous = False
             if autonomous:
-                from .operator import _write_evolution_auth, _write_evolution_stimuli, _sha256_str  # type: ignore[attr-defined]
                 auth_digest = _sha256_str(content)
                 _write_evolution_auth(layout, content, auth_digest)
-                _write_evolution_stimuli(layout, content, approved=True)
+                _write_evolution_stimuli(layout, payload.get("description", content), approved=True)
                 proposal_file.unlink(missing_ok=True)
                 _set_endure_approved(True)
                 results.append({"type": "evolution_proposal", "status": "auto_approved"})
@@ -923,9 +925,9 @@ def build_boot_stats(
 # Verbose logging helpers
 # ---------------------------------------------------------------------------
 
-_DIM = "\x1b[2m"
-_RESET = "\x1b[0m"
-_GRAY = "\x1b[90m"
+_DIM = ui.DIM
+_RESET = ui.RESET
+_GRAY = ui.GRAY
 
 
 _WIDTH = 50

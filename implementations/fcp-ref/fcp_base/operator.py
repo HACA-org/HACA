@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .acp import make as acp_encode
-from .sil import sha256_str as _sha256_str
+from .sil import sha256_str as _sha256_str, write_evolution_auth as _write_evolution_auth
 from .store import Layout, append_jsonl, atomic_write, load_agenda, read_json
 from . import ui
 
@@ -283,20 +283,41 @@ def _cmd_status(layout: Layout) -> None:
     print(f"  workspace focus: {wf or '(not set)'}")
 
 
-def _cmd_doctor(layout: Layout, args: list[str]) -> None:
+def run_doctor(layout: Layout, fix: bool, clear_sentinels: bool = False) -> None:
+    """Core doctor logic — shared by /doctor (in-session) and ./fcp doctor (CLI).
+
+    Args:
+        fix: repair volatile dirs and recalculate integrity hashes.
+        clear_sentinels: also clear distress beacon and stale session token (CLI only).
+    """
     from .compliance import run_all, print_report
-    fix = "--fix" in args
+    from .sil import beacon_is_active, clear_beacon
+
     if fix:
+        if clear_sentinels:
+            if beacon_is_active(layout):
+                clear_beacon(layout)
+                print("  distress beacon cleared")
+            if layout.session_token.exists():
+                layout.session_token.unlink()
+                print("  stale session token removed")
+
         for d in layout.volatile_dirs():
             if not d.exists():
                 d.mkdir(parents=True, exist_ok=True)
                 print(f"  created: {d.relative_to(layout.root)}")
         fix_integrity_hashes(layout)
+
     findings = run_all(layout)
     print_report(findings)
     failed = [f for f in findings if not f.passed]
     if failed:
-        print(f"\n  {len(failed)} issue(s) found. Run /doctor --fix to repair volatile dirs.")
+        hint = "./fcp doctor --fix" if clear_sentinels else "/doctor --fix"
+        print(f"\n  {len(failed)} issue(s) found. Run {hint} to repair.")
+
+
+def _cmd_doctor(layout: Layout, args: list[str]) -> None:
+    run_doctor(layout, fix="--fix" in args, clear_sentinels=False)
 
 
 def fix_integrity_hashes(layout: Layout) -> None:
@@ -1680,20 +1701,7 @@ def resolve_alias(layout: Layout, line: str) -> str | None:
 
 
 # Removed: _write_evolution_stimuli (now in stimuli.py)
-
-
-def _write_evolution_auth(layout: Layout, content: str, auth_digest: str) -> None:
-    ts = int(time.time() * 1000)
-    try:
-        parsed_content = json.loads(content)
-    except Exception:
-        parsed_content = content
-    envelope = acp_encode(
-        env_type="MSG",
-        source="operator",
-        data={"type": "EVOLUTION_AUTH", "auth_digest": auth_digest, "content": parsed_content, "ts": ts},
-    )
-    append_jsonl(layout.integrity_log, envelope)
+# Removed: _write_evolution_auth (now in sil.py)
 
 
 def _write_evolution_rejected(layout: Layout, content: str) -> None:

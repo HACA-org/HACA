@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .acp import ACPEnvelope, crc32
+from .acp import ACPEnvelope, crc32, parse_envelope_data
 from .fap import FAPError, run as fap_run
 from .formats import IntegrityDocument, ImprintRecord, SkillIndex, StructuralBaseline
 from .sil import (
@@ -256,22 +256,17 @@ def _resolve_action_ledger(layout: Layout) -> None:
 
     for entry in entries:
         t = entry.get("type", "")
-        try:
-            data = json.loads(entry.get("data", "{}"))
-        except (json.JSONDecodeError, TypeError):
-            data = {}
+        data = parse_envelope_data(entry)
 
         if t == "ACTION_LEDGER":
-            ledger_id = data.get("id")
+            seq = data.get("seq")
             status = data.get("status")
-            if ledger_id and status == "in_progress":
+            if seq is not None and status == "in_progress":
                 unresolved.append(data)
-        elif t in ("SKILL_RESULT", "SKILL_ERROR", "SKILL_TIMEOUT"):
-            ledger_id = data.get("ledger_id")
-            if ledger_id:
-                resolved_ids.add(ledger_id)
+            elif seq is not None and status in ("complete", "failed"):
+                resolved_ids.add(seq)
 
-    pending = [e for e in unresolved if e.get("id") not in resolved_ids]
+    pending = [e for e in unresolved if e.get("seq") not in resolved_ids]
     if not pending:
         return
 
@@ -301,10 +296,7 @@ def _read_crash_count(entries: list[dict]) -> int:
         t = entry.get("type", "")
         if t == "SLEEP_COMPLETE":
             return 0
-        try:
-            data = json.loads(entry.get("data", "{}"))
-        except (json.JSONDecodeError, TypeError):
-            data = {}
+        data = parse_envelope_data(entry)
         cc = data.get("crash_count")
         if t == "HEARTBEAT" and cc is not None:
             return int(cc)
@@ -368,25 +360,19 @@ def _check_critical_conditions(layout: Layout) -> list[dict]:
 
         if t in ("DRIFT_FAULT", "IDENTITY_DRIFT", "SEVERANCE_PENDING", "SIL_UNRESPONSIVE"):
             critical_seqs[seq] = t
-            try:
-                critical_data[seq] = json.loads(entry.get("data", "{}"))
-            except Exception:
-                critical_data[seq] = {}
+            critical_data[seq] = parse_envelope_data(entry)
 
         elif t == "CRITICAL_CLEARED":
+            data = parse_envelope_data(entry)
             try:
-                data = json.loads(entry.get("data", "{}"))
                 clears = int(data.get("clears_seq", -1))
                 cleared_seqs.add(clears)
-            except (json.JSONDecodeError, TypeError, ValueError):
+            except (TypeError, ValueError):
                 pass
 
         elif t == "PROPOSAL_PENDING":
-            try:
-                data = json.loads(entry.get("data", "{}"))
-                pending_proposals.append({"seq": seq, **data})
-            except (json.JSONDecodeError, TypeError):
-                pass
+            data = parse_envelope_data(entry)
+            pending_proposals.append({"seq": seq, **data})
 
     unresolved = {s: t for s, t in critical_seqs.items() if s not in cleared_seqs}
 

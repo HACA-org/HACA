@@ -10,10 +10,12 @@ Usage (always run from inside the entity root):
 
 from __future__ import annotations
 
+import datetime as _dt
 import itertools
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -33,8 +35,8 @@ from . import ui
 
 def _require_entity_root(entity_root: Path) -> None:
     if not (entity_root / ".fcp-entity").exists():
-        print(f"[ERROR] Not an FCP entity root: {entity_root}")
-        print("        Run './fcp init' to initialise one, or cd into an existing entity.")
+        ui.print_err(f"Not an FCP entity root: {entity_root}")
+        ui.print_err("Run './fcp init' to initialise one, or cd into an existing entity.")
         sys.exit(1)
 
 
@@ -311,7 +313,6 @@ def _run_auto(layout: "Layout", cron_id: str) -> None:
         print(f"[SLEEP CYCLE ERROR] {exc}")
 
     # Update last_run in agenda
-    import datetime as _dt
     task["last_run"] = _dt.datetime.utcnow().isoformat() + "Z"
     atomic_write(layout.agenda, agenda)
 
@@ -325,7 +326,6 @@ def _run_auto(layout: "Layout", cron_id: str) -> None:
 
 def _run_auto_worker(layout: "Layout", task: dict, wake_up_message: str) -> None:
     """Run a worker_skill task directly without a CPE session."""
-    import datetime as _dt
     import json
     from .store import atomic_write, read_json
     from .sil import write_notification
@@ -375,38 +375,8 @@ def _run_auto_worker(layout: "Layout", task: dict, wake_up_message: str) -> None
 # ---------------------------------------------------------------------------
 
 def _run_doctor(layout: "Layout", args: list[str]) -> None:
-    from .compliance import run_all, print_report
-    from .operator import fix_integrity_hashes
-    from .sil import clear_beacon, beacon_is_active
-
-    fix = "--fix" in args
-
-    if fix:
-        # Clear distress beacon if active
-        if beacon_is_active(layout):
-            clear_beacon(layout)
-            print("  distress beacon cleared")
-
-        # Remove stale session token
-        if layout.session_token.exists():
-            layout.session_token.unlink()
-            print("  stale session token removed")
-
-        # Repair volatile dirs
-        for d in layout.volatile_dirs():
-            if not d.exists():
-                d.mkdir(parents=True, exist_ok=True)
-                print(f"  created: {d.relative_to(layout.root)}")
-
-        # Recalculate integrity hashes
-        fix_integrity_hashes(layout)
-
-    findings = run_all(layout)
-    print_report(findings)
-
-    failed = [f for f in findings if not f.passed]
-    if failed:
-        print(f"\n  {len(failed)} issue(s) found. Run ./fcp doctor --fix to repair.")
+    from .operator import run_doctor
+    run_doctor(layout, fix="--fix" in args, clear_sentinels=True)
 
 
 # ---------------------------------------------------------------------------
@@ -792,8 +762,7 @@ def _run_init(fcp_ref_root: Path) -> None:
     # ── Step 4: Dependencies ─────────────────────────────────────────────────
     ui.hr("4. Dependencies")
     print()
-    import sys as _sys
-    py_ver = _sys.version_info
+    py_ver = sys.version_info
     py_ok = py_ver >= (3, 10)
     py_str = f"{py_ver.major}.{py_ver.minor}.{py_ver.micro}"
     print(f"  Required:")
@@ -825,12 +794,9 @@ def _run_init(fcp_ref_root: Path) -> None:
         model = ui.pick_one("Model", model_list, indent="  ")
         env_var = API_KEY_ENV[backend]
         current_key_hint = "already configured" if os.environ.get(env_var) else ""
-        hint_str = f" [{current_key_hint}]" if current_key_hint else ""
-        try:
-            api_key = input(f"  {env_var}{hint_str} (leave blank to keep): ").strip()
-        except EOFError:
-            api_key = ""
-        if api_key:
+        default_hint = current_key_hint if current_key_hint else ""
+        api_key = ui.ask(f"{env_var} (leave blank to keep)", default_hint)
+        if api_key and api_key != current_key_hint:
             save_api_key(entity_root.name, env_var, api_key)
             api_key_saved = env_var
 
@@ -880,7 +846,6 @@ def _run_init(fcp_ref_root: Path) -> None:
 
     # ── Step 7: Marker and Runtime dirs ──────────────────────────────────────
     # Create .fcp-entity marker
-    import time
     entity_marker = {
         "version": fcp_version,
         "profile": profile,
@@ -937,7 +902,6 @@ def _run_init(fcp_ref_root: Path) -> None:
 
     # ── Git init + initial commit ────────────────────────────────────────────
     if git_init:
-        import subprocess
         git_ok = False
         try:
             subprocess.run(["git", "init", str(entity_root)], check=True, capture_output=True)
@@ -952,7 +916,7 @@ def _run_init(fcp_ref_root: Path) -> None:
         except FileNotFoundError:
             print("  [!] git not found — skipping.")
 
-    # ── Step 7: Summary ──────────────────────────────────────────────────────
+    # ── Step 8: Summary ──────────────────────────────────────────────────────
     print()
     ui.hr()
     print(f"  Entity created successfully")
@@ -985,16 +949,14 @@ def _run_init(fcp_ref_root: Path) -> None:
     print()
 
 
-_WIDTH = 50
-
-
 def _print_block(label: str, lines: list, color: str = "\x1b[96m") -> None:
     """Print a bordered block with a colored header label and closing border."""
-    border = "─" * (_WIDTH - len(label) - 3)
+    width = ui._W
+    border = "─" * (width - len(label) - 3)
     print(f"{color}╭─ {label} {border}╮{ui.RESET}")
     for line in lines:
         print(f"{ui.DIM}│{ui.RESET} {line}")
-    print(f"{color}╰{'─' * _WIDTH}╯{ui.RESET}")
+    print(f"{color}╰{'─' * width}╯{ui.RESET}")
 
 
 def _print_boot_header(layout: "Layout", index: dict) -> None:
