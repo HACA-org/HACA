@@ -693,7 +693,6 @@ def _run_init(fcp_ref_root: Path) -> None:
     print()
     print(f"  Contributions are welcome. Report issues and security")
     print(f"  vulnerabilities at: https://github.com/HACA-org/HACA")
-    print()
     print(f"  Do not use in production without a prior security review.")
     print(f"  {'─' * W}")
     print()
@@ -709,27 +708,42 @@ def _run_init(fcp_ref_root: Path) -> None:
     dest_input = _ask("Path", str(Path.cwd()))
     entity_root = Path(dest_input).expanduser().resolve()
 
-    _ENTITY_MARKERS = ["fcp_base", "boot.md", "state", "memory", "skills", "hooks", "workspace", "fcp"]
-    existing_markers = [m for m in _ENTITY_MARKERS if (entity_root / m).exists()]
-    is_operational = len(existing_markers) == len(_ENTITY_MARKERS)
-    is_nonempty = len(existing_markers) > 0 or (entity_root.exists() and any(entity_root.iterdir()))
+    # Detection logic
+    is_fcp_entity = (entity_root / "state" / "baseline.json").exists()
+    is_nonempty = entity_root.exists() and any(entity_root.iterdir())
 
-    if is_operational:
-        print(f"\n  [!] An existing entity was found at {entity_root}.")
-        print(f"      Re-initialising will reset state/, memory/ and io/ (back to FAP).")
-        print(f"      fcp_base/, skills/, hooks/, boot.md and persona/ will be preserved.")
-        if not _confirm("Re-initialise?"):
+    keep_persona = False
+    keep_skills = False
+
+    if is_fcp_entity:
+        print(f"\n  [!] Existing FCP entity detected at {entity_root}.")
+        print("      Re-initialising will reset dynamic state (state/, memory/, io/).")
+        print("      Core framework files will be updated to the latest version.")
+        
+        if not _confirm("Proceed with re-initialisation?"):
             sys.exit(0)
+            
+        # Check for assets to preserve
+        if (entity_root / "persona").exists():
+            keep_persona = _confirm("  [?] Preserving CUSTOM persona/ is recommended. Keep current persona?", default=True)
+        if (entity_root / "skills").exists():
+            keep_skills = _confirm("  [?] Keep current skills/ (including custom skills)?", default=True)
+
+        # Cleanup dynamic state
         for d in ["state", "memory", "io"]:
             p = entity_root / d
-            if p.exists():
-                shutil.rmtree(p)
+            if p.exists() and p.is_dir():
+                # We keep baseline.json until Step 6 overwrite, but clear the rest
+                for sub in p.iterdir():
+                    if sub.name != "baseline.json":
+                        if sub.is_dir(): shutil.rmtree(sub)
+                        else: sub.unlink()
     elif is_nonempty:
-        print(f"\n  [!] {entity_root} is not empty but does not look like a complete entity.")
-        missing = [m for m in _ENTITY_MARKERS if m not in existing_markers]
-        print(f"      Missing: {', '.join(missing)}")
-        print(f"      Continuing will write all entity files, overwriting any existing content.")
-        if not _confirm("Continue anyway?"):
+        print(f"\n  [CAUTION] {entity_root} is NOT a HACA entity but it is NOT EMPTY.")
+        print("  Initializing here will overwrite files and may clutter your directory.")
+        print("  It is HIGHLY recommended to use an empty folder for new entities.")
+        print()
+        if not _confirm("Are you ABSOLUTELY sure you want to proceed?"):
             sys.exit(0)
 
     # ── Step 2: Profile ─────────────────────────────────────────────────────
@@ -877,6 +891,13 @@ def _run_init(fcp_ref_root: Path) -> None:
         (fcp_ref_root / "boot.md",   "boot.md"),
         (profile_dir / "persona",    "persona"),
     ]:
+        if dst_name == "persona" and keep_persona:
+            print(f"  [·] Preserving existing persona/")
+            continue
+        if dst_name == "skills" and keep_skills:
+            print(f"  [·] Preserving existing skills/")
+            continue
+
         dst = entity_root / dst_name
         if src.is_dir():
             if dst.exists():
