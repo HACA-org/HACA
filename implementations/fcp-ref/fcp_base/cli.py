@@ -11,7 +11,11 @@ Usage (always run from inside the entity root):
 from __future__ import annotations
 
 import itertools
+import json
+import os
+import shutil
 import sys
+import time
 from pathlib import Path
 
 
@@ -24,6 +28,7 @@ def main() -> None:
 
 
 def _main() -> None:
+    _load_env_file()
     args = sys.argv[1:]
     entity_root = Path.cwd()
 
@@ -142,7 +147,6 @@ def _run_normal(layout: "Layout") -> None:
         print(f"[BOOT FAILED] {exc}")
         sys.exit(1)
 
-    _load_env_file()
 
     try:
         baseline = read_json(layout.baseline)
@@ -253,7 +257,6 @@ def _run_auto(layout: "Layout", cron_id: str) -> None:
         print(f"[BOOT FAILED] {exc}")
         sys.exit(1)
 
-    _load_env_file()
 
     try:
         baseline = read_json(layout.baseline)
@@ -304,7 +307,6 @@ def _run_auto_worker(layout: "Layout", task: dict, wake_up_message: str) -> None
     from .sil import write_notification
     from .exec_ import dispatch
 
-    _load_env_file()
 
     index: dict = {}
     if layout.skills_index.exists():
@@ -470,7 +472,6 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 def _run_model(layout: "Layout") -> None:
-    import os
     from .cpe.base import BACKENDS, KNOWN_MODELS, fetch_ollama_models
     from .store import read_json, atomic_write
 
@@ -607,7 +608,7 @@ def _load_env_file() -> None:
             continue
         key, _, val = line.partition("=")
         key = key.strip()
-        if key and key not in os.environ:
+        if key and not os.environ.get(key):
             os.environ[key] = val.strip()
 
 
@@ -649,9 +650,6 @@ def _read_fcp_version(fcp_ref_root: Path) -> str:
 
 def _run_init(fcp_ref_root: Path) -> None:
     """Interactive init — creates a new entity root from fcp-ref templates."""
-    import json
-    import shutil
-
     W = 60
 
     def _hr(label: str = "") -> None:
