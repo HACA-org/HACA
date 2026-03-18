@@ -17,6 +17,7 @@ from typing import Any
 from .acp import make as acp_encode
 from .sil import write_notification
 from .store import Layout, append_jsonl, read_json
+from . import ui
 
 
 # ---------------------------------------------------------------------------
@@ -290,10 +291,13 @@ def _maybe_prompt_shell_allowlist(
         return output
 
     command = str(params.get("command", "")).strip()
-    print(f"\n  [shell_run] blocked: {command!r}")
+    print()
+    ui.print_warn(f"[shell_run] blocked: {command!r}")
+    items = ["y — allow once", "a — allow always", "N — deny"]
     try:
-        answer = input("  Allow? [y=once / a=always / N=deny]: ").strip().lower()
-    except EOFError:
+        choice = ui.pick_one("Allow?", items, default_idx=2, indent="  ")
+        answer = choice[0].lower()
+    except (KeyboardInterrupt, EOFError):
         answer = "n"
 
     if answer not in ("y", "a"):
@@ -330,7 +334,7 @@ def _shell_allowlist_add(layout: Layout, command: str) -> None:
     tmp = manifest_path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     os.replace(tmp, manifest_path)
-    print(f"  [shell_run] '{command}' added to allowlist_composite.")
+    ui.print_ok(f"[shell_run] '{command}' added to allowlist_composite.")
 
 
 # ---------------------------------------------------------------------------

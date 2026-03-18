@@ -19,6 +19,7 @@ from typing import Any
 from .acp import make as acp_encode
 from .sil import sha256_str as _sha256_str
 from .store import Layout, append_jsonl, atomic_write, load_agenda, read_json
+from . import ui
 
 
 # ---------------------------------------------------------------------------
@@ -112,10 +113,7 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
         inner = p["data"]
         content = inner.get("content", "")
         print(f"\n[EVOLUTION PROPOSAL]\n{content}\n")
-        try:
-            answer = input("Approve? [y/N] ").strip().lower()
-        except EOFError:
-            answer = "n"
+        answer = "y" if ui.confirm("Approve?", default=False) else "n"
         if answer == "y":
             auth_digest = _sha256_str(content)
             authorized.append({
@@ -142,8 +140,6 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
 # Platform commands  §12.3.1
 # ---------------------------------------------------------------------------
 
-_DIM = "\x1b[2m"
-_RESET = "\x1b[0m"
 _CMD_INDENT = "    "  # 4 spaces
 
 
@@ -158,7 +154,7 @@ class _DimWriter:
         else:
             lines = text.split("\n")
             out = "\n".join(
-                f"{_DIM}{_CMD_INDENT}{l}{_RESET}" if l else l
+                f"{ui.DIM}{_CMD_INDENT}{l}{ui.RESET}" if l else l
                 for l in lines
             )
             self._orig.write(out)
@@ -458,12 +454,8 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
             except Exception:
                 current = ""
             if current:
-                try:
-                    answer = input(f"  workspace focus already set to {current!r}. Overwrite? [y/N] ").strip().lower()
-                except EOFError:
-                    answer = "n"
-                if answer != "y":
-                    print("  aborted.")
+                if not ui.confirm(f"workspace focus already set to {current!r}. Overwrite?", default=False):
+                    ui.print_info("aborted.")
                     return
         atomic_write(layout.workspace_focus, {"path": str(target)})
         print(f"  workspace focus set: {target}")
@@ -654,12 +646,9 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
         api_key = os.environ.get(env_var, "")
         if not api_key:
             # Fallback if somehow chosen but no key in env
-            try:
-                api_key = input(f"  {env_var} [not configured]: ").strip()
-                if api_key:
-                    save_api_key(layout.root.name, env_var, api_key)
-            except EOFError:
-                pass
+            api_key = ui.ask(f"{env_var} [not configured]")
+            if api_key:
+                save_api_key(layout.root.name, env_var, api_key)
 
     try:
         new_adapter = make_adapter(backend=backend, model=new_model, api_key=api_key)
@@ -677,31 +666,26 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
 
 def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[str, str] | None:
     """Interactive arrow-key picker organised by provider. Returns (backend, model) or None."""
-    import sys, tty, termios
     from .cpe.base import KNOWN_MODELS, BACKENDS, fetch_ollama_models
+    from .store import API_KEY_ENV
 
-    from .store import API_KEY_ENV, load_env_file
-
-    # Build flat list of "backend:model" labels
     labels: list[str] = []
     pairs: list[tuple[str, str]] = []
 
     for backend in BACKENDS:
-        # User requested: only show models with registered keys (except ollama)
         if backend != "ollama":
             env_var = API_KEY_ENV.get(backend, "")
             if not os.environ.get(env_var):
                 continue
-
         models = fetch_ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
         for m in models:
             active = backend == current_backend and m == current_model
-            label = f"\x1b[1;96m{backend}:{m} ✓\x1b[0m" if active else f"{backend}:{m}"
+            label = f"{ui.BOLD_CYAN}{backend}:{m} ✓{ui.RESET}" if active else f"{backend}:{m}"
             labels.append(label)
             pairs.append((backend, m))
 
     if not labels:
-        print("  no models available")
+        ui.print_info("no models available")
         return None
 
     sel_idx = next(
@@ -709,46 +693,13 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
         0,
     )
 
-    first_render = True
-
-    def _render(sidx: int) -> None:
-        nonlocal first_render
-        if not first_render:
-            sys.stdout.write(f"\033[{len(labels)}A")
-        first_render = False
-        for i, label in enumerate(labels):
-            prefix = " > " if i == sidx else "   "
-            sys.stdout.write(f"\r{prefix}{label}\033[K\n")
-        sys.stdout.flush()
-
-    print("Select model (↑↓ to move, Enter to confirm, Ctrl+C to cancel):")
-    _render(sel_idx)
-
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
     try:
-        tty.setraw(fd)
-        while True:
-            ch = sys.stdin.read(1)
-            if ch in ("\r", "\n"):
-                break
-            if ch == "\x03":
-                print()
-                return None
-            if ch == "\x1b":
-                ch2 = sys.stdin.read(1)
-                ch3 = sys.stdin.read(1)
-                if ch2 == "[":
-                    if ch3 == "A" and sel_idx > 0:
-                        sel_idx -= 1
-                    elif ch3 == "B" and sel_idx < len(labels) - 1:
-                        sel_idx += 1
-            _render(sel_idx)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        chosen = ui.pick_one("Select model", labels, default_idx=sel_idx, indent="  ")
+    except KeyboardInterrupt:
+        return None
 
-    print()
-    return pairs[sel_idx]
+    chosen_idx = next(i for i, lbl in enumerate(labels) if lbl == chosen)
+    return pairs[chosen_idx]
 
 
 def _cmd_endure(layout: Layout, args: list[str]) -> None:
@@ -917,10 +868,9 @@ def _cron_add_interactive(layout: Layout) -> None:
     values: dict[str, str] = {}
     print()
     for key, prompt in fields:
-        try:
-            val = input(f"  {prompt}").strip()
-        except EOFError:
-            print("\n  aborted.")
+        val = ui.ask(prompt.rstrip(": "))
+        if val == "" and key in ("description", "task", "schedule"):
+            ui.print_info("aborted.")
             return
         values[key] = val
 
@@ -941,12 +891,9 @@ def _cron_add_interactive(layout: Layout) -> None:
     print(f"  task          : {values['task']}")
     print(f"  schedule      : {values['schedule']}")
     print(f"  wake_up_msg   : {wake_up_message}")
-    try:
-        confirm = input("\n  Save and approve? [y/N] ").strip().lower()
-    except EOFError:
-        confirm = "n"
-    if confirm != "y":
-        print("  aborted.")
+    print()
+    if not ui.confirm("Save and approve?", default=False):
+        ui.print_info("aborted.")
         return
 
     import uuid as _uuid
@@ -1105,18 +1052,9 @@ def _cmi_start(layout: Layout) -> None:
     cmi_cfg = baseline.get("cmi", {})
     existing_host = cmi_cfg.get("host", "")
     if existing_host:
-        try:
-            new_host = input(f"  CMI endpoint [{existing_host}]: ").strip()
-        except EOFError:
-            new_host = ""
-        host = new_host if new_host else existing_host
+        host = ui.ask("CMI endpoint", default=existing_host)
     else:
-        try:
-            host = input("  CMI endpoint [localhost:7000]: ").strip()
-        except EOFError:
-            host = ""
-        if not host:
-            host = "localhost:7000"
+        host = ui.ask("CMI endpoint", default="localhost:7000")
 
     # build proposal content — sleep cycle applies and covers in Integrity Document
     credential_content = _json.dumps({
@@ -1292,15 +1230,15 @@ def _cmi_contacts_add(layout: Layout) -> None:
     """Interactively add a contact from a peer's invite token."""
     from .cmi.identity import import_invite_token
 
-    print("  paste the invite token from the peer Operator:")
+    ui.print_info("paste the invite token from the peer Operator:")
     try:
-        token = input("  token> ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print("\n  cancelled")
+        token = ui.ask("token")
+    except KeyboardInterrupt:
+        ui.print_info("cancelled")
         return
 
     if not token:
-        print("  cancelled — no token provided")
+        ui.print_info("cancelled — no token provided")
         return
 
     try:
@@ -1316,14 +1254,8 @@ def _cmi_contacts_add(layout: Layout) -> None:
     print(f"  pubkey   : {contact['pubkey'][:16]}...")
     print()
 
-    try:
-        confirm = input("  add this contact? [y/N] ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print("\n  cancelled")
-        return
-
-    if confirm != "y":
-        print("  cancelled")
+    if not ui.confirm("add this contact?", default=False):
+        ui.print_info("cancelled")
         return
 
     # Write contact to baseline.cmi.contacts
@@ -1429,24 +1361,19 @@ def _cmi_channel_create_interactive(layout: Layout, baseline: dict, cred: dict) 
     print()
 
     try:
-        sel = input("  select contact index> ").strip()
+        sel = ui.ask("select contact index")
         idx = int(sel)
         if idx < 0 or idx >= len(contacts):
             raise ValueError()
     except (ValueError, KeyboardInterrupt, EOFError):
-        print("  cancelled")
+        ui.print_info("cancelled")
         return None
 
     contact = contacts[idx]
 
-    try:
-        task = input("  task description> ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print("\n  cancelled")
-        return None
-
+    task = ui.ask("task description")
     if not task:
-        print("  cancelled — task is required")
+        ui.print_info("cancelled — task is required")
         return None
 
     chan_id = f"chan_{int(_time.time())}"

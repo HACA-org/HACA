@@ -28,6 +28,7 @@ from .store import (
     read_json,
     save_api_key,
 )
+from . import ui
 
 
 def _require_entity_root(entity_root: Path) -> None:
@@ -435,10 +436,9 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
     # Check for partial decommission
     partial = _decom.detect_partial(layout)
     if partial:
-        print(f"[FCP] Partial decommission detected (phase: {partial.get('phase')}, mode: {partial.get('mode')}).")
-        answer = input("Resume? [yes/no] ").strip().lower()
-        if answer != "yes":
-            print("Aborted.")
+        ui.print_warn(f"Partial decommission detected (phase: {partial.get('phase')}, mode: {partial.get('mode')}).")
+        if not ui.confirm("Resume?", default=False):
+            print("  Aborted.")
             sys.exit(0)
         mode = partial.get("mode", mode)
         # Resume from where it stopped — skip boot and session
@@ -450,10 +450,9 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
 
     # --destroy requires explicit confirmation
     if do_destroy:
-        print(f"[FCP] WARNING: This will permanently destroy the entity at {layout.root}.")
-        answer = input("Type 'yes' to confirm destruction: ").strip().lower()
-        if answer != "yes":
-            print("Aborted.")
+        ui.print_warn(f"This will permanently destroy the entity at {layout.root}.")
+        if not ui.confirm("Permanently destroy entity?", default=False):
+            print("  Aborted.")
             sys.exit(0)
 
     try:
@@ -528,7 +527,7 @@ def _run_model(layout: "Layout") -> None:
         (i for i, (b, m) in enumerate(pairs) if b == current_backend and m == current_model),
         0,
     )
-    chosen_label = _pick_from_list("Select provider and model", items, default_idx)
+    chosen_label = ui.pick_one("Select provider and model", items, default_idx, indent="  ")
     # find the pair that matches the chosen label (strip marker)
     chosen_idx = next(i for i, lbl in enumerate(items) if lbl == chosen_label)
     backend, model = pairs[chosen_idx]
@@ -538,11 +537,9 @@ def _run_model(layout: "Layout") -> None:
         env_var = API_KEY_ENV.get(backend, "")
         if env_var:
             current_key_hint = "already configured" if os.environ.get(env_var) else "not configured"
-            try:
-                api_key = input(f"{env_var} [{current_key_hint}] (leave blank to keep): ").strip()
-            except EOFError:
-                api_key = ""
-            if api_key:
+            api_key = ui.ask(f"{env_var} (leave blank to keep)", default=current_key_hint if not os.environ.get(env_var) else "")
+            # treat hint string as empty — only save if user typed a real key
+            if api_key and api_key != current_key_hint:
                 save_api_key(layout.root.name, env_var, api_key)
 
     cpe_cfg["backend"] = backend
@@ -563,122 +560,6 @@ def _run_model(layout: "Layout") -> None:
 # ---------------------------------------------------------------------------
 
 
-
-def _pick_from_list(prompt: str, items: list[str], default_idx: int = 0, indent: str = "") -> str:
-    """Generic interactive arrow-key picker. Falls back to text input on error."""
-    import tty, termios
-
-    if not sys.stdin.isatty():
-        # Fallback for non-interactive environments
-        return input(f"{indent}{prompt}: ").strip()
-
-    if not items:
-        return input(f"{indent}{prompt}: ").strip()
-
-    selected = default_idx
-    first_render = True
-
-    def _render(idx: int) -> None:
-        nonlocal first_render
-        if not first_render:
-            sys.stdout.write(f"\033[{len(items)}A")
-        first_render = False
-        for i, name in enumerate(items):
-            if i == idx:
-                # Highlight selected with bold cyan
-                sys.stdout.write(f"\r{indent} \x1b[1;96m> {name}\x1b[0m\033[K\n")
-            else:
-                sys.stdout.write(f"\r{indent}   {name}\033[K\n")
-        sys.stdout.flush()
-
-    print(f"{indent}{prompt} (↑↓ to move, Enter to confirm):")
-    _render(selected)
-
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        while True:
-            ch = sys.stdin.read(1)
-            if ch in ("\r", "\n"):
-                break
-            if ch == "\x03":
-                raise KeyboardInterrupt
-            if ch == "\x1b":
-                ch2 = sys.stdin.read(1)
-                ch3 = sys.stdin.read(1)
-                if ch2 == "[":
-                    if ch3 == "A" and selected > 0:
-                        selected -= 1
-                    elif ch3 == "B" and selected < len(items) - 1:
-                        selected += 1
-            _render(selected)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-
-    print()
-    return items[selected]
-
-
-def _pick_multiple_from_list(prompt: str, items: list[str], defaults: list[bool], indent: str = "") -> list[bool]:
-    """Interactive multi-select picker (Space to toggle, Enter to confirm)."""
-    import tty, termios
-
-    if not sys.stdin.isatty():
-        return defaults
-
-    if not items:
-        return defaults
-
-    states = list(defaults)
-    selected = 0
-    first_render = True
-
-    def _render(idx: int) -> None:
-        nonlocal first_render
-        if not first_render:
-            sys.stdout.write(f"\033[{len(items)}A")
-        first_render = False
-        for i, name in enumerate(items):
-            mark = "[x]" if states[i] else "[ ]"
-            if i == idx:
-                # Highlight selected with bold cyan
-                sys.stdout.write(f"\r{indent} \x1b[1;96m> {mark} {name}\x1b[0m\033[K\n")
-            else:
-                sys.stdout.write(f"\r{indent}   {mark} {name}\033[K\n")
-        sys.stdout.flush()
-
-    print(f"{indent}{prompt} (↑↓ to move, Space to toggle, Enter to confirm):")
-    _render(selected)
-
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        while True:
-            ch = sys.stdin.read(1)
-            if ch == " ":
-                states[selected] = not states[selected]
-            elif ch in ("\r", "\n"):
-                break
-            elif ch == "\x03":
-                raise KeyboardInterrupt
-            elif ch == "\x1b":
-                ch2 = sys.stdin.read(1)
-                ch3 = sys.stdin.read(1)
-                if ch2 == "[":
-                    if ch3 == "A" and selected > 0:
-                        selected -= 1
-                    elif ch3 == "B" and selected < len(items) - 1:
-                        selected += 1
-            _render(selected)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-
-    print()
-    return states
-
-
 def _read_fcp_version(fcp_ref_root: Path) -> str:
     """Read FCP version from pyproject.toml in fcp_ref_root."""
     try:
@@ -694,74 +575,42 @@ def _read_fcp_version(fcp_ref_root: Path) -> str:
 
 def _run_init(fcp_ref_root: Path) -> None:
     """Interactive init — creates a new entity root from fcp-ref templates."""
-    W = 60
-
-    def _hr(label: str = "") -> None:
-        if label:
-            pad = W - len(label) - 4
-            print(f"\n  ── {label} {'─' * pad}")
-        else:
-            print(f"  {'─' * W}")
-
-    def _ask(prompt: str, default: str = "") -> str:
-        hint = f" [{default}]" if default else ""
-        try:
-            val = input(f"  {prompt}{hint}: ").strip()
-        except EOFError:
-            val = ""
-        return val or default
-
-    def _confirm(prompt: str, default: bool = False) -> bool:
-        if not sys.stdin.isatty():
-            hint = "Y/n" if default else "y/N"
-            try:
-                val = input(f"  {prompt} [{hint}]: ").strip().lower()
-            except EOFError:
-                val = ""
-            if not val:
-                return default
-            return val.startswith("y")
-        
-        items = ["Yes", "No"]
-        choice = _pick_from_list(prompt, items, default_idx=(0 if default else 1), indent="  ")
-        return choice == "Yes"
-
     fcp_version = _read_fcp_version(fcp_ref_root)
 
     # ── Header ──────────────────────────────────────────────────────────────
     print()
-    print(f"  {'─' * W}")
+    ui.hr()
     print(f"  FCP — Filesystem Cognitive Platform v{fcp_version}")
     print(f"  HACA — Host-Agnostic Cognitive Architecture v1.0")
-    print(f"  {'─' * W}")
+    ui.hr()
     print(f"  FCP is a reference implementation of HACA and may contain")
     print(f"  errors. HACA is an open architecture specification for")
     print(f"  persistent cognitive entities.")
     print()
     print(f"  Contributions are welcome. Report issues and security")
     print(f"  vulnerabilities at: https://github.com/HACA-org/HACA")
-    print(f"  {'─' * W}")
+    ui.hr()
     print()
-    print(f"  [!] WARNING: EXPERIMENTAL SYSTEM")
-    print(f"  {'─' * W}")
+    ui.print_warn("WARNING: EXPERIMENTAL SYSTEM")
+    ui.hr()
     print(f"  Despite integrated safety mechanisms, this is experimental")
     print(f"  software. Use may result in data loss, host environment")
     print(f"  damage, or leakage of sensitive information.")
     print()
     print(f"  Do not use in production without a prior security review.")
     print(f"  By continuing, you acknowledge and accept these risks.")
-    print(f"  {'─' * W}")
+    ui.hr()
     print()
-    if not _confirm("Continue?"):
+    if not ui.confirm("Continue?"):
         sys.exit(0)
 
     # ── Step 1: Destination ─────────────────────────────────────────────────
-    _hr("1. Entity destination")
+    ui.hr("1. Entity destination")
     print()
     print("  Where should the entity root be created?")
     print("  Leave blank to use the current directory.")
     print()
-    dest_input = _ask("Path", str(Path.cwd()))
+    dest_input = ui.ask("Path", str(Path.cwd()))
     entity_root = Path(dest_input).expanduser().resolve()
 
     # Detection logic
@@ -770,7 +619,8 @@ def _run_init(fcp_ref_root: Path) -> None:
     is_nonempty = entity_root.exists() and any(entity_root.iterdir())
 
     if is_fcp_ref:
-        print(f"\n  [ERROR] {entity_root} is the HACA/FCP source directory (contains .fcp-base).")
+        print()
+        ui.print_err(f"{entity_root} is the HACA/FCP source directory (contains .fcp-base).")
         print("          You cannot install an entity here. Choose another path.")
         sys.exit(1)
 
@@ -783,23 +633,24 @@ def _run_init(fcp_ref_root: Path) -> None:
     fap_only = False
 
     if is_fcp_entity:
-        print(f"\n  [!] Existing FCP entity detected at {entity_root}.")
+        print()
+        ui.print_warn(f"Existing FCP entity detected at {entity_root}.")
         action_items = [
             "Quick Reset (FAP)  — Wipe dynamic state (state/, memory/, io/)",
             "Custom Re-init     — Granularly choose what to keep/overwrite",
             "Cancel",
         ]
-        choice_label = _pick_from_list("Select an action", action_items, default_idx=0, indent="  ")
+        choice_label = ui.pick_one("Select an action", action_items, default_idx=0, indent="  ")
         choice_idx = action_items.index(choice_label)
-        
+
         if choice_idx == 2: # Cancel
             sys.exit(0)
         elif choice_idx == 0: # Quick Reset
             fap_only = True
         else: # Custom Re-init
-            _hr("Update configuration")
+            ui.hr("Update configuration")
             print("      Current files will be OVERWRITTEN by templates unless kept (checked).")
-            
+
             reinit_items = [
                 "persona/   (personality and operator history)",
                 "skills/    (custom tools and reasoning units)",
@@ -810,8 +661,8 @@ def _run_init(fcp_ref_root: Path) -> None:
             ]
             # default: keep almost everything except fcp_base (usually what people want to update)
             reinit_defaults = [True, True, False, True, True, True]
-            
-            states = _pick_multiple_from_list(
+
+            states = ui.pick_many(
                 "Select components to KEEP (skip to overwrite)",
                 reinit_items,
                 reinit_defaults,
@@ -827,29 +678,31 @@ def _run_init(fcp_ref_root: Path) -> None:
                     if sub.name != "baseline.json":
                         if sub.is_dir(): shutil.rmtree(sub)
                         else: sub.unlink()
-        
+
         if fap_only:
-            print("\n  [√] Dynamic state cleared. Entity is ready for FAP.")
+            print()
+            ui.print_ok("Dynamic state cleared. Entity is ready for FAP.")
             print(f"      Run: cd {entity_root} && ./fcp")
             print()
             sys.exit(0)
-            
+
     elif is_nonempty:
-        print(f"\n  [CAUTION] {entity_root} is NOT a HACA entity but it is NOT EMPTY.")
+        print()
+        ui.print_warn(f"{entity_root} is NOT a HACA entity but it is NOT EMPTY.")
         print("  Initializing here will overwrite files and may clutter your directory.")
         print("  It is HIGHLY recommended to use an empty folder for new entities.")
         print()
-        if not _confirm("Are you ABSOLUTELY sure you want to proceed?"):
+        if not ui.confirm("Are you ABSOLUTELY sure you want to proceed?"):
             sys.exit(0)
 
     # ── Git init ────────────────────────────────────────────────────────────
     git_init = False
     if not (entity_root / ".git").exists():
         print()
-        git_init = _confirm("Initialise a git repository in the entity root?", default=True)
+        git_init = ui.confirm("Initialise a git repository in the entity root?", default=True)
 
     # ── Step 2: Profile ─────────────────────────────────────────────────────
-    _hr("2. Profile")
+    ui.hr("2. Profile")
     print()
     print("  HACA-Core — Zero-autonomy")
     print("    Every structural change and evolution requires explicit Operator")
@@ -864,14 +717,14 @@ def _run_init(fcp_ref_root: Path) -> None:
         "HACA-Core   — Zero-autonomy",
         "HACA-Evolve — Supervised autonomy",
     ]
-    profile_choice = _pick_from_list("Profile", profile_items, default_idx=0, indent="  ")
+    profile_choice = ui.pick_one("Profile", profile_items, default_idx=0, indent="  ")
     profile = "haca-core" if profile_items.index(profile_choice) == 0 else "haca-evolve"
     haca_profile = "HACA-Core-1.0.0" if profile == "haca-core" else "HACA-Evolve-1.0.0"
 
     # ── Step 3: Evolve scope (only for haca-evolve) ─────────────────────────
     evolve_scope: dict = {}
     if profile == "haca-evolve":
-        _hr("3. Autonomous scope")
+        ui.hr("3. Autonomous scope")
         print()
         print("  Define what this entity is authorised to do autonomously.")
         print("  These permissions can be revoked by re-initialising.")
@@ -881,14 +734,14 @@ def _run_init(fcp_ref_root: Path) -> None:
         print("      The entity may modify its own entity root freely, including")
         print("      its own code. WARNING: this grants unrestricted write access")
         print("      to the entire entity root.")
-        allow_evolution = _confirm("      Authorise?")
+        allow_evolution = ui.confirm("Authorise?", indent="      ")
 
         print()
         print("  [2] Autonomous skill creation and installation")
         print("      The entity may create and install new skills without approval.")
         print("      WARNING: skills run as Python code with full access to the")
         print("      entity root. Only enable if you trust the entity's judgment.")
-        allow_skills = _confirm("      Authorise?")
+        allow_skills = ui.confirm("Authorise?", indent="      ")
 
         print()
         print("  [3] Cognitive Mesh Interface (CMI) access")
@@ -902,7 +755,7 @@ def _run_init(fcp_ref_root: Path) -> None:
             "public  — Public channels only",
             "both    — Private and public channels",
         ]
-        cmi_choice = _pick_from_list("CMI access", cmi_items, default_idx=0, indent="      ")
+        cmi_choice = ui.pick_one("CMI access", cmi_items, default_idx=0, indent="      ")
         cmi_scope = cmi_choice.split()[0]
 
         print()
@@ -912,21 +765,21 @@ def _run_init(fcp_ref_root: Path) -> None:
         print("      tokens, passwords). NOTE: you are also responsible for not")
         print("      sharing secrets directly in conversation — the entity cannot")
         print("      protect what it never receives.")
-        allow_memory = _confirm("      Authorise?")
+        allow_memory = ui.confirm("Authorise?", indent="      ")
 
         print()
         print("  [5] Scope renewal interval")
         print("      These authorisations will expire and the entity will pause")
         print("      until you renew them. Enter 0 to disable expiry.")
         while True:
-            renewal_input = _ask("      Renewal interval in days", "30")
+            renewal_input = ui.ask("Renewal interval in days", "30")
             try:
                 renewal_days = int(renewal_input)
                 if renewal_days >= 0:
                     break
             except ValueError:
                 pass
-            print("  [ERROR] Please enter a non-negative integer.")
+            ui.print_err("Please enter a non-negative integer.")
 
         evolve_scope = {
             "autonomous_evolution": allow_evolution,
@@ -937,7 +790,7 @@ def _run_init(fcp_ref_root: Path) -> None:
         }
 
     # ── Step 4: Dependencies ─────────────────────────────────────────────────
-    _hr("4. Dependencies")
+    ui.hr("4. Dependencies")
     print()
     import sys as _sys
     py_ver = _sys.version_info
@@ -946,7 +799,8 @@ def _run_init(fcp_ref_root: Path) -> None:
     print(f"  Required:")
     print(f"    python >= 3.10    {'✓ ' + py_str if py_ok else '✗ ' + py_str + ' — REQUIRED'}")
     if not py_ok:
-        print("\n  [ERROR] Python 3.10 or higher is required.")
+        print()
+        ui.print_err("Python 3.10 or higher is required.")
         sys.exit(1)
     print()
     print(f"  Optional (not yet available — coming in a future release):")
@@ -954,21 +808,21 @@ def _run_init(fcp_ref_root: Path) -> None:
     print(f"    textual           — interactive TUI (web panel, session dashboard)")
 
     # ── Step 5: CPE backend and model ────────────────────────────────────────
-    _hr("5. CPE backend and model")
+    ui.hr("5. CPE backend and model")
     print()
     from .cpe.base import BACKENDS, KNOWN_MODELS, fetch_ollama_models
-    backend = _pick_from_list("Backend", BACKENDS, indent="  ")
+    backend = ui.pick_one("Backend", BACKENDS, indent="  ")
 
     api_key_saved: str | None = None
     if backend == "ollama":
         ollama_models = fetch_ollama_models()
         if ollama_models:
-            model = _pick_from_list("Model", ollama_models, indent="  ")
+            model = ui.pick_one("Model", ollama_models, indent="  ")
         else:
-            model = _ask("Model", "llama3.2")
+            model = ui.ask("Model", "llama3.2")
     else:
         model_list = KNOWN_MODELS[backend]
-        model = _pick_from_list("Model", model_list, indent="  ")
+        model = ui.pick_one("Model", model_list, indent="  ")
         env_var = API_KEY_ENV[backend]
         current_key_hint = "already configured" if os.environ.get(env_var) else ""
         hint_str = f" [{current_key_hint}]" if current_key_hint else ""
@@ -981,7 +835,7 @@ def _run_init(fcp_ref_root: Path) -> None:
             api_key_saved = env_var
 
     # ── Step 6: Copy snapshot and create runtime dirs ────────────────────────
-    _hr("6. Creating entity")
+    ui.hr("6. Creating entity")
     print()
     entity_root.mkdir(parents=True, exist_ok=True)
 
@@ -1100,9 +954,9 @@ def _run_init(fcp_ref_root: Path) -> None:
 
     # ── Step 7: Summary ──────────────────────────────────────────────────────
     print()
-    print(f"  {'─' * W}")
+    ui.hr()
     print(f"  Entity created successfully")
-    print(f"  {'─' * W}")
+    ui.hr()
     print(f"  path:         {entity_root}")
     print(f"  profile:      {haca_profile}")
     print(f"  fcp version:  v{fcp_version}")
@@ -1119,12 +973,12 @@ def _run_init(fcp_ref_root: Path) -> None:
         print(f"    operator memory:       {'yes' if evolve_scope['operator_memory'] else 'no'}")
         renewal = evolve_scope['renewal_days']
         print(f"    renewal:               {'every ' + str(renewal) + ' days' if renewal > 0 else 'disabled'}")
-    print(f"  {'─' * W}")
+    ui.hr()
     print(f"  dependencies:")
     print(f"    python {py_str}          ✓")
     print(f"    rich                   — not installed (optional)")
     print(f"    textual                — not installed (optional)")
-    print(f"  {'─' * W}")
+    ui.hr()
     print()
     print(f"  First boot will run FAP (First Activation Protocol).")
     print(f"  Run:  cd {entity_root} && ./fcp")
@@ -1132,17 +986,15 @@ def _run_init(fcp_ref_root: Path) -> None:
 
 
 _WIDTH = 50
-_RESET = "\x1b[0m"
-_DIM = "\x1b[2m"
 
 
 def _print_block(label: str, lines: list, color: str = "\x1b[96m") -> None:
     """Print a bordered block with a colored header label and closing border."""
     border = "─" * (_WIDTH - len(label) - 3)
-    print(f"{color}╭─ {label} {border}╮{_RESET}")
+    print(f"{color}╭─ {label} {border}╮{ui.RESET}")
     for line in lines:
-        print(f"{_DIM}│{_RESET} {line}")
-    print(f"{color}╰{'─' * _WIDTH}╯{_RESET}")
+        print(f"{ui.DIM}│{ui.RESET} {line}")
+    print(f"{color}╰{'─' * _WIDTH}╯{ui.RESET}")
 
 
 def _print_boot_header(layout: "Layout", index: dict) -> None:

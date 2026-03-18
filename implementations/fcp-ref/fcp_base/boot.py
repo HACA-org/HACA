@@ -32,6 +32,7 @@ from .sil import (
     verify_structural_files,
 )
 from .store import Layout, append_jsonl, read_json, read_jsonl
+from . import ui
 
 
 class BootError(Exception):
@@ -274,14 +275,20 @@ def _resolve_action_ledger(layout: Layout) -> None:
     if not pending:
         return
 
-    print("\n=== Crash Recovery: Unresolved Actions ===")
-    print("The following skills were in-progress when the session crashed:\n")
-    for item in pending:
-        print(f"  skill: {item.get('skill')}  id: {item.get('id')}")
     print()
-    print("These will NOT be re-executed automatically.")
-    print("Please investigate and re-run manually if needed.")
-    input("Press Enter to continue boot...")
+    ui.hr("Crash Recovery")
+    ui.print_warn("The following skills were in-progress when the session crashed:")
+    print()
+    for item in pending:
+        print(f"    skill: {item.get('skill')}  id: {item.get('id')}")
+    print()
+    ui.print_info("These will NOT be re-executed automatically.")
+    ui.print_info("Please investigate and re-run manually if needed.")
+    print()
+    try:
+        input("  Press Enter to continue boot...")
+    except EOFError:
+        pass
 
 
 def _int_or_zero(v: int | None) -> int:
@@ -472,16 +479,16 @@ def _try_resolve_severance(
     skill_name = data.get("skill", "<unknown>")
     issues = data.get("issues", [])
 
-    print(f"\n[SEVERANCE PENDING] Skill '{skill_name}' was removed mid-session.")
+    print()
+    ui.print_warn(f"[SEVERANCE PENDING] Skill '{skill_name}' was removed mid-session.")
     if issues:
-        print("  Issues detected:")
+        ui.print_info("Issues detected:")
         for issue in issues:
-            print(f"    - {issue}")
-    print("  Options: approve (keep removed) | reject (re-audit and restore if clean)")
-    try:
-        answer = input("  Decision [approve/reject]: ").strip().lower()
-    except EOFError:
-        answer = "approve"
+            print(f"      - {issue}")
+    print()
+    items = ["approve — keep removed", "reject  — re-audit and restore if clean"]
+    choice = ui.pick_one("Decision", items, default_idx=0, indent="  ")
+    answer = choice.split()[0]
 
     if answer == "approve":
         log_cleared(layout, seq)
