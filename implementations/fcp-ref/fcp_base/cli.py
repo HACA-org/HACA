@@ -514,7 +514,7 @@ def _run_model(layout: "Layout") -> None:
     if backend != "ollama":
         env_var = _API_KEY_ENV.get(backend, "")
         if env_var:
-            current_key_hint = "set" if os.environ.get(env_var) else "not set"
+            current_key_hint = "already configured" if os.environ.get(env_var) else "not configured"
             try:
                 api_key = input(f"{env_var} [{current_key_hint}] (leave blank to keep): ").strip()
             except EOFError:
@@ -891,8 +891,10 @@ def _run_init(fcp_ref_root: Path) -> None:
         model_list = KNOWN_MODELS[backend]
         model = _pick_from_list("Model", model_list, indent="  ")
         env_var = _API_KEY_ENV[backend]
+        current_key_hint = "already configured" if os.environ.get(env_var) else ""
+        hint_str = f" [{current_key_hint}]" if current_key_hint else ""
         try:
-            api_key = input(f"  {env_var}: ").strip()
+            api_key = input(f"  {env_var}{hint_str} (leave blank to keep): ").strip()
         except EOFError:
             api_key = ""
         if api_key:
