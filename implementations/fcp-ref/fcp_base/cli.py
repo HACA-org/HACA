@@ -709,35 +709,60 @@ def _run_init(fcp_ref_root: Path) -> None:
     entity_root = Path(dest_input).expanduser().resolve()
 
     # Detection logic
-    is_fcp_entity = (entity_root / "state" / "baseline.json").exists()
+    is_fcp_ref = (entity_root / ".fcp-base").exists()
+    is_fcp_entity = (entity_root / ".fcp-entity").exists() or (entity_root / "state" / "baseline.json").exists()
     is_nonempty = entity_root.exists() and any(entity_root.iterdir())
+
+    if is_fcp_ref:
+        print(f"\n  [ERROR] {entity_root} is the HACA/FCP source directory (contains .fcp-base).")
+        print("          You cannot install an entity here. Choose another path.")
+        sys.exit(1)
 
     keep_persona = False
     keep_skills = False
+    keep_boot = False
+    keep_hooks = False
+    keep_tests = False
+    keep_fcp_base = False
+    fap_only = False
 
     if is_fcp_entity:
         print(f"\n  [!] Existing FCP entity detected at {entity_root}.")
-        print("      Re-initialising will reset dynamic state (state/, memory/, io/).")
-        print("      Core framework files will be updated to the latest version.")
+        _hr("Select an action")
+        print("    [1] Quick Reset (FAP) — Wipe state/, memory/, io/ only.")
+        print("    [2] Custom Re-init — Select core sections to update/preserve.")
+        print("    [3] Cancel.")
+        choice = _ask("Choice", "1")
         
-        if not _confirm("Proceed with re-initialisation?"):
+        if choice == "3":
             sys.exit(0)
-            
-        # Check for assets to preserve
-        if (entity_root / "persona").exists():
-            keep_persona = _confirm("  [?] Preserving CUSTOM persona/ is recommended. Keep current persona?", default=True)
-        if (entity_root / "skills").exists():
-            keep_skills = _confirm("  [?] Keep current skills/ (including custom skills)?", default=True)
+        elif choice == "1":
+            fap_only = True
+        else: # Custom Re-init
+            _hr("Update configuration")
+            print("      Current files will be OVERWRITTEN by templates unless kept.")
+            keep_persona = _confirm("      [?] KEEP current persona/ (highly recommended)?", default=True)
+            keep_skills = _confirm("      [?] KEEP current skills/ (protect custom tools)?", default=True)
+            keep_fcp_base = _confirm("      [?] KEEP current fcp_base/ (engine core)?", default=False)
+            keep_tests = _confirm("      [?] KEEP current tests/?", default=True)
+            keep_hooks = _confirm("      [?] KEEP current hooks/?", default=True)
+            keep_boot = _confirm("      [?] KEEP current boot.md?", default=True)
 
         # Cleanup dynamic state
         for d in ["state", "memory", "io"]:
             p = entity_root / d
             if p.exists() and p.is_dir():
-                # We keep baseline.json until Step 6 overwrite, but clear the rest
                 for sub in p.iterdir():
                     if sub.name != "baseline.json":
                         if sub.is_dir(): shutil.rmtree(sub)
                         else: sub.unlink()
+        
+        if fap_only:
+            print("\n  [√] Dynamic state cleared. Entity is ready for FAP.")
+            print(f"      Run: cd {entity_root} && ./fcp")
+            print()
+            sys.exit(0)
+            
     elif is_nonempty:
         print(f"\n  [CAUTION] {entity_root} is NOT a HACA entity but it is NOT EMPTY.")
         print("  Initializing here will overwrite files and may clutter your directory.")
@@ -888,6 +913,7 @@ def _run_init(fcp_ref_root: Path) -> None:
         (fcp_ref_root / "fcp_base",  "fcp_base"),
         (fcp_ref_root / "skills",    "skills"),
         (fcp_ref_root / "hooks",     "hooks"),
+        (fcp_ref_root / "tests",     "tests"),
         (fcp_ref_root / "boot.md",   "boot.md"),
         (profile_dir / "persona",    "persona"),
     ]:
@@ -897,14 +923,38 @@ def _run_init(fcp_ref_root: Path) -> None:
         if dst_name == "skills" and keep_skills:
             print(f"  [·] Preserving existing skills/")
             continue
+        if dst_name == "fcp_base" and keep_fcp_base:
+            print(f"  [·] Preserving existing fcp_base/")
+            continue
+        if dst_name == "tests" and keep_tests:
+            print(f"  [·] Preserving existing tests/")
+            continue
+        if dst_name == "hooks" and keep_hooks:
+            print(f"  [·] Preserving existing hooks/")
+            continue
+        if dst_name == "boot.md" and keep_boot:
+            print(f"  [·] Preserving existing boot.md")
+            continue
 
         dst = entity_root / dst_name
+        if not src.exists(): continue
         if src.is_dir():
             if dst.exists():
                 shutil.rmtree(dst)
             shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
         elif src.is_file():
             shutil.copy2(src, dst)
+
+    # ── Step 7: Marker and Runtime dirs ──────────────────────────────────────
+    # Create .fcp-entity marker
+    import time
+    entity_marker = {
+        "version": fcp_version,
+        "profile": profile,
+        "haca_profile": haca_profile,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    (entity_root / ".fcp-entity").write_text(json.dumps(entity_marker, indent=2), encoding="utf-8")
 
     # Copy fcp CLI entrypoint
     fcp_cli_src = fcp_ref_root / "fcp"
