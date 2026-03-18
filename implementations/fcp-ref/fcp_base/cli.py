@@ -120,10 +120,20 @@ def _main() -> None:
         _run_model(Layout(entity_root))
         return
 
-    if cmd == "endure" and rest and rest[0] == "sync":
+    if cmd == "endure" and rest:
         from .store import Layout
         _require_entity_root(entity_root)
-        _run_endure_sync(Layout(entity_root))
+        sub = rest[0]
+        if sub == "sync":
+            _run_endure_sync(Layout(entity_root))
+        elif sub == "origin":
+            _run_endure_origin(Layout(entity_root))
+        elif sub == "chain":
+            _run_endure_chain(Layout(entity_root))
+        else:
+            ui.print_err(f"Unknown endure subcommand: {sub}")
+            print("  usage: ./fcp endure sync | origin | chain")
+            sys.exit(1)
         return
 
     if cmd == "--auto" and rest:
@@ -144,6 +154,8 @@ def _print_help() -> None:
   ./fcp model                   — interactive model picker
   ./fcp doctor [--fix]          — check integrity; --fix to repair
   ./fcp endure sync             — sync entity root with git remote
+  ./fcp endure origin           — set or update git remote origin
+  ./fcp endure chain            — display integrity chain
   ./fcp decommission --archive  — archive entity (reversible)
   ./fcp decommission --destroy  — destroy entity permanently
   ./fcp --auto <cron_id>        — run scheduled task autonomously
@@ -538,6 +550,72 @@ def _run_endure_sync(layout: "Layout") -> None:
         print(out)
 
     print()
+
+
+# ---------------------------------------------------------------------------
+# Endure Origin — configure git remote
+# ---------------------------------------------------------------------------
+
+def _run_endure_origin(layout: "Layout") -> None:
+    """Set or update the 'origin' git remote for this entity root."""
+    root = str(layout.root)
+
+    def _git(*args: str) -> tuple[int, str, str]:
+        r = subprocess.run(
+            ["git", "-C", root, *args],
+            capture_output=True, text=True,
+        )
+        return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+    # Verify git repo
+    code, _, _ = _git("rev-parse", "--git-dir")
+    if code != 0:
+        ui.print_err("This entity root is not a git repository.")
+        ui.print_err("Run 'git init' inside the entity root first.")
+        return
+
+    print()
+    ui.hr("endure origin")
+
+    # Show current origin if any
+    code, current_url, _ = _git("remote", "get-url", "origin")
+    if code == 0:
+        ui.print_info(f"Current origin: {current_url}")
+    else:
+        ui.print_info("No origin remote configured yet.")
+
+    print()
+    new_url = ui.ask("Remote URL (leave blank to cancel)", "")
+    if not new_url:
+        ui.print_info("Cancelled.")
+        return
+
+    if code == 0:
+        # origin exists — update it
+        set_code, _, err = _git("remote", "set-url", "origin", new_url)
+        if set_code != 0:
+            ui.print_err(f"Failed to update origin: {err}")
+        else:
+            ui.print_ok(f"origin updated → {new_url}")
+    else:
+        # origin does not exist — add it
+        add_code, _, err = _git("remote", "add", "origin", new_url)
+        if add_code != 0:
+            ui.print_err(f"Failed to add origin: {err}")
+        else:
+            ui.print_ok(f"origin added → {new_url}")
+
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Endure Chain — display integrity chain
+# ---------------------------------------------------------------------------
+
+def _run_endure_chain(layout: "Layout") -> None:
+    """Display the integrity chain entries."""
+    from .operator import print_integrity_chain
+    print_integrity_chain(layout)
 
 
 # ---------------------------------------------------------------------------

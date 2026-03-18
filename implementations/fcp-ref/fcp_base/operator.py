@@ -723,9 +723,45 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
     return pairs[chosen_idx]
 
 
+def print_integrity_chain(layout: Layout) -> None:
+    """Display all entries in the integrity chain."""
+    from .store import read_jsonl
+    print()
+    ui.hr("integrity chain")
+    if not layout.integrity_chain.exists() or layout.integrity_chain.stat().st_size == 0:
+        ui.print_info("Integrity chain is empty.")
+        print()
+        return
+    entries = read_jsonl(layout.integrity_chain)
+    if not entries:
+        ui.print_info("Integrity chain is empty.")
+        print()
+        return
+    for entry in entries:
+        seq = entry.get("seq", "?")
+        etype = entry.get("type", "?")
+        ts = entry.get("ts", "")
+        prev = entry.get("prev_hash", "")
+        auth = entry.get("evolution_auth_digest", "")
+        imprint = entry.get("imprint_hash", "")
+        type_color = "\x1b[96m" if etype == "GENESIS" else (
+            "\x1b[92m" if etype == "ENDURE_COMMIT" else "\x1b[93m"
+        )
+        print(f"  {ui.DIM}#{seq:>4}{ui.RESET}  {type_color}{etype:<20}{ui.RESET}  {ui.DIM}{ts}{ui.RESET}")
+        if imprint:
+            print(f"         imprint  {ui.DIM}{imprint[:72]}{ui.RESET}")
+        if prev:
+            print(f"         prev     {ui.DIM}{prev[:72]}{ui.RESET}")
+        if auth:
+            print(f"         auth     {ui.DIM}{auth[:72]}{ui.RESET}")
+    print()
+    print(f"  {len(entries)} entr{'y' if len(entries) == 1 else 'ies'} total")
+    print()
+
+
 def _cmd_endure(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /endure list | approve <id> | reject <id>")
+        print("  usage: /endure list | approve <id> | reject <id> | chain")
         return
     sub = args[0].lower()
     if sub == "list":
@@ -734,8 +770,10 @@ def _cmd_endure(layout: Layout, args: list[str]) -> None:
         _endure_decide(layout, args[1], approve=True)
     elif sub == "reject" and len(args) > 1:
         _endure_decide(layout, args[1], approve=False)
+    elif sub == "chain":
+        print_integrity_chain(layout)
     else:
-        print("  usage: /endure list | approve <id> | reject <id>")
+        print("  usage: /endure list | approve <id> | reject <id> | chain")
 
 
 def _endure_proposals(layout: Layout) -> list[dict]:
