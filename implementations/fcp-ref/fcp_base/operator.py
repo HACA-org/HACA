@@ -231,6 +231,9 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
     if cmd in ("/skill", "/skills"):
         _cmd_skill(layout, args)
         return True
+    if cmd == "/shell":
+        _cmd_shell(layout, args)
+        return True
 
     # --- Model, endure & cron ---
     if cmd == "/model":
@@ -500,6 +503,103 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
 
 
 # --- Skills & execution ---
+
+def _cmd_shell(layout: Layout, args: list[str]) -> None:
+    """Manage shell_run allowlist_composite entries."""
+    manifest_path = layout.skills_lib_dir / "shell_run" / "manifest.json"
+    if not manifest_path.exists():
+        print("  shell_run skill not found")
+        return
+
+    def _load() -> dict:
+        try:
+            return read_json(manifest_path)
+        except Exception as exc:
+            print(f"  error reading manifest: {exc}")
+            return {}
+
+    def _save(manifest: dict) -> None:
+        import os
+        tmp = manifest_path.with_suffix(".json.tmp")
+        import json as _json
+        tmp.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
+        os.replace(tmp, manifest_path)
+
+    if not args or args[0] == "list":
+        manifest = _load()
+        simple = manifest.get("allowlist", [])
+        composite = manifest.get("allowlist_composite", [])
+        print("  simple allowlist:")
+        for cmd in simple:
+            print(f"    {cmd}")
+        print("  composite allowlist:")
+        if composite:
+            for i, e in enumerate(composite):
+                label = f"  [{e['label']}]" if e.get("label") else ""
+                print(f"    [{i}] {e['command']}{label}")
+        else:
+            print("    (empty)")
+        return
+
+    sub = args[0].lower()
+
+    if sub == "allow":
+        # /shell allow <command> [label]
+        if len(args) < 2:
+            print("  usage: /shell allow <command> [label]")
+            return
+        command = args[1]
+        label = args[2] if len(args) > 2 else ""
+        manifest = _load()
+        if not manifest:
+            return
+        composite: list = manifest.get("allowlist_composite", [])
+        if any(e.get("command") == command for e in composite):
+            print(f"  already in allowlist_composite: {command!r}")
+            return
+        entry: dict = {"command": command}
+        if label:
+            entry["label"] = label
+        composite.append(entry)
+        manifest["allowlist_composite"] = composite
+        _save(manifest)
+        print(f"  added: {command!r}")
+        return
+
+    if sub == "remove":
+        # /shell remove <index|label|command>
+        if len(args) < 2:
+            print("  usage: /shell remove <index | label | command>")
+            return
+        key = args[1]
+        manifest = _load()
+        if not manifest:
+            return
+        composite = manifest.get("allowlist_composite", [])
+        original_len = len(composite)
+        # try index first
+        try:
+            idx = int(key)
+            if 0 <= idx < len(composite):
+                removed = composite.pop(idx)
+                manifest["allowlist_composite"] = composite
+                _save(manifest)
+                print(f"  removed [{idx}]: {removed['command']!r}")
+                return
+        except ValueError:
+            pass
+        # try label or command match
+        new_composite = [e for e in composite if e.get("label") != key and e.get("command") != key]
+        if len(new_composite) == original_len:
+            print(f"  not found: {key!r}")
+            return
+        manifest["allowlist_composite"] = new_composite
+        _save(manifest)
+        print(f"  removed entries matching {key!r}")
+        return
+
+    print("  usage: /shell list | allow <command> [label] | remove <index|label|command>")
+
 
 def _cmd_skill(layout: Layout, args: list[str]) -> None:
     if not args:
@@ -1580,6 +1680,9 @@ def _cmd_help() -> None:
     /skill add                — create new skill
     /skill run <name>         — run a skill directly
     /skill audit <name>       — audit a skill
+    /shell list               — list shell_run allowlists
+    /shell allow <cmd> [label]— add composite command to allowlist
+    /shell remove <idx|label> — remove composite command from allowlist
 
   Evolution:
     /endure list              — list pending Evolution Proposals

@@ -105,7 +105,7 @@ The workspace is a sandboxed environment for managing your working files. All op
     - `path` (required) — destination path relative to the `workspace_focus`.
     - `content` (required) — text content to be written.
 - **shell_run** — execute shell commands restricted by an allowlist.
-    - `command` (required) — only commands that are in the allowlist are permitted (e.g., `ls`, `cat`, `pwd`, `find`, `grep`).
+    - `command` (required) — only commands that are in the allowlist are permitted.
 - **commit** — manage git history for the current context.
     - `path` (required) — file or directory to `git add`.
     - `message` (required) — summary of the changes.
@@ -115,7 +115,7 @@ The workspace is a sandboxed environment for managing your working files. All op
 
 - **Mandatory Focus**: Workspace tools will fail if no `workspace_focus` is set. If you need to switch context, ask the Operator.
 - **Confinement**: **file_reader**, **file_writer**, and **shell_run** are strictly bound to the focus path. You cannot access any parent or sibling directories.
-- **Commit Safety**: The **commit** tool is only permitted within `internal/workspace/` OR on external paths unrelated to the entity's root. Committing on the entity root, any parent directory, or structural folders (`persona/`, `skills/`) is prohibited.
+- **Commit Safety**: The **commit** tool is only permitted within `workspace/` OR on external paths unrelated to the entity's root. Committing on the entity root, any parent directory, or structural folders (`persona/`, `skills/`) is prohibited.
 - **Git Access**: Direct use of git commands via `shell_run` is blocked. You MUST use the `commit` tool for all version control operations.
 
 ---
