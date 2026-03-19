@@ -78,7 +78,7 @@ def main() -> None:
     base_cmd = tokens[0] if tokens else ""
     if base_cmd not in allowlist:
         print(json.dumps({"error": f"command not in allowlist: {base_cmd!r}"}))
-        sys.exit(1)
+        sys.exit(0)
 
     # reject absolute paths and traversal in arguments
     args = tokens[1:]

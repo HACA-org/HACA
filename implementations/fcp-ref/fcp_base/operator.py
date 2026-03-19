@@ -365,7 +365,7 @@ def _cmd_status(layout: Layout) -> None:
 
 
 def run_doctor(layout: Layout, fix: bool, clear_sentinels: bool = False) -> None:
-    """Core doctor logic — shared by /doctor (in-session) and ./fcp doctor (CLI).
+    """Core doctor logic — shared by /doctor (in-session) and fcp doctor (CLI).
 
     Args:
         fix: repair volatile dirs and recalculate integrity hashes.
@@ -393,7 +393,7 @@ def run_doctor(layout: Layout, fix: bool, clear_sentinels: bool = False) -> None
     print_report(findings)
     failed = [f for f in findings if not f.passed]
     if failed:
-        hint = "./fcp doctor --fix" if clear_sentinels else "/doctor --fix"
+        hint = "fcp doctor --fix" if clear_sentinels else "/doctor --fix"
         print(f"\n  {len(failed)} issue(s) found. Run {hint} to repair.")
 
 
@@ -701,7 +701,7 @@ def _skill_remove(layout: Layout, skill_name: str) -> None:
     if not layout.skills_index.exists():
         ui.print_err("skills/index.json not found")
         return
-    idx = read_json(layout.skills_index) or {}
+    idx = read_json(layout.skills_index)
     skills = idx.get("skills", [])
     entry = next((s for s in skills if s["name"] == skill_name), None)
     if entry is None:
@@ -728,7 +728,7 @@ def _skill_run_direct(layout: Layout, skill_name: str, params: dict[str, Any]) -
     if not layout.skills_index.exists():
         ui.print_err("skills/index.json not found")
         return
-    idx = read_json(layout.skills_index) or {}
+    idx = read_json(layout.skills_index)
     skill_names = [s["name"] for s in idx.get("skills", [])]
     if skill_name not in skill_names:
         ui.print_err(f"skill not found: {skill_name!r}")
@@ -816,7 +816,7 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
                 save_api_key(layout.root.name, env_var, api_key)
 
     try:
-        new_adapter = make_adapter(backend=backend, model=new_model, api_key=api_key)
+        new_adapter = make_adapter(backend=backend, model=new_model, api_key=api_key, layout=layout)
     except Exception as exc:
         print(f"  failed to create adapter: {exc}")
         return
@@ -1449,27 +1449,6 @@ def _cmi_status(layout: Layout) -> None:
         print("  channels      : none")
 
 
-def _cmi_peers(layout: Layout) -> None:
-    """List trusted peers from baseline.cmi.trusted_peers."""
-    baseline = {}
-    if layout.baseline.exists():
-        try:
-            baseline = read_json(layout.baseline)
-        except Exception:
-            pass
-    peers = baseline.get("cmi", {}).get("trusted_peers", [])
-    if not peers:
-        print("  no trusted peers configured")
-        print("  (add peers via evolution_proposal with op cmi_peer_add)")
-        return
-    for p in peers:
-        alias = p.get("alias", "?")
-        ni = p.get("node_identity", "?")
-        label = p.get("trust_label", "?")
-        endpoint = p.get("endpoint", "?")
-        print(f"  {alias}  [{label}]  {ni[:20]}...  {endpoint}")
-
-
 def _cmi_export(layout: Layout) -> None:
     """Export this entity's invite token for sharing with a peer Operator."""
     from .cmi.identity import export_invite_token
@@ -1506,9 +1485,6 @@ def _cmi_contacts_list(layout: Layout) -> None:
         except Exception:
             pass
     contacts = baseline.get("cmi", {}).get("contacts", [])
-    # also support legacy trusted_peers key
-    if not contacts:
-        contacts = baseline.get("cmi", {}).get("trusted_peers", [])
     if not contacts:
         print("  no contacts — use /cmi contacts add to add one")
         return

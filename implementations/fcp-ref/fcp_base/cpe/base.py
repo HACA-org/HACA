@@ -10,7 +10,10 @@ owns context assembly and chat history accumulation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from ..store import Layout
 
 
 # ---------------------------------------------------------------------------
@@ -139,11 +142,12 @@ BACKENDS: list[str] = ["ollama", "anthropic", "openai", "google", "pairing"]
 # Factory
 # ---------------------------------------------------------------------------
 
-def make_adapter(backend: str, api_key: str, model: str) -> CPEAdapter:
+def make_adapter(backend: str, api_key: str, model: str, layout: "Layout | None" = None) -> CPEAdapter:
     """Instantiate the correct adapter for *backend*.
 
     backend must match a value from StructuralBaseline.cpe.backend.
     Raises ValueError for unknown backends.
+    layout (optional) is passed to adapters that need it (e.g., PairingAdapter for hooks).
     """
     if backend == "anthropic":
         from .anthropic import AnthropicAdapter
@@ -159,7 +163,7 @@ def make_adapter(backend: str, api_key: str, model: str) -> CPEAdapter:
         return OllamaAdapter(api_key="", model=model)
     if backend == "pairing":
         from .pairing import PairingAdapter
-        return PairingAdapter(model=model or "external")
+        return PairingAdapter(model=model or "external", layout=layout)
     raise ValueError(f"Unknown CPE backend: {backend!r}")
 
 

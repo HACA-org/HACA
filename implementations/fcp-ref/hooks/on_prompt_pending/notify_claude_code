@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# on_prompt_pending hook for Claude Code integration
+#
+# Notifies Claude Code that a prompt is pending for the MCP server.
+# Claude Code polls the MCP server via fcp_poll, and this hook awakens
+# any waiting subprocess or signals the IDE to check for pending prompts.
+#
+# Environment variables provided:
+#   FCP_EVENT         — "on_prompt_pending"
+#   FCP_ENTITY_ROOT   — absolute path to entity root
+#   FCP_SESSION_TOKEN — session ID (from active token)
+#   FCP_EVENT_DATA    — JSON: {session_id, request_file}
+
+set -e
+
+# Parse event data
+EVENT_DATA="$FCP_EVENT_DATA"
+SESSION_ID=$(echo "$EVENT_DATA" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('session_id', ''))" 2>/dev/null || echo "")
+REQUEST_FILE=$(echo "$EVENT_DATA" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('request_file', ''))" 2>/dev/null || echo "")
+
+if [ -z "$SESSION_ID" ] || [ -z "$REQUEST_FILE" ]; then
+    echo "ERROR: Missing session_id or request_file in event data" >&2
+    exit 1
+fi
+
+# Notification marker file — Claude Code can watch this directory
+NOTIFY_DIR="${FCP_ENTITY_ROOT}/.fcp-entity/notifications/mcp"
+mkdir -p "$NOTIFY_DIR"
+
+NOTIFY_FILE="${NOTIFY_DIR}/${SESSION_ID}.pending"
+
+# Write notification file with timestamp and request file path
+cat > "${NOTIFY_FILE}.tmp" << EOF
+{
+  "event": "on_prompt_pending",
+  "session_id": "$SESSION_ID",
+  "request_file": "$REQUEST_FILE",
+  "notified_at": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+}
+EOF
+
+# Atomic write
+mv "${NOTIFY_FILE}.tmp" "$NOTIFY_FILE"
+
+# Log the notification (optional)
+LOG_DIR="${FCP_ENTITY_ROOT}/.fcp-entity/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="${LOG_DIR}/mcp_notifications.log"
+echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] MCP prompt pending: session=$SESSION_ID file=$REQUEST_FILE" >> "$LOG_FILE" 2>/dev/null || true
+
+# Signal any waiting Claude Code processes via named pipe (if available)
+# This allows Claude Code to wake up immediately instead of polling
+SIGNAL_FIFO="${FCP_ENTITY_ROOT}/.fcp-entity/signals/mcp_wake"
+if [ -p "$SIGNAL_FIFO" ]; then
+    echo "$SESSION_ID" > "$SIGNAL_FIFO" 2>/dev/null || true
+fi
+
+exit 0
