@@ -1145,25 +1145,9 @@ def _run_init(fcp_ref_root: Path) -> None:
             "renewal_days": renewal_days,
         }
 
-    # ── Step 4: Dependencies ─────────────────────────────────────────────────
-    ui.hr("4. Dependencies")
-    print()
-    py_ver = sys.version_info
-    py_ok = py_ver >= (3, 10)
-    py_str = f"{py_ver.major}.{py_ver.minor}.{py_ver.micro}"
-    print(f"  Required:")
-    print(f"    python >= 3.10    {'✓ ' + py_str if py_ok else '✗ ' + py_str + ' — REQUIRED'}")
-    if not py_ok:
-        print()
-        ui.print_err("Python 3.10 or higher is required.")
-        sys.exit(1)
-    print()
-    print(f"  Optional (not yet available — coming in a future release):")
-    print(f"    rich              — enhanced terminal formatting")
-    print(f"    textual           — interactive TUI (web panel, session dashboard)")
 
-    # ── Step 5: CPE backend and model ────────────────────────────────────────
-    ui.hr("5. CPE backend and model")
+    # ── Step 4: CPE backend and model ────────────────────────────────────────
+    ui.hr("4. CPE backend and model")
     print()
     from .cpe.base import BACKENDS, KNOWN_MODELS, fetch_ollama_models
     backend = ui.pick_one("Backend", BACKENDS, indent="  ")
@@ -1186,8 +1170,8 @@ def _run_init(fcp_ref_root: Path) -> None:
             save_api_key(entity_root.name, env_var, api_key)
             api_key_saved = env_var
 
-    # ── Step 6: Copy snapshot and create runtime dirs ────────────────────────
-    ui.hr("6. Creating entity")
+    # ── Step 5: Copy snapshot and create runtime dirs ────────────────────────
+    ui.hr("5. Creating entity")
     print()
     entity_root.mkdir(parents=True, exist_ok=True)
 
@@ -1230,7 +1214,7 @@ def _run_init(fcp_ref_root: Path) -> None:
         elif src.is_file():
             shutil.copy2(src, dst)
 
-    # ── Step 7: Marker and Runtime dirs ──────────────────────────────────────
+    # ── Step 6: Marker and Runtime dirs ──────────────────────────────────────
     # Create .fcp-entity marker
     entity_marker = {
         "version": fcp_version,
@@ -1309,7 +1293,7 @@ def _run_init(fcp_ref_root: Path) -> None:
         except FileNotFoundError:
             print("  [!] git not found — skipping.")
 
-    # ── Step 8: Summary ──────────────────────────────────────────────────────
+    # ── Step 7: Summary ──────────────────────────────────────────────────────
     print()
     ui.hr()
     print(f"  Entity created successfully")
@@ -1330,11 +1314,6 @@ def _run_init(fcp_ref_root: Path) -> None:
         print(f"    operator memory:       {'yes' if evolve_scope['operator_memory'] else 'no'}")
         renewal = evolve_scope['renewal_days']
         print(f"    renewal:               {'every ' + str(renewal) + ' days' if renewal > 0 else 'disabled'}")
-    ui.hr()
-    print(f"  dependencies:")
-    print(f"    python {py_str}          ✓")
-    print(f"    rich                   — not installed (optional)")
-    print(f"    textual                — not installed (optional)")
     ui.hr()
     print()
     print(f"  First boot will run FAP (First Activation Protocol).")
