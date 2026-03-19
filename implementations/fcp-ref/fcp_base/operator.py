@@ -726,7 +726,7 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
     from .store import API_KEY_ENV, save_api_key, load_env_file
     
     api_key = ""
-    if backend != "ollama":
+    if backend not in ("ollama", "pairing"):
         env_var = API_KEY_ENV.get(backend, "")
         api_key = os.environ.get(env_var, "")
         if not api_key:
@@ -758,7 +758,7 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
     pairs: list[tuple[str, str]] = []
 
     for backend in BACKENDS:
-        if backend != "ollama":
+        if backend not in ("ollama", "pairing"):
             env_var = API_KEY_ENV.get(backend, "")
             if not os.environ.get(env_var):
                 continue

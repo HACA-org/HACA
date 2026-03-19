@@ -142,8 +142,12 @@ def _main() -> None:
         _run_auto(Layout(entity_root), rest[0])
         return
 
+    if cmd in ("update", "upgrade"):
+        _run_update()
+        return
+
     print(f"unknown command: {cmd}")
-    print("usage: ./fcp [init | model | doctor [--fix] | decommission --archive|--destroy | endure sync | --auto <cron_id>]")
+    print("usage: fcp [init | model | update | doctor [--fix] | decommission --archive|--destroy | endure sync | --auto <cron_id>]")
     sys.exit(1)
 
 
@@ -158,12 +162,50 @@ def _print_help() -> None:
   ./fcp endure chain            — display integrity chain
   ./fcp decommission --archive  — archive entity (reversible)
   ./fcp decommission --destroy  — destroy entity permanently
+  ./fcp update                  — update FCP from the main repository
   ./fcp --auto <cron_id>        — run scheduled task autonomously
   ./fcp --verbose               — boot with verbose mode enabled
   ./fcp --debugger[=all|chat|boot]
                                 — boot with debugger mode enabled
   ./fcp help | --help | -h      — this message
 """)
+
+
+# ---------------------------------------------------------------------------
+# Update FCP Installation
+# ---------------------------------------------------------------------------
+
+def _run_update() -> None:
+    # Resolve the physical path in case this was run from a symlink (e.g., ~/.local/bin/fcp)
+    # cli.py is at: ~/.fcp/implementations/fcp-ref/fcp_base/cli.py
+    # So the FCP root is 3 parents up.
+    fcp_root = Path(__file__).resolve().parents[3]
+    
+    if not (fcp_root / ".git").exists():
+        ui.print_err(f"Cannot update: FCP installation at {fcp_root} is not a git repository.")
+        sys.exit(1)
+        
+    print()
+    ui.hr("fcp update")
+    ui.print_info(f"Checking for updates in {fcp_root}...")
+    
+    r = subprocess.run(
+        ["git", "-C", str(fcp_root), "pull", "origin", "main", "--rebase"],
+        capture_output=True, text=True
+    )
+    
+    if r.returncode != 0:
+        ui.print_err(f"Update failed. Check your git configuration or network.")
+        print(f"Error output:\n{r.stderr}")
+        sys.exit(1)
+        
+    if "Already up to date." in r.stdout or "Current branch main is up to date" in r.stdout:
+        ui.print_ok("FCP is already up to date with origin/main.")
+    else:
+        ui.print_ok("FCP updated successfully.")
+        print()
+        print(r.stdout.strip())
+    print()
 
 
 # ---------------------------------------------------------------------------
@@ -1159,6 +1201,9 @@ def _run_init(fcp_ref_root: Path) -> None:
             model = ui.pick_one("Model", ollama_models, indent="  ")
         else:
             model = ui.ask("Model", "llama3.2")
+    elif backend == "pairing":
+        model_list = KNOWN_MODELS[backend]
+        model = ui.pick_one("Model", model_list, indent="  ")
     else:
         model_list = KNOWN_MODELS[backend]
         model = ui.pick_one("Model", model_list, indent="  ")
