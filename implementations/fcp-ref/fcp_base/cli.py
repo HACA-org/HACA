@@ -1159,6 +1159,9 @@ def _run_init(fcp_ref_root: Path) -> None:
             model = ui.pick_one("Model", ollama_models, indent="  ")
         else:
             model = ui.ask("Model", "llama3.2")
+    elif backend == "pairing":
+        model_list = KNOWN_MODELS[backend]
+        model = ui.pick_one("Model", model_list, indent="  ")
     else:
         model_list = KNOWN_MODELS[backend]
         model = ui.pick_one("Model", model_list, indent="  ")

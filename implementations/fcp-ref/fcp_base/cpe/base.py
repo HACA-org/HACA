@@ -128,10 +128,11 @@ KNOWN_MODELS: dict[str, list[str]] = {
         "gemini-2.5-flash",
         "gemini-2.0-flash",
     ],
-    "ollama": [],  # populated dynamically via OllamaAdapter or CLI
+    "ollama":   [],  # populated dynamically via OllamaAdapter or CLI
+    "pairing":  ["external"],  # external agent; model name is cosmetic only
 }
 
-BACKENDS: list[str] = ["ollama", "anthropic", "openai", "google"]
+BACKENDS: list[str] = ["ollama", "anthropic", "openai", "google", "pairing"]
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +157,9 @@ def make_adapter(backend: str, api_key: str, model: str) -> CPEAdapter:
     if backend == "ollama":
         from .ollama import OllamaAdapter
         return OllamaAdapter(api_key="", model=model)
+    if backend == "pairing":
+        from .pairing import PairingAdapter
+        return PairingAdapter(model=model or "external")
     raise ValueError(f"Unknown CPE backend: {backend!r}")
 
 
