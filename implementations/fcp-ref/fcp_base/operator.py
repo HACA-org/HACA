@@ -137,7 +137,8 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
                 ui.hr(f"{counter}Evolution Proposal — {clabel}")
                 print(f"  {ui.DIM}description{ui.RESET}  {description}")
                 print(f"  {ui.DIM}task{ui.RESET}         {change.get('task', '')}")
-                print(f"  {ui.DIM}schedule{ui.RESET}     {change.get('schedule', '')}")
+                _sched = change.get('schedule', '')
+                print(f"  {ui.DIM}schedule{ui.RESET}     {_describe_cron(_sched)}  {ui.DIM}({_sched}){ui.RESET}")
                 print(f"  {ui.DIM}executor{ui.RESET}     {change.get('executor', 'cpe')}")
                 tools_val = change.get('tools', '') or '(none)'
                 print(f"  {ui.DIM}tools{ui.RESET}        {tools_val}")
@@ -1018,7 +1019,8 @@ def _cron_list(layout: Layout) -> None:
         executor = t.get("executor", "?")
         schedule = t.get("schedule", "?")
         last_run = t.get("last_run") or "never"
-        print(f"  [{status}] {tid}  {executor}  {schedule}  last:{last_run}")
+        sched_human = _describe_cron(schedule)
+        print(f"  [{status}] {tid}  {executor}  {sched_human}  {ui.DIM}({schedule}){ui.RESET}  last:{last_run}")
         print(f"         {desc}")
 
 
@@ -1035,6 +1037,78 @@ def _build_wake_up_message(task: str, executor: str, tools: str = "") -> str:
     if tools:
         msg += f"\n[Tools] {tools}"
     return msg
+
+
+def _describe_cron(expr: str) -> str:
+    """Convert a cron expression to a human-readable description.
+
+    Handles common patterns; falls back to the raw expression for exotic cases.
+    Format: 'minute field hour field day field month field weekday field'
+    """
+    parts = expr.strip().split()
+    if len(parts) != 5:
+        return expr
+
+    minute, hour, dom, month, dow = parts
+
+    # -- time description --
+    if minute == "*" and hour == "*":
+        time_str = "every minute"
+    elif minute.isdigit() and hour.isdigit():
+        time_str = f"{int(hour):02d}:{int(minute):02d}"
+    elif minute == "*" and hour.isdigit():
+        time_str = f"every minute of {int(hour):02d}h"
+    elif minute.isdigit() and hour == "*":
+        time_str = f"at minute {minute} of every hour"
+    elif minute.startswith("*/") and hour == "*":
+        time_str = f"every {minute[2:]} minutes"
+    else:
+        time_str = f"{hour}:{minute}"
+
+    # -- weekday description --
+    _dow_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    if dow == "*":
+        dow_str = ""
+    elif dow == "1-5":
+        dow_str = "on weekdays"
+    elif dow == "0,6" or dow == "6,0":
+        dow_str = "on weekends"
+    elif dow.isdigit() and 0 <= int(dow) <= 6:
+        dow_str = f"on {_dow_names[int(dow)]}s"
+    elif all(p.isdigit() for p in dow.split(",")):
+        names = [_dow_names[int(d)] for d in dow.split(",") if 0 <= int(d) <= 6]
+        dow_str = "on " + ", ".join(names)
+    else:
+        dow_str = f"on ({dow})"
+
+    # -- day-of-month description --
+    if dom == "*":
+        dom_str = ""
+    elif dom.isdigit():
+        dom_str = f"on the {dom}th"
+    else:
+        dom_str = f"on day {dom}"
+
+    # -- month description --
+    _month_names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    if month == "*":
+        month_str = ""
+    elif month.isdigit() and 1 <= int(month) <= 12:
+        month_str = f"in {_month_names[int(month)]}"
+    else:
+        month_str = f"in month {month}"
+
+    # -- assemble --
+    parts_out = [time_str]
+    if dow_str:
+        parts_out.append(dow_str)
+    elif dom_str:
+        parts_out.append(dom_str)
+    if month_str:
+        parts_out.append(month_str)
+
+    return " ".join(parts_out)
 
 
 def _cron_add_from_proposal(layout: Layout, change: dict, description: str) -> None:
