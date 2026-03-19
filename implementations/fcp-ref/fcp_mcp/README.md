@@ -12,19 +12,38 @@ When FCP runs with `backend = pairing`, it writes prompts to the filesystem and 
 ┌─────────────────────┐        ~/.fcp/pairing/        ┌──────────────────────┐
 │   FCP (entity)      │  ── <session>.request.json ──▶ │   fcp-mcp server     │
 │   backend=pairing   │  ◀─ <session>.response.json ── │   (MCP tools)        │
-└─────────────────────┘                                └──────────┬───────────┘
-                                                                  │ MCP protocol
-                                                       ┌──────────▼───────────┐
-                                                       │  IDE / CLI agent     │
-                                                       │  (Claude Code, etc.) │
+└──────────┬──────────┘                                └──────────┬───────────┘
+           │ on_prompt_pending hook                               │ MCP protocol
+           │                                           ┌──────────▼───────────┐
+           └──────────────────────────────────────────▶│  IDE / CLI agent     │
+                (wakes IDE when prompt ready)          │  (Claude Code, etc.) │
                                                        └──────────────────────┘
 ```
 
+### Workflow
+
 1. FCP writes a prompt to `~/.fcp/pairing/<session-id>.request.json` and blocks.
-2. The connected agent calls `fcp_poll` — the server reads and removes the request file, returning the prompt.
-3. The agent processes the prompt and calls `fcp_respond` with the completion.
-4. The server writes `~/.fcp/pairing/<session-id>.response.json`.
-5. FCP detects the response file, reads it, and continues the session.
+2. FCP fires `on_prompt_pending` hook — notifies the IDE/CLI that a prompt is ready.
+3. The connected agent (woken by hook or polling) calls `fcp_poll` — the server reads and removes the request file, returning the prompt.
+4. The agent processes the prompt and calls `fcp_respond` with the completion.
+5. The server writes `~/.fcp/pairing/<session-id>.response.json`.
+6. FCP detects the response file, reads it, and continues the session.
+
+### Hook-based notification (default)
+
+When FCP writes a prompt, it automatically dispatches the `on_prompt_pending` hook. This allows the IDE to wake up immediately without continuous polling.
+
+**Hook location:** `.fcp-entity/hooks/on_prompt_pending/`
+
+Example hook (Claude Code):
+```bash
+#!/bin/bash
+# .fcp-entity/hooks/on_prompt_pending/notify_claude_code
+# Creates a marker file that Claude Code monitors
+SESSION_ID=$(echo "$FCP_EVENT_DATA" | python3 -c "import sys, json; print(json.load(sys.stdin)['session_id'])")
+mkdir -p "${FCP_ENTITY_ROOT}/.fcp-entity/notifications/mcp"
+echo "{...}" > "${FCP_ENTITY_ROOT}/.fcp-entity/notifications/mcp/${SESSION_ID}.pending"
+```
 
 The server is a **persistent, independent process** — it stays alive across multiple FCP sessions. No restart needed between `fcp` invocations.
 
@@ -183,15 +202,29 @@ Expected response:
 
 Once connected, the agent operates in a cycle:
 
+**With hook-based notification (recommended):**
 ```
-fcp_sessions  →  find active session
-fcp_poll      →  check for pending prompt  (repeat until pending: true)
+[hook fires on_prompt_pending]
+    ↓
+[IDE wakes and calls fcp_poll]
+    ↓
+fcp_poll      →  retrieve pending prompt
+    ↓
 fcp_respond   →  deliver completion back to FCP
-fcp_poll      →  wait for next prompt
-...
+    ↓
+[repeat when next prompt ready]
 ```
 
-The agent should call `fcp_poll` proactively after each response to stay ready for the next turn.
+**With continuous polling (fallback):**
+```
+fcp_sessions  →  find active session
+    ↓
+fcp_poll      →  check for pending prompt  (repeat every N seconds)
+    ↓
+fcp_respond   →  deliver completion back to FCP
+```
+
+**Hook notification is preferred** because it wakes the IDE immediately, without wasting CPU on polling. The entity can customize hook behavior in `.fcp-entity/hooks/on_prompt_pending/`.
 
 ---
 
@@ -287,6 +320,33 @@ FCP unblocks within 250ms of the response file being written.
 ```
 
 Files are cleaned up automatically when the FCP session ends. Orphaned meta files (from crashed sessions) can be removed manually or via a cron job.
+
+---
+
+## Hook customization
+
+The `.fcp-entity/hooks/on_prompt_pending/` directory can contain multiple notification scripts, one per IDE/CLI:
+
+```
+hooks/on_prompt_pending/
+  notify_claude_code    — writes marker file to .fcp-entity/notifications/mcp/
+  notify_cursor         — calls HTTP webhook
+  notify_antigravity    — sends MCP callback
+```
+
+Each script receives:
+- `FCP_EVENT` = `"on_prompt_pending"`
+- `FCP_ENTITY_ROOT` = entity root path
+- `FCP_EVENT_DATA` = JSON with `session_id` and `request_file`
+
+Example: create a custom script that immediately calls `fcp_poll`:
+```bash
+#!/bin/bash
+# .fcp-entity/hooks/on_prompt_pending/notify_my_ide
+SESSION_ID=$(echo "$FCP_EVENT_DATA" | jq -r '.session_id')
+# Call your IDE's API or trigger fcp_poll via subprocess
+curl -X POST http://localhost:8888/notify?session=$SESSION_ID &
+```
 
 ---
 
