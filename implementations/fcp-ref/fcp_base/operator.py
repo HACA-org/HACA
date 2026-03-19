@@ -1318,7 +1318,7 @@ def _cmd_cmi(layout: Layout, args: list[str]) -> None:
 
 
 def _cmi_usage() -> None:
-    print("  usage: /cmi start | stop | status | token | invite | contacts [list|add|remove] | chan [list|open|close] | bb <id>")
+    print("  usage: /cmi start | stop | status | token | invite | contacts [list|add|remove] | chan [list|init|close] | bb <id>")
 
 
 def _cmi_start(layout: Layout) -> None:
@@ -1604,18 +1604,17 @@ def _cmi_contacts_remove(layout: Layout, node_id: str) -> None:
 
 def _cmi_channel(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /cmi chan list | init [<id>] | close <id>")
+        print("  usage: /cmi chan list | init | close <id>")
         return
     sub = args[0].lower()
     if sub == "list":
         _cmi_channel_list(layout)
-    elif sub in ("init", "open"):
-        chan_id = args[1] if len(args) > 1 else None
-        _cmi_channel_open(layout, chan_id)
+    elif sub == "init":
+        _cmi_channel_open(layout, None)
     elif sub == "close" and len(args) > 1:
         _cmi_channel_close(layout, args[1])
     else:
-        print("  usage: /cmi chan list | init [<id>] | close <id>")
+        print("  usage: /cmi chan list | init | close <id>")
 
 
 def _cmi_channel_list(layout: Layout) -> None:
@@ -1628,7 +1627,7 @@ def _cmi_channel_list(layout: Layout) -> None:
             pass
     channels = baseline.get("cmi", {}).get("channels", [])
     if not channels:
-        print("  no channels configured — use /cmi chan init to create one")
+        print("  no channels configured — use /cmi chan init to create one")  # init = create + launch
         return
     for ch in channels:
         cid = ch.get("id", "?")
@@ -1923,7 +1922,6 @@ def _cmd_help() -> None:
     /cmi contacts rm <id>                 — remove a contact by node_id or label
     /cmi chan list                        — list declared channels from baseline
     /cmi chan init                        — create and launch a new channel (interactive)
-    /cmi chan init <id>                   — launch CMI process for an existing channel
     /cmi chan close <id>                  — signal close to an active channel
     /cmi bb <id>                          — display Blackboard contents for a channel
 
