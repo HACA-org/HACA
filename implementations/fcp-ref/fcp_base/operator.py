@@ -109,35 +109,38 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
                 pass
 
     authorized: list[dict[str, Any]] = []
-    for p in proposals:
+    total = len(proposals)
+    for idx, p in enumerate(proposals):
         inner = p["data"]
         content = inner.get("content", "")
 
-        # Parse content to detect cron_add ops and display them clearly.
         try:
             parsed = json.loads(content)
         except Exception:
             parsed = {}
-        cron_changes = [
-            c for c in parsed.get("changes", [])
-            if isinstance(c, dict) and c.get("op") == "cron_add"
+
+        changes: list[dict[str, Any]] = [
+            c for c in parsed.get("changes", []) if isinstance(c, dict)
         ]
-        other_changes = [
-            c for c in parsed.get("changes", [])
-            if not (isinstance(c, dict) and c.get("op") == "cron_add")
-        ]
+        cron_changes = [c for c in changes if c.get("op") == "cron_add"]
+        other_changes = [c for c in changes if c.get("op") != "cron_add"]
+        description = str(parsed.get("description", ""))
+        counter = f"[{idx + 1}/{total}] " if total > 1 else ""
 
         if cron_changes and not other_changes:
-            # Pure cron proposal — present each task individually.
+            # ── Pure cron proposal ──────────────────────────────────────────
             cron_approved: list[dict[str, Any]] = []
             cron_rejected = False
-            for change in cron_changes:
-                print(f"\n[CRON PROPOSAL]")
-                print(f"  description : {parsed.get('description', '')}")
-                print(f"  task        : {change.get('task', '')}")
-                print(f"  schedule    : {change.get('schedule', '')}")
-                print(f"  executor    : {change.get('executor', 'cpe')}")
-                print(f"  tools       : {change.get('tools', '') or '(none)'}")
+            for cidx, change in enumerate(cron_changes):
+                ctotal = len(cron_changes)
+                clabel = f"cron_add {cidx + 1}/{ctotal}" if ctotal > 1 else "cron_add"
+                ui.hr(f"{counter}Evolution Proposal — {clabel}")
+                print(f"  {ui.DIM}description{ui.RESET}  {description}")
+                print(f"  {ui.DIM}task{ui.RESET}         {change.get('task', '')}")
+                print(f"  {ui.DIM}schedule{ui.RESET}     {change.get('schedule', '')}")
+                print(f"  {ui.DIM}executor{ui.RESET}     {change.get('executor', 'cpe')}")
+                tools_val = change.get('tools', '') or '(none)'
+                print(f"  {ui.DIM}tools{ui.RESET}        {tools_val}")
                 print()
                 if ui.confirm("Approve?", default=False):
                     cron_approved.append(change)
@@ -146,7 +149,7 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
 
             if cron_approved:
                 for change in cron_approved:
-                    _cron_add_from_proposal(layout, change, str(parsed.get("description", "")))
+                    _cron_add_from_proposal(layout, change, description)
                 auth_digest = _sha256_str(content)
                 authorized.append({
                     "seq": inner.get("ts", int(time.time() * 1000)),
@@ -162,10 +165,34 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
                 if not cron_approved:
                     from .stimuli import inject_evolution_result
                     inject_evolution_result(layout, content, approved=False)
+
         else:
-            print(f"\n[EVOLUTION PROPOSAL]\n{content}\n")
-            answer = "y" if ui.confirm("Approve?", default=False) else "n"
-            if answer == "y":
+            # ── Structural proposal ─────────────────────────────────────────
+            ops = [c.get("op", "?") for c in other_changes] if other_changes else ["?"]
+            ops_label = ", ".join(sorted(set(ops)))
+            ui.hr(f"{counter}Evolution Proposal — {ops_label}")
+            print(f"  {ui.DIM}description{ui.RESET}  {description}")
+            if other_changes:
+                print()
+                for c in other_changes:
+                    op = c.get("op", "?")
+                    if op == "skill_install":
+                        print(f"  {ui.DIM}+{ui.RESET} skill_install   {c.get('name', '')}")
+                    elif op in ("json_merge", "file_write", "file_delete"):
+                        target = c.get("target", "")
+                        if op == "json_merge":
+                            patch = c.get("patch", {})
+                            keys = ", ".join(patch.keys()) if isinstance(patch, dict) else "…"
+                            print(f"  {ui.DIM}+{ui.RESET} json_merge      {target}  ({keys})")
+                        elif op == "file_write":
+                            content_preview = str(c.get("content", ""))[:60].replace("\n", "↵")
+                            print(f"  {ui.DIM}+{ui.RESET} file_write      {target}  {ui.DIM}{content_preview}…{ui.RESET}")
+                        elif op == "file_delete":
+                            print(f"  {ui.DIM}+{ui.RESET} file_delete     {target}")
+                    else:
+                        print(f"  {ui.DIM}+{ui.RESET} {op}")
+            print()
+            if ui.confirm("Approve?", default=False):
                 auth_digest = _sha256_str(content)
                 authorized.append({
                     "seq": inner.get("ts", int(time.time() * 1000)),
