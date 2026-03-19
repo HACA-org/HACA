@@ -228,7 +228,8 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
         _cmd_skill(layout, args)
         return True
     if cmd in ("/shell", "/allowlist"):
-        _cmd_allowlist(layout, args)
+        # legacy: treat as /skill allowlist [args]
+        _cmd_skill(layout, ["allowlist"] + args)
         return True
 
     # --- Model, endure & cron ---
@@ -505,14 +506,14 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
                 print("  available:")
                 for d in subdirs:
                     print(f"    {d.name}")
-    elif sub == "clear":
+    elif sub in ("unset", "clear"):
         if layout.workspace_focus.exists():
             layout.workspace_focus.unlink()
             print("  workspace focus cleared")
         else:
             print("  workspace focus not set")
     else:
-        print("  usage: /work set <subdir> | clone <repo> | status | clear")
+        print("  usage: /work set <subdir> | clone <repo> | status | unset")
 
 
 # --- Skills & execution ---
@@ -556,10 +557,10 @@ def _cmd_allowlist(layout: Layout, args: list[str]) -> None:
 
     sub = args[0].lower()
 
-    if sub == "allow":
-        # /allowlist allow <command> [label]
+    if sub in ("add", "allow"):
+        # /skill allowlist add <command> [label]
         if len(args) < 2:
-            print("  usage: /allowlist allow <command> [label]")
+            print("  usage: /skill allowlist add <command> [label]")
             return
         command = args[1]
         label = args[2] if len(args) > 2 else ""
@@ -579,10 +580,10 @@ def _cmd_allowlist(layout: Layout, args: list[str]) -> None:
         print(f"  added: {command!r}")
         return
 
-    if sub == "remove":
-        # /allowlist remove <index|label|command>
+    if sub in ("rm", "remove"):
+        # /skill allowlist rm <index|label|command>
         if len(args) < 2:
-            print("  usage: /allowlist remove <index | label | command>")
+            print("  usage: /skill allowlist rm <index | label | command>")
             return
         key = args[1]
         manifest = _load()
@@ -611,7 +612,34 @@ def _cmd_allowlist(layout: Layout, args: list[str]) -> None:
         print(f"  removed entries matching {key!r}")
         return
 
-    print("  usage: /allowlist list | allow <command> [label] | remove <index|label|command>")
+    print("  usage: /skill allowlist | add <command> [label] | rm <index|label|command>")
+
+
+def _skill_remove(layout: Layout, skill_name: str) -> None:
+    """Remove a custom skill from index.json and delete its directory."""
+    import shutil
+    if not layout.skills_index.exists():
+        ui.print_err("skills/index.json not found")
+        return
+    idx = read_json(layout.skills_index) or {}
+    skills = idx.get("skills", [])
+    entry = next((s for s in skills if s["name"] == skill_name), None)
+    if entry is None:
+        ui.print_err(f"skill not found: {skill_name!r}")
+        return
+    if entry.get("class") == "builtin":
+        ui.print_err(f"cannot remove builtin skill: {skill_name!r}")
+        return
+    # Remove from index
+    idx["skills"] = [s for s in skills if s["name"] != skill_name]
+    atomic_write(layout.skills_index, idx)
+    # Delete skill directory (custom skills live in skills/<name>/, not skills/lib/)
+    skill_dir = layout.skills_dir / skill_name
+    if skill_dir.exists() and skill_dir.is_dir():
+        shutil.rmtree(skill_dir)
+        ui.print_ok(f"removed skill: {skill_name!r} (directory deleted)")
+    else:
+        ui.print_ok(f"removed skill: {skill_name!r} (index entry removed)")
 
 
 def _skill_run_direct(layout: Layout, skill_name: str, params: dict[str, Any]) -> None:
@@ -640,7 +668,7 @@ def _skill_run_direct(layout: Layout, skill_name: str, params: dict[str, Any]) -
 
 def _cmd_skill(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /skill list | add | run <name> [k=v ...] | audit <name>")
+        print("  usage: /skill list | add | run <name> [k=v ...] | rm <name> | audit <name> | allowlist ...")
         return
     sub = args[0].lower()
     if sub == "list":
@@ -654,17 +682,20 @@ def _cmd_skill(layout: Layout, args: list[str]) -> None:
         print("  /skill add requires an active session — use the skill_create tool during a session.")
     elif sub == "run" and len(args) > 1:
         skill_name = args[1]
-        # Parse optional key=value params from remaining args
         params: dict[str, Any] = {}
         for token in args[2:]:
             if "=" in token:
                 k, _, v = token.partition("=")
                 params[k.strip()] = v.strip()
         _skill_run_direct(layout, skill_name, params)
+    elif sub == "rm" and len(args) > 1:
+        _skill_remove(layout, args[1])
     elif sub == "audit" and len(args) > 1:
         print(f"  audit {args[1]}: use /skill audit via EXEC dispatch during session")
+    elif sub == "allowlist":
+        _cmd_allowlist(layout, args[1:])
     else:
-        print("  usage: /skill list | add | run <name> [k=v ...] | audit <name>")
+        print("  usage: /skill list | add | run <name> [k=v ...] | rm <name> | audit <name> | allowlist ...")
 
 
 # --- Model & endure ---
@@ -1269,10 +1300,10 @@ def _cmi_contacts(layout: Layout, args: list[str]) -> None:
         _cmi_contacts_list(layout)
     elif sub == "add":
         _cmi_contacts_add(layout)
-    elif sub == "remove" and len(args) > 1:
+    elif sub in ("rm", "remove") and len(args) > 1:
         _cmi_contacts_remove(layout, args[1])
     else:
-        print("  usage: /cmi contacts [list|add|remove <node_id>]")
+        print("  usage: /cmi contacts [list|add|rm <node_id>]")
 
 
 def _cmi_contacts_list(layout: Layout) -> None:
@@ -1382,18 +1413,18 @@ def _cmi_contacts_remove(layout: Layout, node_id: str) -> None:
 
 def _cmi_channel(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /cmi chan list | open [<id>] | close <id>")
+        print("  usage: /cmi chan list | init [<id>] | close <id>")
         return
     sub = args[0].lower()
     if sub == "list":
         _cmi_channel_list(layout)
-    elif sub == "open":
+    elif sub in ("init", "open"):
         chan_id = args[1] if len(args) > 1 else None
         _cmi_channel_open(layout, chan_id)
     elif sub == "close" and len(args) > 1:
         _cmi_channel_close(layout, args[1])
     else:
-        print("  usage: /cmi chan list | open [<id>] | close <id>")
+        print("  usage: /cmi chan list | init [<id>] | close <id>")
 
 
 def _cmi_channel_list(layout: Layout) -> None:
@@ -1406,7 +1437,7 @@ def _cmi_channel_list(layout: Layout) -> None:
             pass
     channels = baseline.get("cmi", {}).get("channels", [])
     if not channels:
-        print("  no channels configured — use /cmi chan open to create one")
+        print("  no channels configured — use /cmi chan init to create one")
         return
     for ch in channels:
         cid = ch.get("id", "?")
@@ -1657,32 +1688,27 @@ def _cmd_help() -> None:
   Session:
     /status                   — entity status overview
     /model [list]             — interactive model picker (active model highlighted)
-    /exit | /bye | /close     — close session
-    /new | /clear | /reset    — forced close + clean session restart
-    /compact                  — compress session context without closing
-
-  Memory:
     /memory [query]           — list memory store contents (episodic + semantic)
-    /inbox list               — list system notifications
-    /inbox view <id>          — view notification by index
-    /inbox dismiss <id>       — remove notification by index
-    /inbox clear              — remove all notifications
+    /exit                     — close session (aliases: /bye, /close)
+    /new                      — forced close + clean session restart (aliases: /clear, /reset)
+    /compact                  — compress session context without closing
 
   Workspace:
     /work status              — show active workspace focus
     /work set <subdir>        — set workspace focus
     /work clone <repo>        — clone repo and set as workspace focus
-    /work clear               — unset workspace focus
+    /work unset               — unset workspace focus
 
   Skills:
     /skill list               — list installed skills
-    /skill add                — create new skill
+    /skill add                — create new skill (use skill_create tool during session)
     /skill run <name> [k=v]   — run a skill directly with optional params
+    /skill rm <name>          — remove a custom skill and delete its directory
     /skill audit <name>       — audit a skill
-    /allowlist list           — list shell_run allowlists
-    /allowlist allow <cmd> [label]
+    /skill allowlist          — list shell_run allowlists
+    /skill allowlist add <cmd> [label]
                               — add composite command to allowlist
-    /allowlist remove <idx|label>
+    /skill allowlist rm <idx|label>
                               — remove composite command from allowlist
 
   Evolution:
@@ -1705,15 +1731,19 @@ def _cmd_help() -> None:
     /cmi token                — generate invite token to share with a peer Operator
     /cmi invite               — add a contact from a peer's invite token (interactive)
     /cmi contacts list        — list trusted contacts
-    /cmi contacts remove <id> — remove a contact by node_id or label
+    /cmi contacts rm <id>     — remove a contact by node_id or label
     /cmi chan list             — list declared channels from baseline
-    /cmi chan open             — create and launch a new channel (interactive)
-    /cmi chan open <id>        — launch CMI process for an existing channel
+    /cmi chan init             — create and launch a new channel (interactive)
+    /cmi chan init <id>        — launch CMI process for an existing channel
     /cmi chan close <id>       — signal close to an active channel
-    /cmi bb <id>               — display Blackboard contents for a channel
+    /cmi bb <id>              — display Blackboard contents for a channel
 
   Debug:
     /doctor [--fix]           — check and optionally repair integrity
+    /inbox list               — list system notifications
+    /inbox view <id>          — view notification by index
+    /inbox dismiss <id>       — remove notification by index
+    /inbox clear              — remove all notifications
     /verbose [--off]          — enable component message summary (--off to disable)
     /debugger [--all|--chat|--boot|--off]
                               — inspect CPE context (disables verbose)
