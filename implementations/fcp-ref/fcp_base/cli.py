@@ -947,12 +947,6 @@ def _run_init(fcp_ref_root: Path) -> None:
         if not ui.confirm("Are you ABSOLUTELY sure you want to proceed?"):
             sys.exit(0)
 
-    # ── Git init ────────────────────────────────────────────────────────────
-    git_init = False
-    if not (entity_root / ".git").exists():
-        print()
-        git_init = ui.confirm("Initialise a git repository in the entity root?", default=True)
-
     # ── Step 2: Profile ─────────────────────────────────────────────────────
     ui.hr("2. Profile")
     print()
@@ -1183,6 +1177,11 @@ def _run_init(fcp_ref_root: Path) -> None:
     atomic_write(entity_root / "memory" / "working-memory.json", {"entries": []})
 
     # ── Git init + initial commit ────────────────────────────────────────────
+    git_init = False
+    if not (entity_root / ".git").exists():
+        print()
+        git_init = ui.confirm("Initialise a git repository in the entity root?", default=True)
+
     if git_init:
         git_ok = False
         try:
