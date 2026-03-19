@@ -70,10 +70,19 @@ def main() -> None:
         print(json.dumps({"error": f"path outside workspace_focus: {path_param}"}))
         sys.exit(1)
 
-    # git add + commit
+    # Verify focus_path has its own git repo — not the entity repo
     def run(cmd: list[str]) -> tuple[int, str, str]:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(focus_path))
         return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+    _rc, _toplevel, _ = run(["git", "rev-parse", "--show-toplevel"])
+    if _rc != 0:
+        print(json.dumps({"error": "no git repository found in workspace_focus — run 'git init' inside the focused directory first"}))
+        sys.exit(1)
+    _repo_root = Path(_toplevel).resolve()
+    if _repo_root == entity_root or entity_root in _repo_root.parents:
+        print(json.dumps({"error": f"commit refused: workspace_focus is tracked by the entity repository ({_repo_root}). Initialise a separate git repo inside the project directory."}))
+        sys.exit(1)
 
     code, _, err = run(["git", "add", str(target)])
     if code != 0:
