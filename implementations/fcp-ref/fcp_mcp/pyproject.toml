@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fcp-mcp"
+version = "0.1.0"
+description = "FCP MCP Server — bridges MCP-capable IDEs and CLIs to an active FCP pairing session"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0",
+]
+
+[project.scripts]
+fcp-mcp = "fcp_mcp:main"
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["fcp_mcp*"]
