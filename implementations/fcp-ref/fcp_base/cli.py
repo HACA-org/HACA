@@ -153,21 +153,21 @@ def _main() -> None:
 
 def _print_help() -> None:
     print("""
-  ./fcp                         — boot entity and start session
-  ./fcp init                    — initialize a new entity
-  ./fcp model                   — interactive model picker
-  ./fcp doctor [--fix]          — check integrity; --fix to repair
-  ./fcp endure sync             — sync entity root with git remote
-  ./fcp endure origin           — set or update git remote origin
-  ./fcp endure chain            — display integrity chain
-  ./fcp decommission --archive  — archive entity (reversible)
-  ./fcp decommission --destroy  — destroy entity permanently
-  ./fcp update                  — update FCP from the main repository
-  ./fcp --auto <cron_id>        — run scheduled task autonomously
-  ./fcp --verbose               — boot with verbose mode enabled
-  ./fcp --debugger[=all|chat|boot]
-                                — boot with debugger mode enabled
-  ./fcp help | --help | -h      — this message
+  fcp                              — boot entity and start session
+  fcp init                         — initialize a new entity
+  fcp model                        — interactive model picker
+  fcp mcp                          — Manager MCP server
+  fcp endure sync                  — sync entity root with git remote
+  fcp endure origin                — set or update git remote origin
+  fcp endure chain                 — display integrity chain
+  fcp decommission --archive       — archive entity (reversible)
+  fcp decommission --destroy       — destroy entity permanently
+  fcp doctor [--fix]               — check integrity; --fix to repair
+  fcp --auto <cron_id>             — run scheduled task autonomously in auto:session
+  fcp --verbose                    — boot entity with verbose mode enabled
+  fcp --debugger[=all|chat|boot]   — boot entity with debugger mode enabled
+  fcp update                       — update FCP from the main repository
+  fcp help | -h                    — this message
 """)
 
 
@@ -948,6 +948,9 @@ def _run_init(fcp_ref_root: Path) -> None:
                         if sub.name != "baseline.json":
                             if sub.is_dir(): shutil.rmtree(sub)
                             else: sub.unlink()
+            # Recreate expected memory subdirectories so boot/MIL don't fail.
+            for subdir in ["memory/episodic", "memory/semantic", "memory/active_context"]:
+                (entity_root / subdir).mkdir(parents=True, exist_ok=True)
             print()
             ui.print_ok("Dynamic state cleared. Entity is ready for FAP.")
             print(f"      Run: cd {entity_root} && ./fcp")

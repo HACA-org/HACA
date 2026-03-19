@@ -65,6 +65,7 @@ def write_episodic(
         f.unlink()
     ts = int(time.time() * 1000)
     dest = layout.episodic_dir / f"{ts}-{slug}.md"
+    dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(content, encoding="utf-8")
     return dest
 
@@ -76,6 +77,7 @@ def write_semantic(layout: Layout, key: str, content: str) -> Path:
     Operator-approved semantic content without a prior episodic file.
     """
     dest = layout.semantic_dir / f"{key}.md"
+    dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(content, encoding="utf-8")
     return dest
 
@@ -99,6 +101,7 @@ def promote_to_semantic(layout: Layout, slug: str) -> bool:
     source = matches[0]
     content = source.read_text(encoding="utf-8")
     dest = layout.semantic_dir / f"{slug}.md"
+    dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".md.tmp")
     tmp.write_text(content, encoding="utf-8")
     os.replace(tmp, dest)
