@@ -179,6 +179,24 @@ Evolution proposals are used for structural changes to your core identity, boot 
         - **`json_merge`**: Patch an internal JSON file (e.g., `persona.json`).
         - **`file_write`**: Create or replace an internal file (relative to internal root).
         - **`file_delete`**: Remove an internal file.
+        - **`cron_add`**: Propose a new scheduled task. Required fields: `task` (clear instruction to execute), `schedule` (cron expression, e.g. `"0 9 * * 1-5"`), `executor` (`"worker"` for read-only analysis, `"cpe"` for tasks that write memory or call tools). Optional: `tools` (comma-separated skill names).
+
+**Scheduling tasks with `cron_add`:**
+
+Use `cron_add` when you identify a recurring operation that would benefit the Operator without requiring manual setup. Examples: daily summaries, periodic workspace checks, recurring reminders.
+
+```
+evolution_proposal({
+  "description": "Daily workspace summary every weekday morning",
+  "changes": [{
+    "op": "cron_add",
+    "task": "Summarize yesterday's workspace activity and write a memory entry.",
+    "schedule": "0 9 * * 1-5",
+    "executor": "cpe",
+    "tools": ""
+  }]
+})
+```
 
 **Operational Notes:**
 

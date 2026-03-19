@@ -1056,7 +1056,7 @@ def _build_tools_index(layout: Layout, index: dict[str, Any]) -> str:
     # System tools: name → (description, required_params)
     system_tools: list[tuple[str, str, list[str]]] = [
         ("closure_payload", "record full session outcome before closing", ["consolidation", "working_memory", "session_handoff"]),
-        ("evolution_proposal", "propose structural change to entity (persona, skills, configs)", ["description", "changes"]),
+        ("evolution_proposal", "propose structural change to entity (persona, skills, configs, scheduled tasks)", ["description", "changes"]),
         ("memory_recall", "retrieve context from memory", ["query"]),
         ("memory_write", "persist information across sessions", ["slug", "content"]),
         ("result_recall", "retrieve truncated tool result by timestamp", ["ts"]),
@@ -1186,6 +1186,7 @@ def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, 
             "Propose a structural change to the Entity Store. "
             "To install a custom skill: use skill_install op with the skill name (must be staged in workspace/stage/<name>/ and validated with skill_audit first). "
             "For other structural changes (persona files, configs): use json_merge, file_write, or file_delete ops. "
+            "To propose a scheduled task: use cron_add op. "
             "Requires explicit Operator approval before taking effect."
         ),
         "input_schema": {
@@ -1200,13 +1201,17 @@ def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, 
                         "properties": {
                             "op": {
                                 "type": "string",
-                                "enum": ["json_merge", "file_write", "file_delete", "skill_install"],
-                                "description": "Operation: json_merge (partial update to a JSON file), file_write (create/replace a file), file_delete (remove a file), skill_install (promote a staged skill from workspace/stage/<name>/ to skills/<name>/ — use this to install custom skills, never file_write).",
+                                "enum": ["json_merge", "file_write", "file_delete", "skill_install", "cron_add"],
+                                "description": "Operation: json_merge (partial update to a JSON file), file_write (create/replace a file), file_delete (remove a file), skill_install (promote a staged skill from workspace/stage/<name>/ to skills/<name>/ — use this to install custom skills, never file_write), cron_add (propose a new scheduled task).",
                             },
-                            "target": {"type": "string", "description": "Path relative to entity root. Required for json_merge, file_write, file_delete. Not used for skill_install."},
+                            "target": {"type": "string", "description": "Path relative to entity root. Required for json_merge, file_write, file_delete. Not used for skill_install or cron_add."},
                             "name": {"type": "string", "description": "For skill_install: the skill name as it appears in workspace/stage/<name>/."},
                             "patch": {"type": "object", "description": "For json_merge: the fields to merge into the target JSON."},
                             "content": {"type": "string", "description": "For file_write: the full file content to write."},
+                            "task": {"type": "string", "description": "For cron_add: clear, verifiable instruction the entity will execute when the schedule fires."},
+                            "schedule": {"type": "string", "description": "For cron_add: cron expression (e.g. '0 9 * * 1-5')."},
+                            "executor": {"type": "string", "enum": ["worker", "cpe"], "description": "For cron_add: 'worker' for read-only analysis tasks, 'cpe' for tasks that may write memory or call tools."},
+                            "tools": {"type": "string", "description": "For cron_add: comma-separated list of skills/tools the task may use (leave empty if none)."},
                         },
                         "required": ["op"],
                     },

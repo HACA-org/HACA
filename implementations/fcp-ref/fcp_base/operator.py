@@ -112,23 +112,75 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
     for p in proposals:
         inner = p["data"]
         content = inner.get("content", "")
-        print(f"\n[EVOLUTION PROPOSAL]\n{content}\n")
-        answer = "y" if ui.confirm("Approve?", default=False) else "n"
-        if answer == "y":
-            auth_digest = _sha256_str(content)
-            authorized.append({
-                "seq": inner.get("ts", int(time.time() * 1000)),
-                "content": content,
-                "auth_digest": auth_digest,
-                "slugs": inner.get("slugs", []),
-            })
-            _write_evolution_auth(layout, content, auth_digest)
-            from .stimuli import inject_evolution_result
-            inject_evolution_result(layout, content, approved=True)
+
+        # Parse content to detect cron_add ops and display them clearly.
+        try:
+            parsed = json.loads(content)
+        except Exception:
+            parsed = {}
+        cron_changes = [
+            c for c in parsed.get("changes", [])
+            if isinstance(c, dict) and c.get("op") == "cron_add"
+        ]
+        other_changes = [
+            c for c in parsed.get("changes", [])
+            if not (isinstance(c, dict) and c.get("op") == "cron_add")
+        ]
+
+        if cron_changes and not other_changes:
+            # Pure cron proposal — present each task individually.
+            cron_approved: list[dict[str, Any]] = []
+            cron_rejected = False
+            for change in cron_changes:
+                print(f"\n[CRON PROPOSAL]")
+                print(f"  description : {parsed.get('description', '')}")
+                print(f"  task        : {change.get('task', '')}")
+                print(f"  schedule    : {change.get('schedule', '')}")
+                print(f"  executor    : {change.get('executor', 'cpe')}")
+                print(f"  tools       : {change.get('tools', '') or '(none)'}")
+                print()
+                if ui.confirm("Approve?", default=False):
+                    cron_approved.append(change)
+                else:
+                    cron_rejected = True
+
+            if cron_approved:
+                for change in cron_approved:
+                    _cron_add_from_proposal(layout, change, str(parsed.get("description", "")))
+                auth_digest = _sha256_str(content)
+                authorized.append({
+                    "seq": inner.get("ts", int(time.time() * 1000)),
+                    "content": content,
+                    "auth_digest": auth_digest,
+                    "slugs": inner.get("slugs", []),
+                })
+                _write_evolution_auth(layout, content, auth_digest)
+                from .stimuli import inject_evolution_result
+                inject_evolution_result(layout, content, approved=True)
+            if cron_rejected:
+                _write_evolution_rejected(layout, content)
+                if not cron_approved:
+                    from .stimuli import inject_evolution_result
+                    inject_evolution_result(layout, content, approved=False)
         else:
-            _write_evolution_rejected(layout, content)
-            from .stimuli import inject_evolution_result
-            inject_evolution_result(layout, content, approved=False)
+            print(f"\n[EVOLUTION PROPOSAL]\n{content}\n")
+            answer = "y" if ui.confirm("Approve?", default=False) else "n"
+            if answer == "y":
+                auth_digest = _sha256_str(content)
+                authorized.append({
+                    "seq": inner.get("ts", int(time.time() * 1000)),
+                    "content": content,
+                    "auth_digest": auth_digest,
+                    "slugs": inner.get("slugs", []),
+                })
+                _write_evolution_auth(layout, content, auth_digest)
+                from .stimuli import inject_evolution_result
+                inject_evolution_result(layout, content, approved=True)
+            else:
+                _write_evolution_rejected(layout, content)
+                from .stimuli import inject_evolution_result
+                inject_evolution_result(layout, content, approved=False)
+
         pfile = p["file"]
         if isinstance(pfile, Path):
             pfile.unlink(missing_ok=True)
@@ -956,6 +1008,44 @@ def _build_wake_up_message(task: str, executor: str, tools: str = "") -> str:
     if tools:
         msg += f"\n[Tools] {tools}"
     return msg
+
+
+def _cron_add_from_proposal(layout: Layout, change: dict, description: str) -> None:
+    """Create and register a cron task from a CPE-proposed cron_add change."""
+    import datetime as _dt
+    import uuid as _uuid
+
+    executor = change.get("executor", "cpe").lower()
+    if executor not in ("worker", "cpe"):
+        executor = "cpe"
+    task_text = change.get("task", "")
+    schedule = change.get("schedule", "")
+    tools = change.get("tools", "")
+    if not task_text or not schedule:
+        ui.print_err("cron_add proposal missing task or schedule — skipped.")
+        return
+
+    wake_up_message = _build_wake_up_message(task_text, executor, tools)
+    now = _dt.datetime.utcnow().isoformat() + "Z"
+    task_entry = {
+        "id": f"cron_{_uuid.uuid4().hex[:12]}",
+        "status": "approved",
+        "executor": executor,
+        "description": description,
+        "tools": tools,
+        "task": task_text,
+        "schedule": schedule,
+        "wake_up_message": wake_up_message,
+        "proposed_at": now,
+        "approved_at": now,
+        "last_run": None,
+    }
+    agenda = load_agenda(layout)
+    agenda.setdefault("tasks", []).append(task_entry)
+    layout.agenda.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(layout.agenda, agenda)
+    _cron_register_host(task_entry, layout)
+    ui.print_ok(f"cron task created: {task_entry['id']} ({schedule})")
 
 
 def _cron_add_interactive(layout: Layout) -> None:
