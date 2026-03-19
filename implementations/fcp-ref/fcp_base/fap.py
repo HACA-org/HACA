@@ -44,6 +44,7 @@ from .sil import (
     write_integrity_doc,
 )
 from .store import Layout, atomic_write, read_json
+from . import ui
 
 # HACA spec versions this implementation targets.
 _HACA_ARCH_VERSION = "1.0.0"
@@ -166,22 +167,8 @@ def run(layout: Layout) -> str:
         # ------------------------------------------------------------------
         # Step 9 — First stimuli: onboarding message for the CPE
         # ------------------------------------------------------------------
-        atomic_write(layout.first_stimuli, {
-            "source": "fap",
-            "message": (
-                "[FIRST SESSION] You have just been activated for the first time. "
-                f"Begin by introducing yourself to the Operator: your name, your profile ({baseline.haca_profile}), "
-                "your available skills, and your operational boundaries (including what requires "
-                "Operator authorization).\n\n"
-                "Then ask the Operator for the following information to personalize your collaboration:\n"
-                "- Preferred language for communication\n"
-                "- Area of work or project context\n"
-                "- Preferred communication style (concise, detailed, formal, informal)\n"
-                "- Any other preferences or constraints you should know\n\n"
-                "Save everything the Operator shares in structured memory "
-                "(slugs: operator-profile, session-preferences)."
-            ),
-        })
+        from .stimuli import inject_onboarding
+        inject_onboarding(layout, baseline.haca_profile)
         written.append(layout.first_stimuli)
 
         return session_id
@@ -221,25 +208,29 @@ def _validate_structural_baseline(layout: Layout) -> None:
 
 def _enroll_operator() -> tuple[str, str]:
     """Step 4: interactive Operator enrollment via terminal prompt."""
-    print("\n=== FCP First Activation ===")
-    print("This entity has not been activated yet.")
-    print("Please provide the Operator details to bind this entity.\n")
+    print()
+    ui.hr()
+    print("  FCP — First Activation")
+    ui.hr()
+    print("  This entity has not been activated yet.")
+    print("  Please provide the Operator details to bind this entity.")
+    print()
 
     while True:
-        name = input("Operator name: ").strip()
+        name = ui.ask("Operator name")
         if name:
             break
-        print("Name cannot be empty.")
+        ui.print_err("Name cannot be empty.")
 
     while True:
-        email = input("Operator email: ").strip()
+        email = ui.ask("Operator email")
         if email:
             break
-        print("Email cannot be empty.")
+        ui.print_err("Email cannot be empty.")
 
-    print(f"\nOperator bound: {name} <{email}>")
-    confirm = input("Confirm? [y/N] ").strip().lower()
-    if confirm != "y":
+    print()
+    ui.print_info(f"Operator bound: {name} <{email}>")
+    if not ui.confirm("Confirm?", default=False):
         raise FAPError("FAP step 4: Operator enrollment cancelled")
 
     return name, email

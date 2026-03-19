@@ -94,8 +94,7 @@ def _stage0_drift(layout: Layout) -> bool:
     if not layout.drift_probes.exists():
         return False
 
-    baseline = load_baseline(layout)
-    baseline_raw = read_json(layout.baseline) if layout.baseline.exists() else {}
+    baseline_raw = load_baseline(layout)
     profile = baseline_raw.get("profile", "haca-core")
     drift_threshold = float(baseline_raw.get("drift", {}).get("threshold", 0.0))
 
@@ -154,12 +153,7 @@ def _run_probe(target: Path, reference: str, probe_type: str, layout: Layout) ->
 
 
 def _write_drift_fault(layout: Layout, target: str) -> None:
-    envelope = acp_encode(
-        env_type="MSG",
-        source="sil",
-        data={"type": "DRIFT_FAULT", "target": target, "ts": int(time.time() * 1000)},
-    )
-    append_jsonl(layout.integrity_log, envelope)
+    log_critical(layout, "DRIFT_FAULT", {"target": target, "ts": int(time.time() * 1000)})
     write_notification(layout, "DRIFT_FAULT", {"target": target})
 
 

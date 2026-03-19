@@ -17,6 +17,7 @@ from typing import Any
 from .acp import make as acp_encode
 from .sil import write_notification
 from .store import Layout, append_jsonl, read_json
+from . import ui
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +89,10 @@ def dispatch(
         _increment_failure(layout, skill_name)
         post_skill_hook(layout, skill_name, params, str(exc), failed=True)
         raise
+
+    # For shell_run: intercept "command not in allowlist" and offer operator approval.
+    if skill_name == "shell_run":
+        output = _maybe_prompt_shell_allowlist(layout, entry, manifest, params, timeout, output)
 
     if ledger_seq is not None:
         _ledger_resolve(layout, ledger_seq, "complete")
@@ -260,6 +265,79 @@ def _run_skill(
         raise ExecError(result.stdout.strip() or result.stderr.strip() or f"skill exited {result.returncode}")
 
     return result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Internal: shell_run dynamic allowlist
+# ---------------------------------------------------------------------------
+
+def _maybe_prompt_shell_allowlist(
+    layout: Layout,
+    entry: dict[str, Any],
+    manifest: dict[str, Any],
+    params: dict[str, Any],
+    timeout: int,
+    output: str,
+) -> str:
+    """If shell_run returned a 'command not in allowlist' error, prompt the
+    operator to approve it once or permanently, then re-run if approved."""
+    try:
+        result = json.loads(output)
+    except Exception:
+        return output
+
+    error = result.get("error", "")
+    if not error.startswith("command not in allowlist:"):
+        return output
+
+    command = str(params.get("command", "")).strip()
+    print()
+    ui.hr("operator action required")
+    ui.print_warn(f"shell_run blocked — command not in allowlist:")
+    print(f"  {command!r}")
+    print()
+    items = ["y — allow once", "a — allow always (persist)", "N — deny"]
+    try:
+        choice = ui.pick_one("Allow this command?", items, default_idx=2, indent="  ")
+        answer = choice[0].lower()
+    except (KeyboardInterrupt, EOFError):
+        answer = "n"
+
+    if answer not in ("y", "a"):
+        return output
+
+    if answer == "a":
+        _shell_allowlist_add(layout, command)
+
+    try:
+        new_output = _run_skill(layout, entry, manifest, params, timeout)
+        return new_output
+    except Exception:
+        return output
+
+
+def _shell_allowlist_add(layout: Layout, command: str) -> None:
+    """Append a composite entry to shell_run/manifest.json allowlist_composite."""
+    manifest_path = layout.skills_lib_dir / "shell_run" / "manifest.json"
+    if not manifest_path.exists():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+
+    composite: list[dict] = manifest.get("allowlist_composite", [])
+    if any(e.get("command") == command for e in composite):
+        return  # already present
+
+    composite.append({"command": command})
+    manifest["allowlist_composite"] = composite
+
+    import os
+    tmp = manifest_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    os.replace(tmp, manifest_path)
+    ui.print_ok(f"[shell_run] '{command}' added to allowlist_composite.")
 
 
 # ---------------------------------------------------------------------------

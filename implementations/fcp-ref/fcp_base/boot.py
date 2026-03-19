@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .acp import ACPEnvelope, crc32
+from .acp import ACPEnvelope, crc32, parse_envelope_data
 from .fap import FAPError, run as fap_run
 from .formats import IntegrityDocument, ImprintRecord, SkillIndex, StructuralBaseline
 from .sil import (
@@ -32,6 +32,7 @@ from .sil import (
     verify_structural_files,
 )
 from .store import Layout, append_jsonl, read_json, read_jsonl
+from . import ui
 
 
 class BootError(Exception):
@@ -255,33 +256,34 @@ def _resolve_action_ledger(layout: Layout) -> None:
 
     for entry in entries:
         t = entry.get("type", "")
-        try:
-            data = json.loads(entry.get("data", "{}"))
-        except (json.JSONDecodeError, TypeError):
-            data = {}
+        data = parse_envelope_data(entry)
 
         if t == "ACTION_LEDGER":
-            ledger_id = data.get("id")
+            seq = data.get("seq")
             status = data.get("status")
-            if ledger_id and status == "in_progress":
+            if seq is not None and status == "in_progress":
                 unresolved.append(data)
-        elif t in ("SKILL_RESULT", "SKILL_ERROR", "SKILL_TIMEOUT"):
-            ledger_id = data.get("ledger_id")
-            if ledger_id:
-                resolved_ids.add(ledger_id)
+            elif seq is not None and status in ("complete", "failed"):
+                resolved_ids.add(seq)
 
-    pending = [e for e in unresolved if e.get("id") not in resolved_ids]
+    pending = [e for e in unresolved if e.get("seq") not in resolved_ids]
     if not pending:
         return
 
-    print("\n=== Crash Recovery: Unresolved Actions ===")
-    print("The following skills were in-progress when the session crashed:\n")
-    for item in pending:
-        print(f"  skill: {item.get('skill')}  id: {item.get('id')}")
     print()
-    print("These will NOT be re-executed automatically.")
-    print("Please investigate and re-run manually if needed.")
-    input("Press Enter to continue boot...")
+    ui.hr("Crash Recovery")
+    ui.print_warn("The following skills were in-progress when the session crashed:")
+    print()
+    for item in pending:
+        print(f"    skill: {item.get('skill')}  id: {item.get('id')}")
+    print()
+    ui.print_info("These will NOT be re-executed automatically.")
+    ui.print_info("Please investigate and re-run manually if needed.")
+    print()
+    try:
+        input("  Press Enter to continue boot...")
+    except EOFError:
+        pass
 
 
 def _int_or_zero(v: int | None) -> int:
@@ -294,10 +296,7 @@ def _read_crash_count(entries: list[dict]) -> int:
         t = entry.get("type", "")
         if t == "SLEEP_COMPLETE":
             return 0
-        try:
-            data = json.loads(entry.get("data", "{}"))
-        except (json.JSONDecodeError, TypeError):
-            data = {}
+        data = parse_envelope_data(entry)
         cc = data.get("crash_count")
         if t == "HEARTBEAT" and cc is not None:
             return int(cc)
@@ -361,25 +360,19 @@ def _check_critical_conditions(layout: Layout) -> list[dict]:
 
         if t in ("DRIFT_FAULT", "IDENTITY_DRIFT", "SEVERANCE_PENDING", "SIL_UNRESPONSIVE"):
             critical_seqs[seq] = t
-            try:
-                critical_data[seq] = json.loads(entry.get("data", "{}"))
-            except Exception:
-                critical_data[seq] = {}
+            critical_data[seq] = parse_envelope_data(entry)
 
         elif t == "CRITICAL_CLEARED":
+            data = parse_envelope_data(entry)
             try:
-                data = json.loads(entry.get("data", "{}"))
                 clears = int(data.get("clears_seq", -1))
                 cleared_seqs.add(clears)
-            except (json.JSONDecodeError, TypeError, ValueError):
+            except (TypeError, ValueError):
                 pass
 
         elif t == "PROPOSAL_PENDING":
-            try:
-                data = json.loads(entry.get("data", "{}"))
-                pending_proposals.append({"seq": seq, **data})
-            except (json.JSONDecodeError, TypeError):
-                pass
+            data = parse_envelope_data(entry)
+            pending_proposals.append({"seq": seq, **data})
 
     unresolved = {s: t for s, t in critical_seqs.items() if s not in cleared_seqs}
 
@@ -472,16 +465,16 @@ def _try_resolve_severance(
     skill_name = data.get("skill", "<unknown>")
     issues = data.get("issues", [])
 
-    print(f"\n[SEVERANCE PENDING] Skill '{skill_name}' was removed mid-session.")
+    print()
+    ui.print_warn(f"[SEVERANCE PENDING] Skill '{skill_name}' was removed mid-session.")
     if issues:
-        print("  Issues detected:")
+        ui.print_info("Issues detected:")
         for issue in issues:
-            print(f"    - {issue}")
-    print("  Options: approve (keep removed) | reject (re-audit and restore if clean)")
-    try:
-        answer = input("  Decision [approve/reject]: ").strip().lower()
-    except EOFError:
-        answer = "approve"
+            print(f"      - {issue}")
+    print()
+    items = ["approve — keep removed", "reject  — re-audit and restore if clean"]
+    choice = ui.pick_one("Decision", items, default_idx=0, indent="  ")
+    answer = choice.split()[0]
 
     if answer == "approve":
         log_cleared(layout, seq)

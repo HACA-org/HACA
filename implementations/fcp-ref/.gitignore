@@ -5,9 +5,3 @@ dist/
 build/
 .venv/
 *.tmp
-
-# Entity Store runtime dirs (created by fcp-core init, never committed)
-memory/
-state/
-io/
-workspace/

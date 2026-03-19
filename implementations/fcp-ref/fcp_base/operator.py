@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Any
 
 from .acp import make as acp_encode
-from .sil import sha256_str as _sha256_str
+from .sil import sha256_str as _sha256_str, write_evolution_auth as _write_evolution_auth
 from .store import Layout, append_jsonl, atomic_write, load_agenda, read_json
+from . import ui
 
 
 # ---------------------------------------------------------------------------
@@ -112,10 +113,7 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
         inner = p["data"]
         content = inner.get("content", "")
         print(f"\n[EVOLUTION PROPOSAL]\n{content}\n")
-        try:
-            answer = input("Approve? [y/N] ").strip().lower()
-        except EOFError:
-            answer = "n"
+        answer = "y" if ui.confirm("Approve?", default=False) else "n"
         if answer == "y":
             auth_digest = _sha256_str(content)
             authorized.append({
@@ -125,10 +123,12 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
                 "slugs": inner.get("slugs", []),
             })
             _write_evolution_auth(layout, content, auth_digest)
-            _write_evolution_stimuli(layout, content, approved=True)
+            from .stimuli import inject_evolution_result
+            inject_evolution_result(layout, content, approved=True)
         else:
             _write_evolution_rejected(layout, content)
-            _write_evolution_stimuli(layout, content, approved=False)
+            from .stimuli import inject_evolution_result
+            inject_evolution_result(layout, content, approved=False)
         pfile = p["file"]
         if isinstance(pfile, Path):
             pfile.unlink(missing_ok=True)
@@ -140,8 +140,6 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
 # Platform commands  §12.3.1
 # ---------------------------------------------------------------------------
 
-_DIM = "\x1b[2m"
-_RESET = "\x1b[0m"
 _CMD_INDENT = "    "  # 4 spaces
 
 
@@ -156,7 +154,7 @@ class _DimWriter:
         else:
             lines = text.split("\n")
             out = "\n".join(
-                f"{_DIM}{_CMD_INDENT}{l}{_RESET}" if l else l
+                f"{ui.DIM}{_CMD_INDENT}{l}{ui.RESET}" if l else l
                 for l in lines
             )
             self._orig.write(out)
@@ -229,6 +227,10 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
     if cmd in ("/skill", "/skills"):
         _cmd_skill(layout, args)
         return True
+    if cmd in ("/shell", "/allowlist"):
+        # legacy: treat as /skill allowlist [args]
+        _cmd_skill(layout, ["allowlist"] + args)
+        return True
 
     # --- Model, endure & cron ---
     if cmd == "/model":
@@ -282,20 +284,41 @@ def _cmd_status(layout: Layout) -> None:
     print(f"  workspace focus: {wf or '(not set)'}")
 
 
-def _cmd_doctor(layout: Layout, args: list[str]) -> None:
+def run_doctor(layout: Layout, fix: bool, clear_sentinels: bool = False) -> None:
+    """Core doctor logic — shared by /doctor (in-session) and ./fcp doctor (CLI).
+
+    Args:
+        fix: repair volatile dirs and recalculate integrity hashes.
+        clear_sentinels: also clear distress beacon and stale session token (CLI only).
+    """
     from .compliance import run_all, print_report
-    fix = "--fix" in args
+    from .sil import beacon_is_active, clear_beacon
+
     if fix:
+        if clear_sentinels:
+            if beacon_is_active(layout):
+                clear_beacon(layout)
+                print("  distress beacon cleared")
+            if layout.session_token.exists():
+                layout.session_token.unlink()
+                print("  stale session token removed")
+
         for d in layout.volatile_dirs():
             if not d.exists():
                 d.mkdir(parents=True, exist_ok=True)
                 print(f"  created: {d.relative_to(layout.root)}")
         fix_integrity_hashes(layout)
+
     findings = run_all(layout)
     print_report(findings)
     failed = [f for f in findings if not f.passed]
     if failed:
-        print(f"\n  {len(failed)} issue(s) found. Run /doctor --fix to repair volatile dirs.")
+        hint = "./fcp doctor --fix" if clear_sentinels else "/doctor --fix"
+        print(f"\n  {len(failed)} issue(s) found. Run {hint} to repair.")
+
+
+def _cmd_doctor(layout: Layout, args: list[str]) -> None:
+    run_doctor(layout, fix="--fix" in args, clear_sentinels=False)
 
 
 def fix_integrity_hashes(layout: Layout) -> None:
@@ -453,12 +476,8 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
             except Exception:
                 current = ""
             if current:
-                try:
-                    answer = input(f"  workspace focus already set to {current!r}. Overwrite? [y/N] ").strip().lower()
-                except EOFError:
-                    answer = "n"
-                if answer != "y":
-                    print("  aborted.")
+                if not ui.confirm(f"workspace focus already set to {current!r}. Overwrite?", default=False):
+                    ui.print_info("aborted.")
                     return
         atomic_write(layout.workspace_focus, {"path": str(target)})
         print(f"  workspace focus set: {target}")
@@ -487,21 +506,169 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
                 print("  available:")
                 for d in subdirs:
                     print(f"    {d.name}")
-    elif sub == "clear":
+    elif sub in ("unset", "clear"):
         if layout.workspace_focus.exists():
             layout.workspace_focus.unlink()
             print("  workspace focus cleared")
         else:
             print("  workspace focus not set")
     else:
-        print("  usage: /work set <subdir> | clone <repo> | status | clear")
+        print("  usage: /work set <subdir> | clone <repo> | status | unset")
 
 
 # --- Skills & execution ---
 
+def _cmd_allowlist(layout: Layout, args: list[str]) -> None:
+    """Manage shell_run allowlist_composite entries."""
+    manifest_path = layout.skills_lib_dir / "shell_run" / "manifest.json"
+    if not manifest_path.exists():
+        print("  shell_run skill not found")
+        return
+
+    def _load() -> dict:
+        try:
+            return read_json(manifest_path)
+        except Exception as exc:
+            print(f"  error reading manifest: {exc}")
+            return {}
+
+    def _save(manifest: dict) -> None:
+        import os
+        tmp = manifest_path.with_suffix(".json.tmp")
+        import json as _json
+        tmp.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
+        os.replace(tmp, manifest_path)
+
+    if not args or args[0] == "list":
+        manifest = _load()
+        simple = manifest.get("allowlist", [])
+        composite = manifest.get("allowlist_composite", [])
+        print("  simple allowlist:")
+        for cmd in simple:
+            print(f"    {cmd}")
+        print("  composite allowlist:")
+        if composite:
+            for i, e in enumerate(composite):
+                label = f"  [{e['label']}]" if e.get("label") else ""
+                print(f"    [{i}] {e['command']}{label}")
+        else:
+            print("    (empty)")
+        return
+
+    sub = args[0].lower()
+
+    if sub in ("add", "allow"):
+        # /skill allowlist add <command> [label]
+        if len(args) < 2:
+            print("  usage: /skill allowlist add <command> [label]")
+            return
+        command = args[1]
+        label = args[2] if len(args) > 2 else ""
+        manifest = _load()
+        if not manifest:
+            return
+        composite: list = manifest.get("allowlist_composite", [])
+        if any(e.get("command") == command for e in composite):
+            print(f"  already in allowlist_composite: {command!r}")
+            return
+        entry: dict = {"command": command}
+        if label:
+            entry["label"] = label
+        composite.append(entry)
+        manifest["allowlist_composite"] = composite
+        _save(manifest)
+        print(f"  added: {command!r}")
+        return
+
+    if sub in ("rm", "remove"):
+        # /skill allowlist rm <index|label|command>
+        if len(args) < 2:
+            print("  usage: /skill allowlist rm <index | label | command>")
+            return
+        key = args[1]
+        manifest = _load()
+        if not manifest:
+            return
+        composite = manifest.get("allowlist_composite", [])
+        original_len = len(composite)
+        # try index first
+        try:
+            idx = int(key)
+            if 0 <= idx < len(composite):
+                removed = composite.pop(idx)
+                manifest["allowlist_composite"] = composite
+                _save(manifest)
+                print(f"  removed [{idx}]: {removed['command']!r}")
+                return
+        except ValueError:
+            pass
+        # try label or command match
+        new_composite = [e for e in composite if e.get("label") != key and e.get("command") != key]
+        if len(new_composite) == original_len:
+            print(f"  not found: {key!r}")
+            return
+        manifest["allowlist_composite"] = new_composite
+        _save(manifest)
+        print(f"  removed entries matching {key!r}")
+        return
+
+    print("  usage: /skill allowlist | add <command> [label] | rm <index|label|command>")
+
+
+def _skill_remove(layout: Layout, skill_name: str) -> None:
+    """Remove a custom skill from index.json and delete its directory."""
+    import shutil
+    if not layout.skills_index.exists():
+        ui.print_err("skills/index.json not found")
+        return
+    idx = read_json(layout.skills_index) or {}
+    skills = idx.get("skills", [])
+    entry = next((s for s in skills if s["name"] == skill_name), None)
+    if entry is None:
+        ui.print_err(f"skill not found: {skill_name!r}")
+        return
+    if entry.get("class") == "builtin":
+        ui.print_err(f"cannot remove builtin skill: {skill_name!r}")
+        return
+    # Remove from index
+    idx["skills"] = [s for s in skills if s["name"] != skill_name]
+    atomic_write(layout.skills_index, idx)
+    # Delete skill directory (custom skills live in skills/<name>/, not skills/lib/)
+    skill_dir = layout.skills_dir / skill_name
+    if skill_dir.exists() and skill_dir.is_dir():
+        shutil.rmtree(skill_dir)
+        ui.print_ok(f"removed skill: {skill_name!r} (directory deleted)")
+    else:
+        ui.print_ok(f"removed skill: {skill_name!r} (index entry removed)")
+
+
+def _skill_run_direct(layout: Layout, skill_name: str, params: dict[str, Any]) -> None:
+    """Run a skill directly from the operator prompt and print output."""
+    from .exec_ import dispatch, ExecError, SkillRejected
+    if not layout.skills_index.exists():
+        ui.print_err("skills/index.json not found")
+        return
+    idx = read_json(layout.skills_index) or {}
+    skill_names = [s["name"] for s in idx.get("skills", [])]
+    if skill_name not in skill_names:
+        ui.print_err(f"skill not found: {skill_name!r}")
+        print(f"  available: {', '.join(skill_names)}")
+        return
+    try:
+        output = dispatch(layout, skill_name, params, idx)
+        print()
+        ui.hr(f"skill: {skill_name}")
+        print(output)
+        print()
+    except SkillRejected as exc:
+        ui.print_warn(f"skill rejected: {exc}")
+    except ExecError as exc:
+        ui.print_err(f"exec error: {exc}")
+
+
 def _cmd_skill(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /skill list | add | audit <name>")
+        print("  usage: /skill list | add | run <name> [k=v ...] | rm <name> | audit <name> | allowlist ...")
         return
     sub = args[0].lower()
     if sub == "list":
@@ -513,10 +680,22 @@ def _cmd_skill(layout: Layout, args: list[str]) -> None:
             print("  skills/index.json not found")
     elif sub == "add":
         print("  /skill add requires an active session — use the skill_create tool during a session.")
+    elif sub == "run" and len(args) > 1:
+        skill_name = args[1]
+        params: dict[str, Any] = {}
+        for token in args[2:]:
+            if "=" in token:
+                k, _, v = token.partition("=")
+                params[k.strip()] = v.strip()
+        _skill_run_direct(layout, skill_name, params)
+    elif sub == "rm" and len(args) > 1:
+        _skill_remove(layout, args[1])
     elif sub == "audit" and len(args) > 1:
         print(f"  audit {args[1]}: use /skill audit via EXEC dispatch during session")
+    elif sub == "allowlist":
+        _cmd_allowlist(layout, args[1:])
     else:
-        print("  usage: /skill list | add | audit <name>")
+        print("  usage: /skill list | add | run <name> [k=v ...] | rm <name> | audit <name> | allowlist ...")
 
 
 # --- Model & endure ---
@@ -544,8 +723,20 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
         print("  /model is only available during an active session")
         return
     from .cpe.base import make_adapter
+    from .store import API_KEY_ENV, save_api_key, load_env_file
+    
+    api_key = ""
+    if backend != "ollama":
+        env_var = API_KEY_ENV.get(backend, "")
+        api_key = os.environ.get(env_var, "")
+        if not api_key:
+            # Fallback if somehow chosen but no key in env
+            api_key = ui.ask(f"{env_var} [not configured]")
+            if api_key:
+                save_api_key(layout.root.name, env_var, api_key)
+
     try:
-        new_adapter = make_adapter(backend=backend, model=new_model, api_key="")
+        new_adapter = make_adapter(backend=backend, model=new_model, api_key=api_key)
     except Exception as exc:
         print(f"  failed to create adapter: {exc}")
         return
@@ -560,23 +751,26 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
 
 def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[str, str] | None:
     """Interactive arrow-key picker organised by provider. Returns (backend, model) or None."""
-    import sys, tty, termios
     from .cpe.base import KNOWN_MODELS, BACKENDS, fetch_ollama_models
+    from .store import API_KEY_ENV
 
-    # Build flat list of "backend:model" labels
     labels: list[str] = []
     pairs: list[tuple[str, str]] = []
 
     for backend in BACKENDS:
+        if backend != "ollama":
+            env_var = API_KEY_ENV.get(backend, "")
+            if not os.environ.get(env_var):
+                continue
         models = fetch_ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
         for m in models:
             active = backend == current_backend and m == current_model
-            label = f"\x1b[1;96m{backend}:{m} ✓\x1b[0m" if active else f"{backend}:{m}"
+            label = f"{backend}:{m} ✓" if active else f"{backend}:{m}"
             labels.append(label)
             pairs.append((backend, m))
 
     if not labels:
-        print("  no models available")
+        ui.print_info("no models available")
         return None
 
     sel_idx = next(
@@ -584,51 +778,54 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
         0,
     )
 
-    first_render = True
-
-    def _render(sidx: int) -> None:
-        nonlocal first_render
-        if not first_render:
-            sys.stdout.write(f"\033[{len(labels)}A")
-        first_render = False
-        for i, label in enumerate(labels):
-            prefix = " > " if i == sidx else "   "
-            sys.stdout.write(f"\r{prefix}{label}\033[K\n")
-        sys.stdout.flush()
-
-    print("Select model (↑↓ to move, Enter to confirm, Ctrl+C to cancel):")
-    _render(sel_idx)
-
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
     try:
-        tty.setraw(fd)
-        while True:
-            ch = sys.stdin.read(1)
-            if ch in ("\r", "\n"):
-                break
-            if ch == "\x03":
-                print()
-                return None
-            if ch == "\x1b":
-                ch2 = sys.stdin.read(1)
-                ch3 = sys.stdin.read(1)
-                if ch2 == "[":
-                    if ch3 == "A" and sel_idx > 0:
-                        sel_idx -= 1
-                    elif ch3 == "B" and sel_idx < len(labels) - 1:
-                        sel_idx += 1
-            _render(sel_idx)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        chosen = ui.pick_one("Select model", labels, default_idx=sel_idx, indent="  ")
+    except KeyboardInterrupt:
+        return None
 
+    chosen_idx = next(i for i, lbl in enumerate(labels) if lbl == chosen)
+    return pairs[chosen_idx]
+
+
+def print_integrity_chain(layout: Layout) -> None:
+    """Display all entries in the integrity chain."""
+    from .store import read_jsonl
     print()
-    return pairs[sel_idx]
+    ui.hr("integrity chain")
+    if not layout.integrity_chain.exists() or layout.integrity_chain.stat().st_size == 0:
+        ui.print_info("Integrity chain is empty.")
+        print()
+        return
+    entries = read_jsonl(layout.integrity_chain)
+    if not entries:
+        ui.print_info("Integrity chain is empty.")
+        print()
+        return
+    for entry in entries:
+        seq = entry.get("seq", "?")
+        etype = entry.get("type", "?")
+        ts = entry.get("ts", "")
+        prev = entry.get("prev_hash", "")
+        auth = entry.get("evolution_auth_digest", "")
+        imprint = entry.get("imprint_hash", "")
+        type_color = "\x1b[96m" if etype == "GENESIS" else (
+            "\x1b[92m" if etype == "ENDURE_COMMIT" else "\x1b[93m"
+        )
+        print(f"  {ui.DIM}#{seq:>4}{ui.RESET}  {type_color}{etype:<20}{ui.RESET}  {ui.DIM}{ts}{ui.RESET}")
+        if imprint:
+            print(f"         imprint  {ui.DIM}{imprint[:72]}{ui.RESET}")
+        if prev:
+            print(f"         prev     {ui.DIM}{prev[:72]}{ui.RESET}")
+        if auth:
+            print(f"         auth     {ui.DIM}{auth[:72]}{ui.RESET}")
+    print()
+    print(f"  {len(entries)} entr{'y' if len(entries) == 1 else 'ies'} total")
+    print()
 
 
 def _cmd_endure(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /endure list | approve <id> | reject <id> | sync [--remote]")
+        print("  usage: /endure list | approve <id> | reject <id> | chain")
         return
     sub = args[0].lower()
     if sub == "list":
@@ -637,10 +834,10 @@ def _cmd_endure(layout: Layout, args: list[str]) -> None:
         _endure_decide(layout, args[1], approve=True)
     elif sub == "reject" and len(args) > 1:
         _endure_decide(layout, args[1], approve=False)
-    elif sub == "sync":
-        _endure_sync(layout, "--remote" in args)
+    elif sub == "chain":
+        print_integrity_chain(layout)
     else:
-        print("  usage: /endure list | approve <id> | reject <id> | sync [--remote]")
+        print("  usage: /endure list | approve <id> | reject <id> | chain")
 
 
 def _endure_proposals(layout: Layout) -> list[dict]:
@@ -689,7 +886,8 @@ def _endure_decide(layout: Layout, idx_str: str, approve: bool) -> None:
     if approve:
         auth_digest = _sha256_str(content)
         _write_evolution_auth(layout, content, auth_digest)
-        _write_evolution_stimuli(layout, content, approved=True)
+        from .stimuli import inject_evolution_result
+        inject_evolution_result(layout, content, approved=True)
         print(f"  approved: [{idx}] — session will close for Sleep Cycle and reboot")
         set_endure_approved(True)
         from .hooks import run_hook
@@ -705,24 +903,6 @@ def _endure_decide(layout: Layout, idx_str: str, approve: bool) -> None:
         pfile.unlink(missing_ok=True)
 
 
-def _endure_sync(layout: Layout, remote: bool) -> None:
-    import subprocess
-    r = subprocess.run(["git", "add", "-A"], capture_output=True, text=True, cwd=str(layout.root))
-    if r.returncode != 0:
-        print(f"  git add failed: {r.stderr.strip()}")
-        return
-    ts = int(time.time())
-    r2 = subprocess.run(
-        ["git", "commit", "-m", f"endure sync {ts}"],
-        capture_output=True, text=True, cwd=str(layout.root),
-    )
-    if r2.returncode != 0:
-        print(f"  git commit: {r2.stderr.strip() or 'nothing to commit'}")
-    else:
-        print(f"  committed: {r2.stdout.strip()}")
-    if remote:
-        r3 = subprocess.run(["git", "push", "origin"], capture_output=True, text=True, cwd=str(layout.root))
-        print(f"  push: {'ok' if r3.returncode == 0 else r3.stderr.strip()}")
 
 
 # --- Cron ---
@@ -791,10 +971,9 @@ def _cron_add_interactive(layout: Layout) -> None:
     values: dict[str, str] = {}
     print()
     for key, prompt in fields:
-        try:
-            val = input(f"  {prompt}").strip()
-        except EOFError:
-            print("\n  aborted.")
+        val = ui.ask(prompt.rstrip(": "))
+        if val == "" and key in ("description", "task", "schedule"):
+            ui.print_info("aborted.")
             return
         values[key] = val
 
@@ -815,12 +994,9 @@ def _cron_add_interactive(layout: Layout) -> None:
     print(f"  task          : {values['task']}")
     print(f"  schedule      : {values['schedule']}")
     print(f"  wake_up_msg   : {wake_up_message}")
-    try:
-        confirm = input("\n  Save and approve? [y/N] ").strip().lower()
-    except EOFError:
-        confirm = "n"
-    if confirm != "y":
-        print("  aborted.")
+    print()
+    if not ui.confirm("Save and approve?", default=False):
+        ui.print_info("aborted.")
         return
 
     import uuid as _uuid
@@ -979,18 +1155,9 @@ def _cmi_start(layout: Layout) -> None:
     cmi_cfg = baseline.get("cmi", {})
     existing_host = cmi_cfg.get("host", "")
     if existing_host:
-        try:
-            new_host = input(f"  CMI endpoint [{existing_host}]: ").strip()
-        except EOFError:
-            new_host = ""
-        host = new_host if new_host else existing_host
+        host = ui.ask("CMI endpoint", default=existing_host)
     else:
-        try:
-            host = input("  CMI endpoint [localhost:7000]: ").strip()
-        except EOFError:
-            host = ""
-        if not host:
-            host = "localhost:7000"
+        host = ui.ask("CMI endpoint", default="localhost:7000")
 
     # build proposal content — sleep cycle applies and covers in Integrity Document
     credential_content = _json.dumps({
@@ -1133,10 +1300,10 @@ def _cmi_contacts(layout: Layout, args: list[str]) -> None:
         _cmi_contacts_list(layout)
     elif sub == "add":
         _cmi_contacts_add(layout)
-    elif sub == "remove" and len(args) > 1:
+    elif sub in ("rm", "remove") and len(args) > 1:
         _cmi_contacts_remove(layout, args[1])
     else:
-        print("  usage: /cmi contacts [list|add|remove <node_id>]")
+        print("  usage: /cmi contacts [list|add|rm <node_id>]")
 
 
 def _cmi_contacts_list(layout: Layout) -> None:
@@ -1166,15 +1333,15 @@ def _cmi_contacts_add(layout: Layout) -> None:
     """Interactively add a contact from a peer's invite token."""
     from .cmi.identity import import_invite_token
 
-    print("  paste the invite token from the peer Operator:")
+    ui.print_info("paste the invite token from the peer Operator:")
     try:
-        token = input("  token> ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print("\n  cancelled")
+        token = ui.ask("token")
+    except KeyboardInterrupt:
+        ui.print_info("cancelled")
         return
 
     if not token:
-        print("  cancelled — no token provided")
+        ui.print_info("cancelled — no token provided")
         return
 
     try:
@@ -1190,14 +1357,8 @@ def _cmi_contacts_add(layout: Layout) -> None:
     print(f"  pubkey   : {contact['pubkey'][:16]}...")
     print()
 
-    try:
-        confirm = input("  add this contact? [y/N] ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print("\n  cancelled")
-        return
-
-    if confirm != "y":
-        print("  cancelled")
+    if not ui.confirm("add this contact?", default=False):
+        ui.print_info("cancelled")
         return
 
     # Write contact to baseline.cmi.contacts
@@ -1252,18 +1413,18 @@ def _cmi_contacts_remove(layout: Layout, node_id: str) -> None:
 
 def _cmi_channel(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /cmi chan list | open [<id>] | close <id>")
+        print("  usage: /cmi chan list | init [<id>] | close <id>")
         return
     sub = args[0].lower()
     if sub == "list":
         _cmi_channel_list(layout)
-    elif sub == "open":
+    elif sub in ("init", "open"):
         chan_id = args[1] if len(args) > 1 else None
         _cmi_channel_open(layout, chan_id)
     elif sub == "close" and len(args) > 1:
         _cmi_channel_close(layout, args[1])
     else:
-        print("  usage: /cmi chan list | open [<id>] | close <id>")
+        print("  usage: /cmi chan list | init [<id>] | close <id>")
 
 
 def _cmi_channel_list(layout: Layout) -> None:
@@ -1276,7 +1437,7 @@ def _cmi_channel_list(layout: Layout) -> None:
             pass
     channels = baseline.get("cmi", {}).get("channels", [])
     if not channels:
-        print("  no channels configured — use /cmi chan open to create one")
+        print("  no channels configured — use /cmi chan init to create one")
         return
     for ch in channels:
         cid = ch.get("id", "?")
@@ -1303,24 +1464,19 @@ def _cmi_channel_create_interactive(layout: Layout, baseline: dict, cred: dict) 
     print()
 
     try:
-        sel = input("  select contact index> ").strip()
+        sel = ui.ask("select contact index")
         idx = int(sel)
         if idx < 0 or idx >= len(contacts):
             raise ValueError()
     except (ValueError, KeyboardInterrupt, EOFError):
-        print("  cancelled")
+        ui.print_info("cancelled")
         return None
 
     contact = contacts[idx]
 
-    try:
-        task = input("  task description> ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print("\n  cancelled")
-        return None
-
+    task = ui.ask("task description")
     if not task:
-        print("  cancelled — task is required")
+        ui.print_info("cancelled — task is required")
         return None
 
     chan_id = f"chan_{int(_time.time())}"
@@ -1530,69 +1686,70 @@ def _cmd_help() -> None:
   Platform commands:
 
   Session:
-    /status                   — entity status overview
-    /model [list]             — interactive model picker (active model highlighted)
-    /exit | /bye | /close     — close session
-    /new | /clear | /reset    — forced close + clean session restart
-    /compact                  — compress session context without closing
-
-  Memory:
-    /memory [query]           — list memory store contents (episodic + semantic)
-    /inbox list               — list system notifications
-    /inbox view <id>          — view notification by index
-    /inbox dismiss <id>       — remove notification by index
-    /inbox clear              — remove all notifications
+    /new                                  — forced close + clean session restart (aliases: /clear, /reset)
+    /model [list]                         — interactive model picker (active model highlighted)
+    /memory [query]                       — list memory store contents (episodic + semantic)
+    /compact                              — compress session context without closing
+    /status                               — entity status overview
+    /exit                                 — close session (aliases: /bye, /close)
 
   Workspace:
-    /work status              — show active workspace focus
-    /work set <subdir>        — set workspace focus
-    /work clone <repo>        — clone repo and set as workspace focus
-    /work clear               — unset workspace focus
+    /work status                          — show active workspace focus
+    /work set <subdir>                    — set workspace focus
+    /work clone <repo>                    — clone repo and set as workspace focus
+    /work unset                           — unset workspace focus
 
   Skills:
-    /skill list               — list installed skills
-    /skill add                — create new skill
-    /skill run <name>         — run a skill directly
-    /skill audit <name>       — audit a skill
+    /skill list                           — list installed skills
+    /skill add                            — create new skill (use skill_create tool during session)
+    /skill run <name> [k=v]               — run a skill directly with optional params
+    /skill rm <name>                      — remove a custom skill and delete its directory
+    /skill audit <name>                   — audit a skill
+    /skill allowlist                      — list shell_run allowlists
+    /skill allowlist add <cmd> [label]    — add composite command to allowlist
+    /skill allowlist rm <idx|label>       — remove composite command from allowlist
 
   Evolution:
-    /endure list              — list pending Evolution Proposals
-    /endure approve <id>      — approve proposal by index
-    /endure reject <id>       — reject proposal by index
-    /endure sync [--remote]   — commit entity root to version control
+    /endure list                          — list pending Evolution Proposals
+    /endure approve <id>                  — approve proposal by index
+    /endure reject <id>                   — reject proposal by index
+    /endure chain                         — display integrity chain
 
   Agenda:
-    /cron list                — list scheduled tasks
-    /cron add                 — create task interactively (Operator-initiated)
-    /cron approve <id>        — approve pending task proposal; registers cron on host
-    /cron reject <id>         — reject pending task proposal
-    /cron remove <id> [--all] — remove task and unregister from host crontab
+    /cron list                            — list scheduled tasks
+    /cron add                             — create task interactively (Operator-initiated)
+    /cron approve <id>                    — approve pending task proposal; registers cron on host
+    /cron reject <id>                     — reject pending task proposal
+    /cron remove <id> [--all]             — remove task and unregister from host crontab
 
   CMI (Cognitive Mesh Interface):
-    /cmi start                — activate CMI (generates credential, configures endpoint, triggers endure)
-    /cmi stop                 — deactivate CMI (preserves credential and contacts, triggers endure)
-    /cmi status               — node identity, endpoint, active channels
-    /cmi token                — generate invite token to share with a peer Operator
-    /cmi invite               — add a contact from a peer's invite token (interactive)
-    /cmi contacts list        — list trusted contacts
-    /cmi contacts remove <id> — remove a contact by node_id or label
-    /cmi chan list             — list declared channels from baseline
-    /cmi chan open             — create and launch a new channel (interactive)
-    /cmi chan open <id>        — launch CMI process for an existing channel
-    /cmi chan close <id>       — signal close to an active channel
-    /cmi bb <id>               — display Blackboard contents for a channel
+    /cmi start                            — activate CMI (generates credential, configures endpoint, triggers endure)
+    /cmi stop                             — deactivate CMI (preserves credential and contacts, triggers endure)
+    /cmi status                           — node identity, endpoint, active channels
+    /cmi token                            — generate invite token to share with a peer Operator
+    /cmi invite                           — add a contact from a peer's invite token (interactive)
+    /cmi contacts list                    — list trusted contacts
+    /cmi contacts rm <id>                 — remove a contact by node_id or label
+    /cmi chan list                        — list declared channels from baseline
+    /cmi chan init                        — create and launch a new channel (interactive)
+    /cmi chan init <id>                   — launch CMI process for an existing channel
+    /cmi chan close <id>                  — signal close to an active channel
+    /cmi bb <id>                          — display Blackboard contents for a channel
 
   Debug:
-    /doctor [--fix]           — check and optionally repair integrity
-    /verbose [--off]          — enable component message summary (--off to disable)
-    /debugger [--all|--chat|--boot|--off]
-                              — inspect CPE context (disables verbose)
-                                --all:  full context (default)
-                                --chat: session history only
-                                --boot: system + instruction block only
-                                --off:  disable debugger
+    /inbox list                           — list system notifications
+    /inbox view <id>                      — view notification by index
+    /inbox dismiss <id>                   — remove notification by index
+    /inbox clear                          — remove all notifications
+    /doctor [--fix]                       — check and optionally repair integrity
+    /verbose [--off]                      — enable component message summary (--off to disable)
+    /debugger [--all|--chat|--boot|--off] — inspect CPE context (disables verbose)
+                                            --all:  full context (default)
+                                            --chat: session history only
+                                            --boot: system + instruction block only
+                                            --off:  disable debugger
 
-    /help                     — this message
+    /help                                 — this message
 """)
 
 
@@ -1623,45 +1780,8 @@ def resolve_alias(layout: Layout, line: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _write_evolution_stimuli(layout: Layout, content: str, approved: bool) -> None:
-    """Write first_stimuli with evolution result — only for haca-evolve entities."""
-    try:
-        profile = read_json(layout.baseline).get("profile", "haca-core")
-    except Exception:
-        profile = "haca-core"
-    if profile != "haca-evolve":
-        return
-    try:
-        payload = json.loads(content)
-        description = payload.get("description", "evolution proposal")
-    except Exception:
-        description = "evolution proposal"
-    if approved:
-        message = (
-            f"[EVOLUTION COMPLETE] Your evolution proposal was approved and applied: "
-            f"{description}. "
-            "Review the changes and confirm they are working as expected."
-        )
-    else:
-        message = (
-            f"[EVOLUTION REJECTED] Your evolution proposal was rejected by the Operator: "
-            f"{description}."
-        )
-    atomic_write(layout.first_stimuli, {"source": "evolution", "message": message})
-
-
-def _write_evolution_auth(layout: Layout, content: str, auth_digest: str) -> None:
-    ts = int(time.time() * 1000)
-    try:
-        parsed_content = json.loads(content)
-    except Exception:
-        parsed_content = content
-    envelope = acp_encode(
-        env_type="MSG",
-        source="operator",
-        data={"type": "EVOLUTION_AUTH", "auth_digest": auth_digest, "content": parsed_content, "ts": ts},
-    )
-    append_jsonl(layout.integrity_log, envelope)
+# Removed: _write_evolution_stimuli (now in stimuli.py)
+# Removed: _write_evolution_auth (now in sil.py)
 
 
 def _write_evolution_rejected(layout: Layout, content: str) -> None:

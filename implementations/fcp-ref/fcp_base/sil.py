@@ -23,7 +23,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .acp import ACPEnvelope, crc32
+import time
+
+from .acp import ACPEnvelope, crc32, make as _acp_make, parse_envelope_data
 from .formats import (
     AliasEntry,
     BeaconCause,
@@ -43,8 +45,12 @@ from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _utcnow() -> str:
+def utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# backwards-compat alias used internally
+_utcnow = utcnow
 
 
 def sha256_file(path: Path) -> str:
@@ -216,10 +222,7 @@ def _verify_evolution_auth_coverage(layout: Layout, chain_entries: list[dict]) -
     auth_digests: set[str] = set()
     if layout.integrity_log.exists():
         for log_entry in read_jsonl(layout.integrity_log):
-            try:
-                data = json.loads(log_entry.get("data", "{}"))
-            except (json.JSONDecodeError, TypeError):
-                continue
+            data = parse_envelope_data(log_entry)
             if data.get("type") != "EVOLUTION_AUTH":
                 continue
             digest = data.get("auth_digest", "")
@@ -386,6 +389,21 @@ def log_sleep_complete(layout: Layout, session_id: str) -> None:
 def log_acp_envelope(layout: Layout, env: ACPEnvelope) -> None:
     """Append a pre-built ACPEnvelope to integrity.log."""
     append_jsonl(layout.integrity_log, env.to_dict())
+
+
+def write_evolution_auth(layout: Layout, content: str, auth_digest: str) -> None:
+    """Write an EVOLUTION_AUTH record to state/integrity.log."""
+    ts = int(time.time() * 1000)
+    try:
+        parsed_content = json.loads(content)
+    except Exception:
+        parsed_content = content
+    envelope = _acp_make(
+        env_type="MSG",
+        source="operator",
+        data={"type": "EVOLUTION_AUTH", "auth_digest": auth_digest, "content": parsed_content, "ts": ts},
+    )
+    append_jsonl(layout.integrity_log, envelope)
 
 
 # ---------------------------------------------------------------------------

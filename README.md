@@ -82,9 +82,14 @@ FCP ships as a single CLI (`./fcp`) that supports both HACA profiles. The profil
 
 ### Reference Implementation
 
-- **[FCP-Spec](implementations/fcp-spec/)** — The FCP specification, divided into three documents: `FCP-Base` covers the shared runtime components common to all profiles (boot protocol, memory model, integrity pipeline, execution layer); `FCP-Core` specifies the Zero-Autonomy profile; `FCP-Evolve` specifies the Supervised-Autonomy profile. *(FCP-Base and FCP-Evolve in progress)*
+- **[FCP-Ref](implementations/fcp-ref/)** — The canonical reference implementation of FCP, validating both profiles against the spec. A single CLI (`fcp`) initialises and operates entities. Entities are self-contained filesystem trees — all runtime code, persona, skills, and state live under a single directory created by `fcp init`. Requires Python ≥ 3.10 and Git.
 
-- **[FCP-Ref](implementations/fcp-ref/)** — The reference implementation of FCP, validating both profiles against the spec. A single CLI (`./fcp`) initialises and operates entities of either profile. Entities are self-contained filesystem trees — all runtime code, persona, skills, and state live under a single directory created by `./fcp init`. Requires Python ≥ 3.10, no external dependencies for core operation.
+**Quick Install:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/HACA-org/HACA/main/implementations/fcp-ref/install.sh | bash
+```
+
+- **[FCP-Spec](implementations/fcp-spec/)** — The FCP specification, divided into three documents: `FCP-Base` covers the shared runtime components common to all profiles; `FCP-Core` specifies the Zero-Autonomy profile; `FCP-Evolve` specifies the Supervised-Autonomy profile. *(In progress)*
 
 ---
 

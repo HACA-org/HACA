@@ -9,12 +9,12 @@ Used by /doctor and the integration test suite.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .sil import sha256_file as _sha256_file, sha256_str as _sha256_str_prefixed
 from .store import Layout, read_json, read_jsonl
 
 
@@ -179,7 +179,7 @@ def check_chain(layout: Layout) -> list[Finding]:
                 findings.append(_fail("§3.12", f"ENDURE_COMMIT {seq} has auth_digest",
                                       "missing evolution_auth_digest"))
 
-        prev_hash = "sha256:" + _sha256_str(line)
+        prev_hash = _sha256_str_prefixed(line)
 
     findings.append(_ok("§3.12", f"chain has {len(lines)} entries"))
     return findings
@@ -454,11 +454,3 @@ def print_report(findings: list[Finding]) -> None:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    h.update(path.read_bytes())
-    return f"sha256:{h.hexdigest()}"
-
-
-def _sha256_str(s: str) -> str:
-    return hashlib.sha256(s.encode()).hexdigest()

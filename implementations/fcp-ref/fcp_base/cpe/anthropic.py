@@ -7,15 +7,11 @@ API reference: https://docs.anthropic.com/en/api/messages
 
 from __future__ import annotations
 
-import json
 import os
-import urllib.error
-import urllib.request
 from typing import Any
 
-from .base import (
-    CPEAuthError, CPEError, CPERateLimitError, CPEResponse, ToolUseCall, _trunc,
-)
+from .base import CPEAuthError, CPEResponse, ToolUseCall, _trunc
+from ._http import post_json
 
 _API_URL = "https://api.anthropic.com/v1/messages"
 _API_VERSION = "2023-06-01"
@@ -54,29 +50,16 @@ class AnthropicAdapter:
 def _post(api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
     if not api_key:
         raise CPEAuthError("ANTHROPIC_API_KEY not set")
-    body = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        _API_URL,
-        data=body,
+    return post_json(
+        url=_API_URL,
         headers={
             "x-api-key": api_key,
             "anthropic-version": _API_VERSION,
             "content-type": "application/json",
         },
-        method="POST",
+        payload=payload,
+        provider="Anthropic",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as exc:
-        body_text = _trunc(exc.read().decode())
-        if exc.code == 401:
-            raise CPEAuthError("Anthropic: invalid API key") from exc
-        if exc.code == 429:
-            raise CPERateLimitError("Anthropic: rate limit exceeded") from exc
-        raise CPEError(f"Anthropic: HTTP {exc.code} — {body_text}") from exc
-    except urllib.error.URLError as exc:
-        raise CPEError(f"Anthropic: network error — {exc.reason}") from exc
 
 
 # ---------------------------------------------------------------------------

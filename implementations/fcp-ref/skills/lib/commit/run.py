@@ -36,11 +36,31 @@ def main() -> None:
     focus = json.loads(focus_file.read_text(encoding="utf-8"))
     focus_path = Path(str(focus.get("path", ""))).resolve()
 
-    # commit is always restricted to workspace/ — even in Evolve
-    try:
-        focus_path.relative_to(workspace)
-    except ValueError:
-        print(json.dumps({"error": "commit requires workspace_focus inside workspace/"}))
+    def is_safe_commit_path(target_path: Path, entity_root: Path) -> bool:
+        workspace = entity_root / "workspace"
+        # Rule 1: Inside workspace/
+        try:
+            target_path.relative_to(workspace)
+            return True
+        except ValueError:
+            pass
+        
+        # Rule 2: If inside entity root but not in workspace -> DENY
+        try:
+            target_path.relative_to(entity_root)
+            return False
+        except ValueError:
+            pass
+            
+        # Rule 3: If outside, ensure it is NOT a parent of entity_root
+        if entity_root.is_relative_to(target_path):
+            return False
+            
+        return True # Completely outside and not a parent
+
+    # validate workspace_focus safety
+    if not is_safe_commit_path(focus_path, entity_root):
+        print(json.dumps({"error": "commit path rejected: must be inside workspace/ or strictly outside the entity root (parents prohibited)"}))
         sys.exit(1)
 
     target = (focus_path / path_param).resolve()
@@ -50,10 +70,19 @@ def main() -> None:
         print(json.dumps({"error": f"path outside workspace_focus: {path_param}"}))
         sys.exit(1)
 
-    # git add + commit
+    # Verify focus_path has its own git repo — not the entity repo
     def run(cmd: list[str]) -> tuple[int, str, str]:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(focus_path))
         return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+    _rc, _toplevel, _ = run(["git", "rev-parse", "--show-toplevel"])
+    if _rc != 0:
+        print(json.dumps({"error": "no git repository found in workspace_focus — run 'git init' inside the focused directory first"}))
+        sys.exit(1)
+    _repo_root = Path(_toplevel).resolve()
+    if _repo_root == entity_root or entity_root in _repo_root.parents:
+        print(json.dumps({"error": f"commit refused: workspace_focus is tracked by the entity repository ({_repo_root}). Initialise a separate git repo inside the project directory."}))
+        sys.exit(1)
 
     code, _, err = run(["git", "add", str(target)])
     if code != 0:

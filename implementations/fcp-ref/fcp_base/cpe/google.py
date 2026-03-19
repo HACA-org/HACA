@@ -9,14 +9,11 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.error
 import urllib.parse
-import urllib.request
 from typing import Any
 
-from .base import (
-    CPEAuthError, CPEError, CPERateLimitError, CPEResponse, ToolUseCall, _trunc,
-)
+from .base import CPEAuthError, CPEResponse, ToolUseCall, _trunc
+from ._http import post_json
 
 _BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 _DEFAULT_MODEL = "gemini-2.0-flash"
@@ -167,25 +164,12 @@ def _post(api_key: str, model: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise CPEAuthError("GOOGLE_API_KEY not set")
     params = urllib.parse.urlencode({"key": api_key})
     url = f"{_BASE_URL}/{model}:generateContent?{params}"
-    body = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        url,
-        data=body,
+    return post_json(
+        url=url,
         headers={"Content-Type": "application/json"},
-        method="POST",
+        payload=payload,
+        provider="Google",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as exc:
-        body_text = _trunc(exc.read().decode())
-        if exc.code == 401:
-            raise CPEAuthError("Google: invalid API key") from exc
-        if exc.code == 429:
-            raise CPERateLimitError("Google: rate limit exceeded") from exc
-        raise CPEError(f"Google: HTTP {exc.code} — {body_text}") from exc
-    except urllib.error.URLError as exc:
-        raise CPEError(f"Google: network error — {exc.reason}") from exc
 
 
 # ---------------------------------------------------------------------------

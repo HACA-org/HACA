@@ -245,6 +245,19 @@ def spool_write(spool_dir: Path, inbox_dir: Path, env: ACPEnvelope) -> None:
     os.rename(spool_path, inbox_path)
 
 
+def parse_envelope_data(entry: dict) -> dict:
+    """Safely parse the JSON-encoded 'data' field of an ACP envelope dict.
+
+    Returns the parsed dict, or an empty dict if the field is absent,
+    empty, or not valid JSON.
+    """
+    import json
+    try:
+        return json.loads(entry.get("data", "{}") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
 def drain_inbox(inbox_dir: Path) -> list[ACPEnvelope]:
     """Read all .msg files from *inbox_dir*, sorted by filename (ts-prefixed).
 

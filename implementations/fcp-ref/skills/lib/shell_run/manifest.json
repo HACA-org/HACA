@@ -16,6 +16,7 @@
     "find",
     "grep"
   ],
+  "allowlist_composite": [],
   "params": {
     "type": "object",
     "properties": {
