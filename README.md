@@ -82,12 +82,12 @@ FCP ships as a single CLI (`./fcp`) that supports both HACA profiles. The profil
 
 ### Reference Implementation
 
+- **[FCP-Ref](implementations/fcp-ref/)** — The canonical reference implementation of FCP, validating both profiles against the spec. A single CLI (`fcp`) initialises and operates entities. Entities are self-contained filesystem trees — all runtime code, persona, skills, and state live under a single directory created by `fcp init`. Requires Python ≥ 3.10 and Git.
+
 **Quick Install:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/HACA-org/HACA/main/implementations/fcp-ref/install.sh | bash
 ```
-
-- **[FCP-Ref](implementations/fcp-ref/)** — The canonical reference implementation of FCP, validating both profiles against the spec. A single CLI (`fcp`) initialises and operates entities. Entities are self-contained filesystem trees — all runtime code, persona, skills, and state live under a single directory created by `fcp init`. Requires Python ≥ 3.10 and Git.
 
 - **[FCP-Spec](implementations/fcp-spec/)** — The FCP specification, divided into three documents: `FCP-Base` covers the shared runtime components common to all profiles; `FCP-Core` specifies the Zero-Autonomy profile; `FCP-Evolve` specifies the Supervised-Autonomy profile. *(In progress)*
 
