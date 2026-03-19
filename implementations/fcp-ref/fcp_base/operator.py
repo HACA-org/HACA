@@ -1686,73 +1686,70 @@ def _cmd_help() -> None:
   Platform commands:
 
   Session:
-    /status                   — entity status overview
-    /model [list]             — interactive model picker (active model highlighted)
-    /memory [query]           — list memory store contents (episodic + semantic)
-    /exit                     — close session (aliases: /bye, /close)
-    /new                      — forced close + clean session restart (aliases: /clear, /reset)
-    /compact                  — compress session context without closing
+    /new                                  — forced close + clean session restart (aliases: /clear, /reset)
+    /model [list]                         — interactive model picker (active model highlighted)
+    /memory [query]                       — list memory store contents (episodic + semantic)
+    /compact                              — compress session context without closing
+    /status                               — entity status overview
+    /exit                                 — close session (aliases: /bye, /close)
 
   Workspace:
-    /work status              — show active workspace focus
-    /work set <subdir>        — set workspace focus
-    /work clone <repo>        — clone repo and set as workspace focus
-    /work unset               — unset workspace focus
+    /work status                          — show active workspace focus
+    /work set <subdir>                    — set workspace focus
+    /work clone <repo>                    — clone repo and set as workspace focus
+    /work unset                           — unset workspace focus
 
   Skills:
-    /skill list               — list installed skills
-    /skill add                — create new skill (use skill_create tool during session)
-    /skill run <name> [k=v]   — run a skill directly with optional params
-    /skill rm <name>          — remove a custom skill and delete its directory
-    /skill audit <name>       — audit a skill
-    /skill allowlist          — list shell_run allowlists
-    /skill allowlist add <cmd> [label]
-                              — add composite command to allowlist
-    /skill allowlist rm <idx|label>
-                              — remove composite command from allowlist
+    /skill list                           — list installed skills
+    /skill add                            — create new skill (use skill_create tool during session)
+    /skill run <name> [k=v]               — run a skill directly with optional params
+    /skill rm <name>                      — remove a custom skill and delete its directory
+    /skill audit <name>                   — audit a skill
+    /skill allowlist                      — list shell_run allowlists
+    /skill allowlist add <cmd> [label]    — add composite command to allowlist
+    /skill allowlist rm <idx|label>       — remove composite command from allowlist
 
   Evolution:
-    /endure list              — list pending Evolution Proposals
-    /endure approve <id>      — approve proposal by index
-    /endure reject <id>       — reject proposal by index
-    /endure chain             — display integrity chain
+    /endure list                          — list pending Evolution Proposals
+    /endure approve <id>                  — approve proposal by index
+    /endure reject <id>                   — reject proposal by index
+    /endure chain                         — display integrity chain
 
   Agenda:
-    /cron list                — list scheduled tasks
-    /cron add                 — create task interactively (Operator-initiated)
-    /cron approve <id>        — approve pending task proposal; registers cron on host
-    /cron reject <id>         — reject pending task proposal
-    /cron remove <id> [--all] — remove task and unregister from host crontab
+    /cron list                            — list scheduled tasks
+    /cron add                             — create task interactively (Operator-initiated)
+    /cron approve <id>                    — approve pending task proposal; registers cron on host
+    /cron reject <id>                     — reject pending task proposal
+    /cron remove <id> [--all]             — remove task and unregister from host crontab
 
   CMI (Cognitive Mesh Interface):
-    /cmi start                — activate CMI (generates credential, configures endpoint, triggers endure)
-    /cmi stop                 — deactivate CMI (preserves credential and contacts, triggers endure)
-    /cmi status               — node identity, endpoint, active channels
-    /cmi token                — generate invite token to share with a peer Operator
-    /cmi invite               — add a contact from a peer's invite token (interactive)
-    /cmi contacts list        — list trusted contacts
-    /cmi contacts rm <id>     — remove a contact by node_id or label
-    /cmi chan list             — list declared channels from baseline
-    /cmi chan init             — create and launch a new channel (interactive)
-    /cmi chan init <id>        — launch CMI process for an existing channel
-    /cmi chan close <id>       — signal close to an active channel
-    /cmi bb <id>              — display Blackboard contents for a channel
+    /cmi start                            — activate CMI (generates credential, configures endpoint, triggers endure)
+    /cmi stop                             — deactivate CMI (preserves credential and contacts, triggers endure)
+    /cmi status                           — node identity, endpoint, active channels
+    /cmi token                            — generate invite token to share with a peer Operator
+    /cmi invite                           — add a contact from a peer's invite token (interactive)
+    /cmi contacts list                    — list trusted contacts
+    /cmi contacts rm <id>                 — remove a contact by node_id or label
+    /cmi chan list                        — list declared channels from baseline
+    /cmi chan init                        — create and launch a new channel (interactive)
+    /cmi chan init <id>                   — launch CMI process for an existing channel
+    /cmi chan close <id>                  — signal close to an active channel
+    /cmi bb <id>                          — display Blackboard contents for a channel
 
   Debug:
-    /doctor [--fix]           — check and optionally repair integrity
-    /inbox list               — list system notifications
-    /inbox view <id>          — view notification by index
-    /inbox dismiss <id>       — remove notification by index
-    /inbox clear              — remove all notifications
-    /verbose [--off]          — enable component message summary (--off to disable)
-    /debugger [--all|--chat|--boot|--off]
-                              — inspect CPE context (disables verbose)
-                                --all:  full context (default)
-                                --chat: session history only
-                                --boot: system + instruction block only
-                                --off:  disable debugger
+    /inbox list                           — list system notifications
+    /inbox view <id>                      — view notification by index
+    /inbox dismiss <id>                   — remove notification by index
+    /inbox clear                          — remove all notifications
+    /doctor [--fix]                       — check and optionally repair integrity
+    /verbose [--off]                      — enable component message summary (--off to disable)
+    /debugger [--all|--chat|--boot|--off] — inspect CPE context (disables verbose)
+                                            --all:  full context (default)
+                                            --chat: session history only
+                                            --boot: system + instruction block only
+                                            --off:  disable debugger
 
-    /help                     — this message
+    /help                                 — this message
 """)
 
 
