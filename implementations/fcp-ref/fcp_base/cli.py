@@ -882,70 +882,82 @@ def _run_init(fcp_ref_root: Path) -> None:
     keep_hooks = False
     keep_tests = False
     keep_fcp_base = False
-    fap_only = False
+    keep_state = False
+    keep_io = False
 
     if is_fcp_entity:
         print()
         ui.print_warn(f"Existing FCP entity detected at {entity_root}.")
         action_items = [
-            "Quick Reset (FAP)  — Wipe dynamic state (state/, memory/, io/)",
-            "Custom Re-init     — Granularly choose what to keep/overwrite",
+            "Reset to FAP  — wipe dynamic state (state/, memory/, io/) and restart",
+            "Update        — selectively overwrite components from templates",
             "Cancel",
         ]
         choice_label = ui.pick_one("Select an action", action_items, default_idx=0, indent="  ")
         choice_idx = action_items.index(choice_label)
 
-        if choice_idx == 2: # Cancel
+        if choice_idx == 2:  # Cancel
             sys.exit(0)
-        elif choice_idx == 0: # Quick Reset
-            fap_only = True
-        else: # Custom Re-init
-            ui.hr("Update configuration")
-            print("      Current files will be OVERWRITTEN by templates unless kept (checked).")
-
-            reinit_items = [
-                "persona/   (personality and operator history)",
-                "skills/    (custom tools and reasoning units)",
-                "fcp_base/  (FCP core engine modules)",
-                "tests/     (unit and integrated validations)",
-                "hooks/     (event-driven lifecycle scripts)",
-                "boot.md    (operational rules and boot protocol)",
-            ]
-            # default: keep almost everything except fcp_base (usually what people want to update)
-            reinit_defaults = [True, True, False, True, True, True]
-
-            states = ui.pick_many(
-                "Select components to KEEP (skip to overwrite)",
-                reinit_items,
-                reinit_defaults,
-                indent="      "
-            )
-            keep_persona, keep_skills, keep_fcp_base, keep_tests, keep_hooks, keep_boot = states
-
-        # Cleanup dynamic state
-        for d in ["state", "memory", "io"]:
-            p = entity_root / d
-            if p.exists() and p.is_dir():
-                for sub in p.iterdir():
-                    if sub.name != "baseline.json":
-                        if sub.is_dir(): shutil.rmtree(sub)
-                        else: sub.unlink()
-
-        if fap_only:
+        elif choice_idx == 0:  # Reset to FAP
+            for d in ["state", "memory", "io"]:
+                p = entity_root / d
+                if p.exists() and p.is_dir():
+                    for sub in p.iterdir():
+                        if sub.name != "baseline.json":
+                            if sub.is_dir(): shutil.rmtree(sub)
+                            else: sub.unlink()
             print()
             ui.print_ok("Dynamic state cleared. Entity is ready for FAP.")
             print(f"      Run: cd {entity_root} && ./fcp")
             print()
             sys.exit(0)
+        else:  # Update
+            ui.hr("Update")
+            print("      Checked = keep existing.  Unchecked = overwrite from template.")
+            print()
+
+            # Ordered alphabetically
+            update_items = [
+                "boot.md    — operational rules and boot protocol",
+                "fcp_base/  — FCP core engine modules",
+                "hooks/     — event-driven lifecycle scripts",
+                "io/        — inbox and spool (dynamic runtime state)",
+                "persona/   — personality and operator history",
+                "skills/    — custom tools and reasoning units",
+                "state/     — baseline, integrity, memory (dynamic runtime state)",
+                "tests/     — unit and integrated validations",
+            ]
+            # All kept by default — user unchecks what they want to overwrite/wipe
+            update_defaults = [True, True, True, True, True, True, True, True]
+
+            states = ui.pick_many(
+                "Components to KEEP (uncheck to overwrite/wipe)",
+                update_items,
+                update_defaults,
+                indent="      ",
+            )
+            keep_boot, keep_fcp_base, keep_hooks, keep_io, keep_persona, keep_skills, keep_state, keep_tests = states
+
+            # Wipe dynamic dirs only if explicitly unchecked
+            if not keep_state:
+                p = entity_root / "state"
+                if p.exists():
+                    for sub in p.iterdir():
+                        if sub.name != "baseline.json":
+                            if sub.is_dir(): shutil.rmtree(sub)
+                            else: sub.unlink()
+            if not keep_io:
+                p = entity_root / "io"
+                if p.exists():
+                    shutil.rmtree(p)
 
     elif is_nonempty:
         print()
-        ui.print_warn(f"{entity_root} is NOT a HACA entity but it is NOT EMPTY.")
-        print("  Initializing here will overwrite files and may clutter your directory.")
-        print("  It is HIGHLY recommended to use an empty folder for new entities.")
+        ui.print_err(f"{entity_root} is not empty and is not an FCP entity.")
+        print("  FCP entities must be initialised in an empty directory.")
+        print("  Choose an empty or non-existing directory and try again.")
         print()
-        if not ui.confirm("Are you ABSOLUTELY sure you want to proceed?"):
-            sys.exit(0)
+        sys.exit(1)
 
     # ── Step 2: Profile ─────────────────────────────────────────────────────
     ui.hr("2. Profile")
