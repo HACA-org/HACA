@@ -292,10 +292,13 @@ def _maybe_prompt_shell_allowlist(
 
     command = str(params.get("command", "")).strip()
     print()
-    ui.print_warn(f"[shell_run] blocked: {command!r}")
-    items = ["y — allow once", "a — allow always", "N — deny"]
+    ui.hr("operator action required")
+    ui.print_warn(f"shell_run blocked — command not in allowlist:")
+    print(f"  {command!r}")
+    print()
+    items = ["y — allow once", "a — allow always (persist)", "N — deny"]
     try:
-        choice = ui.pick_one("Allow?", items, default_idx=2, indent="  ")
+        choice = ui.pick_one("Allow this command?", items, default_idx=2, indent="  ")
         answer = choice[0].lower()
     except (KeyboardInterrupt, EOFError):
         answer = "n"

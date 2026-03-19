@@ -227,8 +227,8 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
     if cmd in ("/skill", "/skills"):
         _cmd_skill(layout, args)
         return True
-    if cmd == "/shell":
-        _cmd_shell(layout, args)
+    if cmd in ("/shell", "/allowlist"):
+        _cmd_allowlist(layout, args)
         return True
 
     # --- Model, endure & cron ---
@@ -517,7 +517,7 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
 
 # --- Skills & execution ---
 
-def _cmd_shell(layout: Layout, args: list[str]) -> None:
+def _cmd_allowlist(layout: Layout, args: list[str]) -> None:
     """Manage shell_run allowlist_composite entries."""
     manifest_path = layout.skills_lib_dir / "shell_run" / "manifest.json"
     if not manifest_path.exists():
@@ -557,9 +557,9 @@ def _cmd_shell(layout: Layout, args: list[str]) -> None:
     sub = args[0].lower()
 
     if sub == "allow":
-        # /shell allow <command> [label]
+        # /allowlist allow <command> [label]
         if len(args) < 2:
-            print("  usage: /shell allow <command> [label]")
+            print("  usage: /allowlist allow <command> [label]")
             return
         command = args[1]
         label = args[2] if len(args) > 2 else ""
@@ -580,9 +580,9 @@ def _cmd_shell(layout: Layout, args: list[str]) -> None:
         return
 
     if sub == "remove":
-        # /shell remove <index|label|command>
+        # /allowlist remove <index|label|command>
         if len(args) < 2:
-            print("  usage: /shell remove <index | label | command>")
+            print("  usage: /allowlist remove <index | label | command>")
             return
         key = args[1]
         manifest = _load()
@@ -611,12 +611,36 @@ def _cmd_shell(layout: Layout, args: list[str]) -> None:
         print(f"  removed entries matching {key!r}")
         return
 
-    print("  usage: /shell list | allow <command> [label] | remove <index|label|command>")
+    print("  usage: /allowlist list | allow <command> [label] | remove <index|label|command>")
+
+
+def _skill_run_direct(layout: Layout, skill_name: str, params: dict[str, Any]) -> None:
+    """Run a skill directly from the operator prompt and print output."""
+    from .exec_ import dispatch, ExecError, SkillRejected
+    if not layout.skills_index.exists():
+        ui.print_err("skills/index.json not found")
+        return
+    idx = read_json(layout.skills_index) or {}
+    skill_names = [s["name"] for s in idx.get("skills", [])]
+    if skill_name not in skill_names:
+        ui.print_err(f"skill not found: {skill_name!r}")
+        print(f"  available: {', '.join(skill_names)}")
+        return
+    try:
+        output = dispatch(layout, skill_name, params, idx)
+        print()
+        ui.hr(f"skill: {skill_name}")
+        print(output)
+        print()
+    except SkillRejected as exc:
+        ui.print_warn(f"skill rejected: {exc}")
+    except ExecError as exc:
+        ui.print_err(f"exec error: {exc}")
 
 
 def _cmd_skill(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /skill list | add | audit <name>")
+        print("  usage: /skill list | add | run <name> [k=v ...] | audit <name>")
         return
     sub = args[0].lower()
     if sub == "list":
@@ -628,10 +652,19 @@ def _cmd_skill(layout: Layout, args: list[str]) -> None:
             print("  skills/index.json not found")
     elif sub == "add":
         print("  /skill add requires an active session — use the skill_create tool during a session.")
+    elif sub == "run" and len(args) > 1:
+        skill_name = args[1]
+        # Parse optional key=value params from remaining args
+        params: dict[str, Any] = {}
+        for token in args[2:]:
+            if "=" in token:
+                k, _, v = token.partition("=")
+                params[k.strip()] = v.strip()
+        _skill_run_direct(layout, skill_name, params)
     elif sub == "audit" and len(args) > 1:
         print(f"  audit {args[1]}: use /skill audit via EXEC dispatch during session")
     else:
-        print("  usage: /skill list | add | audit <name>")
+        print("  usage: /skill list | add | run <name> [k=v ...] | audit <name>")
 
 
 # --- Model & endure ---
@@ -701,7 +734,7 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
         models = fetch_ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
         for m in models:
             active = backend == current_backend and m == current_model
-            label = f"{ui.BOLD_CYAN}{backend}:{m} ✓{ui.RESET}" if active else f"{backend}:{m}"
+            label = f"{backend}:{m} ✓" if active else f"{backend}:{m}"
             labels.append(label)
             pairs.append((backend, m))
 
@@ -1644,16 +1677,19 @@ def _cmd_help() -> None:
   Skills:
     /skill list               — list installed skills
     /skill add                — create new skill
-    /skill run <name>         — run a skill directly
+    /skill run <name> [k=v]   — run a skill directly with optional params
     /skill audit <name>       — audit a skill
-    /shell list               — list shell_run allowlists
-    /shell allow <cmd> [label]— add composite command to allowlist
-    /shell remove <idx|label> — remove composite command from allowlist
+    /allowlist list           — list shell_run allowlists
+    /allowlist allow <cmd> [label]
+                              — add composite command to allowlist
+    /allowlist remove <idx|label>
+                              — remove composite command from allowlist
 
   Evolution:
     /endure list              — list pending Evolution Proposals
     /endure approve <id>      — approve proposal by index
     /endure reject <id>       — reject proposal by index
+    /endure chain             — display integrity chain
 
   Agenda:
     /cron list                — list scheduled tasks

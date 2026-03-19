@@ -34,6 +34,7 @@ class VitalCheckState:
     cycles_since_check: int = 0
     last_check_ts: float = field(default_factory=time.time)
     session_id: str = ""
+    context_budget_notified: bool = False
 
 
 def should_run(state: VitalCheckState, baseline: StructuralBaseline) -> bool:
@@ -61,7 +62,7 @@ def run(
     """
     criticals: list[str] = []
 
-    criticals += _check_context_budget(layout, baseline, tokens_used)
+    criticals += _check_context_budget(layout, baseline, tokens_used, state)
     criticals += _check_workspace_focus(layout)
     _check_presession_buffer(layout, baseline)
     criticals += _check_identity_drift(layout)
@@ -84,6 +85,7 @@ def _check_context_budget(
     layout: Layout,
     baseline: StructuralBaseline,
     tokens_used: int,
+    state: VitalCheckState,
 ) -> list[str]:
     budget = baseline.context_window_budget_tokens
     critical_pct = baseline.context_window_critical_pct
@@ -91,12 +93,14 @@ def _check_context_budget(
         return []
     pct = int(tokens_used * 100 / budget)
     if pct >= critical_pct:
-        detail = {"tokens_used": tokens_used, "budget": budget, "pct": pct, "threshold_pct": critical_pct}
-        log_critical(layout, "CONTEXT_BUDGET_CRITICAL", detail)
-        write_notification(layout, "critical", {
-            "type": "CONTEXT_BUDGET_CRITICAL",
-            "detail": detail,
-        })
+        if not state.context_budget_notified:
+            detail = {"tokens_used": tokens_used, "budget": budget, "pct": pct, "threshold_pct": critical_pct}
+            log_critical(layout, "CONTEXT_BUDGET_CRITICAL", detail)
+            write_notification(layout, "critical", {
+                "type": "CONTEXT_BUDGET_CRITICAL",
+                "detail": detail,
+            })
+            state.context_budget_notified = True
         return ["context_budget"]
     return []
 
