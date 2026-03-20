@@ -1,10 +1,10 @@
 {
   "name": "commit",
-  "version": "1.0.0",
-  "description": "Commit a path within workspace_focus. Only git interface available to the CPE.",
+  "version": "2.0.0",
+  "description": "Safe git operations within workspace_focus. Supports init, add, commit, status, log, diff, branch, checkout, config, and push with authorization gating.",
   "timeout_seconds": 60,
   "background": false,
-  "irreversible": true,
+  "irreversible": false,
   "class": "builtin",
   "permissions": [
     "workspace_write"
@@ -12,23 +12,51 @@
   "params": {
     "type": "object",
     "properties": {
+      "command": {
+        "type": "string",
+        "enum": ["init", "add", "commit", "status", "log", "diff", "branch", "checkout", "config", "push"],
+        "description": "Git command to execute: init, add, commit, status, log, diff, branch, checkout, config, push"
+      },
       "path": {
         "type": "string",
-        "description": "Path within workspace_focus to stage and commit."
+        "description": "Path within workspace_focus (for add, diff, init) or direct path for init."
       },
       "message": {
         "type": "string",
-        "description": "Commit message."
+        "description": "Commit message (for commit command)."
       },
-      "remote": {
+      "limit": {
+        "type": "integer",
+        "description": "Number of commits to show (for log command, default 10)."
+      },
+      "action": {
+        "type": "string",
+        "enum": ["list", "create"],
+        "description": "Branch action: 'list' (default) or 'create'."
+      },
+      "name": {
+        "type": "string",
+        "description": "Branch name (for branch create action)."
+      },
+      "branch": {
+        "type": "string",
+        "description": "Branch name to checkout (for checkout command)."
+      },
+      "key": {
+        "type": "string",
+        "enum": ["user.name", "user.email"],
+        "description": "Config key to set (for config command)."
+      },
+      "value": {
+        "type": "string",
+        "description": "Config value (for config command)."
+      },
+      "force_confirm": {
         "type": "boolean",
-        "description": "If true, push to origin after committing."
+        "description": "Must be true to authorize push (for push command)."
       }
     },
-    "required": [
-      "path",
-      "message"
-    ]
+    "required": ["command"]
   },
   "execution": "script",
   "dependencies": [
