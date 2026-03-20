@@ -261,7 +261,19 @@ def _cmd_output():
 
 
 def handle_platform_command(layout: Layout, line: str, adapter_ref: Any = None) -> bool:
-    """Handle a /command line. Returns True if handled, False if unknown."""
+    """Handle a platform command line (FCP §12 — Operator Interface).
+
+    Parses and dispatches slash-prefixed commands (/status, /skill, /cmi, etc.)
+    entered by the operator during interactive sessions.
+
+    Args:
+        layout: Entity store layout for state access.
+        line: Raw command line string (e.g., "/cmi chan list").
+        adapter_ref: Optional CPE adapter reference for model-dependent commands.
+
+    Returns:
+        bool: True if command was recognized and handled, False if unknown command.
+    """
     parts = line.strip().split()
     if not parts:
         return False

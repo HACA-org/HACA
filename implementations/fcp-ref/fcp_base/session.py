@@ -44,11 +44,31 @@ def run_session(
     greeting: bool = False,
     tools: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Run the cognitive session loop until session close.
+    """Run the cognitive session loop until session close (FCP §6).
 
-    inject:   optional list of ACP envelopes to prepend as first stimuli.
-    greeting: if True, inject a SESSION_START stimulus so the CPE wakes and greets.
-    Returns the close reason string.
+    Executes the main session cycle:
+    1. Build boot context (system prompt + history)
+    2. Consume and inject first stimulus (FAP onboarding, post-evolution notices)
+    3. Optionally inject additional stimuli
+    4. Enter agentic loop: invoke CPE → dispatch tool calls → append results
+    5. Continue until CPE requests close or operator exits
+    6. Persist session store and compact if needed
+
+    Args:
+        layout: Entity store layout for session persistence.
+        adapter: CPE adapter (Ollama, Claude, etc.) or reference for lazy initialization.
+        index: Skill index for tool discovery and execution.
+        inject: Optional list of ACP envelopes to prepend as initial stimuli (after first_stimuli).
+        greeting: If True, inject SESSION_START stimulus to wake CPE for greeting.
+        tools: Optional pre-built tool declarations. If None, auto-discovered from index.
+
+    Returns:
+        str: Close reason code (e.g., "session_close", "operator_exit", "max_turns").
+
+    Raises:
+        CPEError: If CPE invocation fails (model unavailable, API error).
+        ExecError: If tool execution fails or security check blocks an operation.
+        BootError: If critical conditions (session token, session store) are unmet.
     """
     if tools is None:
         tools = _tool_declarations(layout, index)
@@ -608,6 +628,18 @@ def dispatch_tool_use(
 def _dispatch_mil(
     layout: Layout, inp: dict[str, Any]
 ) -> tuple[dict[str, Any], bool]:
+    """Dispatch Memory Interface Layer (MIL) actions.
+
+    Handles memory operations: recall (episodic/semantic), write, and closure.
+
+    Args:
+        layout: Entity store layout for memory access.
+        inp: Single action dict or list of actions with type field.
+
+    Returns:
+        Tuple of (results_dict, session_closed) where results_dict contains
+        outcome of each action (ok, conflict, error).
+    """
     actions: list[Any] = inp if isinstance(inp, list) else [inp]
     results: list[dict[str, Any]] = []
     for action in actions:
@@ -653,6 +685,19 @@ def _dispatch_exec(
     inp: dict[str, Any],
     index: dict[str, Any],
 ) -> tuple[dict[str, Any], bool]:
+    """Dispatch Execution Interface (skill requests).
+
+    Handles skill execution via exec_ module with error recovery.
+
+    Args:
+        layout: Entity store layout for skill execution context.
+        inp: Single action dict or list of actions with type="skill_request".
+        index: Skill index for skill discovery and invocation.
+
+    Returns:
+        Tuple of (results_dict, session_closed) where results_dict contains
+        skill output or error details.
+    """
     from .exec_ import dispatch, ExecError, SkillRejected
     actions: list[Any] = inp if isinstance(inp, list) else [inp]
     results: list[dict[str, Any]] = []
@@ -687,6 +732,18 @@ def _dispatch_exec(
 def _dispatch_sil(
     layout: Layout, inp: dict[str, Any]
 ) -> tuple[dict[str, Any], bool]:
+    """Dispatch System Interface Layer (SIL) actions.
+
+    Handles system-level operations: evolution proposals, runtime directives.
+
+    Args:
+        layout: Entity store layout for system state access.
+        inp: Single action dict or list of actions with type="evolution_proposal".
+
+    Returns:
+        Tuple of (results_dict, session_closed) where session_closed indicates
+        if CPE triggered session close via evolution.
+    """
     actions: list[Any] = inp if isinstance(inp, list) else [inp]
     results: list[dict[str, Any]] = []
     session_closed = False
