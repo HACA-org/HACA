@@ -307,7 +307,10 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
     if cmd in ("/skill", "/skills"):
         _cmd_skill(layout, args)
         return True
-    if cmd in ("/shell", "/allowlist"):
+    if cmd == "/allowlist":
+        _cmd_allowlist_new(layout, args)
+        return True
+    if cmd == "/shell":
         # legacy: treat as /skill allowlist [args]
         _cmd_skill(layout, ["allowlist"] + args)
         return True
@@ -598,6 +601,53 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
 
 # --- Skills & execution ---
 
+def _cmd_allowlist_new(layout: Layout, args: list[str]) -> None:
+    """Manage shell_run execution allowlist using ExecutionPermissions."""
+    from .exec_permissions import ExecutionPermissions, PermissionScope
+
+    perms = ExecutionPermissions.load_from_baseline(layout)
+
+    if not args or args[0] == "list":
+        entries = perms.list_entries(PermissionScope.SHELL_RUN.value)
+        if not entries:
+            print("  allowlist (shell_run): (empty)")
+            return
+        print("  allowlist (shell_run):")
+        for i, entry in enumerate(entries):
+            reason_str = f" [{entry.reason}]" if entry.reason else ""
+            print(f"    [{i}] {entry.command}{reason_str}")
+        return
+
+    sub = args[0].lower()
+
+    if sub in ("add", "allow"):
+        # /allowlist add <command> [reason]
+        if len(args) < 2:
+            print("  usage: /allowlist add <command> [reason]")
+            return
+        command = args[1]
+        reason = args[2] if len(args) > 2 else ""
+        perms.add_entry(command, PermissionScope.SHELL_RUN.value, reason)
+        perms.save_to_baseline(layout)
+        print(f"  added: {command!r}")
+        return
+
+    if sub in ("rm", "remove"):
+        # /allowlist rm <command>
+        if len(args) < 2:
+            print("  usage: /allowlist rm <command>")
+            return
+        command = args[1]
+        if perms.remove_entry(command, PermissionScope.SHELL_RUN.value):
+            perms.save_to_baseline(layout)
+            print(f"  removed: {command!r}")
+        else:
+            print(f"  not found: {command!r}")
+        return
+
+    print("  usage: /allowlist | list | add <command> [reason] | rm <command>")
+
+
 def _cmd_allowlist(layout: Layout, args: list[str]) -> None:
     """Manage shell_run allowlist_composite entries."""
     manifest_path = layout.skills_lib_dir / "shell_run" / "manifest.json"
@@ -748,7 +798,7 @@ def _skill_run_direct(layout: Layout, skill_name: str, params: dict[str, Any]) -
 
 def _cmd_skill(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /skill list | add | run <name> [k=v ...] | rm <name> | audit <name> | allowlist ...")
+        print("  usage: /skill list | add | run <name> [k=v ...] | rm <name> | audit <name>")
         return
     sub = args[0].lower()
     if sub == "list":
@@ -772,10 +822,8 @@ def _cmd_skill(layout: Layout, args: list[str]) -> None:
         _skill_remove(layout, args[1])
     elif sub == "audit" and len(args) > 1:
         print(f"  audit {args[1]}: use /skill audit via EXEC dispatch during session")
-    elif sub == "allowlist":
-        _cmd_allowlist(layout, args[1:])
     else:
-        print("  usage: /skill list | add | run <name> [k=v ...] | rm <name> | audit <name> | allowlist ...")
+        print("  usage: /skill list | add | run <name> [k=v ...] | rm <name> | audit <name>")
 
 
 # --- Model & endure ---
@@ -1873,9 +1921,11 @@ def _cmd_help() -> None:
     /skill run <name> [k=v]               — run a skill directly with optional params
     /skill rm <name>                      — remove a custom skill and delete its directory
     /skill audit <name>                   — audit a skill
-    /skill allowlist                      — list shell_run allowlists
-    /skill allowlist add <cmd> [label]    — add composite command to allowlist
-    /skill allowlist rm <idx|label>       — remove composite command from allowlist
+
+  Execution Allowlist:
+    /allowlist                            — list shell_run allowlist
+    /allowlist add <command> [reason]     — add command to allowlist
+    /allowlist rm <command>               — remove command from allowlist
 
   Evolution:
     /endure list                          — list pending Evolution Proposals
