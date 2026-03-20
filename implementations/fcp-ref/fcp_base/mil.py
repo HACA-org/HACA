@@ -36,6 +36,9 @@ from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
 # Episodic index file: maps slug → [paths] for O(1) memory_recall() lookups
 EPISODIC_INDEX_FILE = ".episodic-index.json"
 
+# Session cache file: caches last N turns from session.jsonl for faster boots
+SESSION_CACHE_FILE = ".session-cache.json"
+
 
 # ---------------------------------------------------------------------------
 # Index management helpers
@@ -512,6 +515,44 @@ def append_endure_commit(layout: Layout, seq: int, files: dict[str, str]) -> Non
         data={"seq": seq, "files": files},
     )
     append_jsonl(layout.session_store, envelope)
+
+
+# ---------------------------------------------------------------------------
+# Session cache — speed up boot by caching last N turns
+# ---------------------------------------------------------------------------
+
+def cache_session_tail(layout: Layout, max_turns: int = 100) -> None:
+    """Cache last N turns from session.jsonl for faster boot (Stage 3 end).
+
+    Called after sleep Stage 3 to cache the session tail, avoiding full
+    session.jsonl scan on next boot. If session is empty, cache is cleared.
+    """
+    from .session import _session_to_turns
+
+    cache_file = layout.root / "memory" / SESSION_CACHE_FILE
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        pairs = _session_to_turns(layout)
+        # Keep only last max_turns to bound cache size
+        if len(pairs) > max_turns:
+            pairs = pairs[-max_turns:]
+
+        # Convert to list of dicts for JSON serialization
+        turns = [{"role": role, "content": content} for role, content in pairs]
+        cache_data = {"turns": turns, "cached_at": int(time.time())}
+        atomic_write(cache_file, cache_data)
+    except Exception:
+        # If caching fails, remove cache to force full scan on next boot
+        if cache_file.exists():
+            cache_file.unlink()
+
+
+def clear_session_cache(layout: Layout) -> None:
+    """Clear session cache to force full session scan on next boot."""
+    cache_file = layout.root / "memory" / SESSION_CACHE_FILE
+    if cache_file.exists():
+        cache_file.unlink()
 
 
 # ---------------------------------------------------------------------------

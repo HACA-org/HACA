@@ -408,7 +408,24 @@ def build_boot_context(
 
 
 def _session_to_turns(layout: Layout) -> list[tuple[str, str]]:
-    """Convert session.jsonl into (role, text) pairs for chat history."""
+    """Convert session.jsonl into (role, text) pairs for chat history.
+
+    Uses cached session tail from .session-cache.json (after sleep) for
+    faster boots. Cache is refreshed on every sleep cycle.
+    """
+    # Try to load cached session tail (populated after each sleep)
+    cache_file = layout.root / "memory" / ".session-cache.json"
+    if cache_file.exists():
+        try:
+            cache = read_json(cache_file)
+            cached_turns = cache.get("turns", [])
+            # Convert back to list of tuples
+            pairs = [(turn["role"], turn["content"]) for turn in cached_turns]
+            return pairs
+        except Exception:
+            pass  # Fall through to full scan if cache is corrupted
+
+    # Full scan if no cache (cold boot)
     pairs: list[tuple[str, str]] = []
 
     for env in read_jsonl(layout.session_store):
