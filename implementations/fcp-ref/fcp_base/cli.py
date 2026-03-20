@@ -756,6 +756,32 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
 # Model — select provider/model and update API key outside of a session
 # ---------------------------------------------------------------------------
 
+def _get_entity_profile(layout: "Layout") -> str:
+    """Read entity profile from .fcp-entity marker. Defaults to 'haca-core'."""
+    entity_marker_path = layout.root / ".fcp-entity"
+    if entity_marker_path.exists():
+        try:
+            marker = json.loads(entity_marker_path.read_text(encoding="utf-8"))
+            return marker.get("profile", "haca-core")
+        except Exception:
+            pass
+    return "haca-core"
+
+
+def _get_allowed_backends(profile: str) -> list[str]:
+    """Filter backends based on entity profile.
+
+    - haca-core: excludes 'pairing' (has direct entity access)
+    - haca-evolve: includes 'pairing' (uses it as opaque CPE backend)
+    """
+    from .cpe.base import BACKENDS
+
+    if profile == "haca-evolve":
+        return BACKENDS
+    else:  # haca-core
+        return [b for b in BACKENDS if b != "pairing"]
+
+
 def _run_model(layout: "Layout") -> None:
     from .cpe.base import BACKENDS, KNOWN_MODELS, fetch_ollama_models
     from .store import read_json, atomic_write
@@ -770,11 +796,15 @@ def _run_model(layout: "Layout") -> None:
     current_backend = cpe_cfg.get("backend", "ollama")
     current_model = cpe_cfg.get("model", "")
 
+    # Get allowed backends based on entity profile
+    profile = _get_entity_profile(layout)
+    allowed_backends = _get_allowed_backends(profile)
+
     # Build flat list of "backend:model" labels
     items: list[str] = []
     pairs: list[tuple[str, str]] = []  # (backend, model) parallel to items
 
-    for backend in BACKENDS:
+    for backend in allowed_backends:
         models = fetch_ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
         for m in models:
             active = backend == current_backend and m == current_model
@@ -1205,8 +1235,11 @@ def _run_init(fcp_ref_root: Path) -> None:
     # ── Step 4: CPE backend and model ────────────────────────────────────────
     ui.hr("4. CPE backend and model")
     print()
-    from .cpe.base import BACKENDS, KNOWN_MODELS, fetch_ollama_models
-    backend = ui.pick_one("Backend", BACKENDS, indent="  ")
+    from .cpe.base import KNOWN_MODELS, fetch_ollama_models
+
+    # Get allowed backends based on profile
+    allowed_backends = _get_allowed_backends(profile)
+    backend = ui.pick_one("Backend", allowed_backends, indent="  ")
 
     api_key_saved: str | None = None
     if backend == "ollama":
