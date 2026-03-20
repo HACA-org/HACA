@@ -2,7 +2,7 @@
 
 Bridges any MCP-capable IDE or CLI to an active FCP pairing session.
 
-⚠️ **HACA-Evolve only.** This server is exclusive to entities with `profile = "haca-evolve"`. haca-core entities have direct entity_root access and do not use the pairing backend.
+⚠️ **HACA-Evolve only.** This server is exclusive to entities with `profile = "haca-evolve"`.
 
 When FCP (haca-evolve) runs with `backend = pairing`, it writes prompts to the filesystem and waits for a completion. This server exposes those prompts as MCP tools, so any connected agent (Claude Code, Cursor, Zed, or any MCP client) can pick them up, process them, and return the response back to FCP — without API keys, without extra processes, and without manual intervention.
 
