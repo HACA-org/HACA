@@ -58,22 +58,19 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/mcp_notifications.log"
 echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] MCP prompt pending: session=$SESSION_ID file=$REQUEST_FILE" >> "$LOG_FILE" 2>/dev/null || true
 
-# TODO: Future — IDE-specific notification mechanisms
-#
-# Option 1: Antigravity Terminal API (when available)
-#   Call Antigravity's sendText() equivalent to inject prompt into Claude Code terminal
-#
-# Option 2: HTTP webhook
-#   POST http://localhost:8888/notify with {session_id, request_file}
-#   Claude Code runs a local listener that triggers fcp_poll
-#
-# Option 3: Named pipe (cross-process signal)
-#   mkfifo ~/.fcp-entity/signals/mcp_wake
-#   Claude Code listener: while true; do cat ~/.fcp-entity/signals/mcp_wake | while read sid; do fcp_poll $sid; done; done
-#
-# For now, Claude Code must:
-#   1. Monitor .fcp-entity/notifications/mcp/ for *.pending files
-#   2. Call fcp_poll when notified
-#   3. Or continue polling periodically as fallback
+# Create named pipe for cross-process signaling (if not exists)
+# This allows Claude Code to wake up without polling directories
+SIGNAL_FIFO="${FCP_ENTITY_ROOT}/.fcp-entity/signals/mcp_wake"
+mkdir -p "$(dirname "$SIGNAL_FIFO")"
+mkfifo "$SIGNAL_FIFO" 2>/dev/null || true
+
+# Signal Claude Code listener via named pipe (non-blocking)
+# The listener (running `/loop` in Claude Code) reads from this pipe
+if [ -p "$SIGNAL_FIFO" ]; then
+    (echo "$SESSION_ID" > "$SIGNAL_FIFO" 2>/dev/null || true) &
+fi
+
+# Fallback: Keep marker file for debugging/polling
+# If Claude Code listener is not running, it can still poll this directory
 
 exit 0
