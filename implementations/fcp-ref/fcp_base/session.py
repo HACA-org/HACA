@@ -22,7 +22,7 @@ from typing import Any
 
 from .acp import drain_inbox, make as acp_encode
 from .cpe.base import AdapterRef, CPEAdapter, CPEResponse
-from .mil import memory_recall, process_closure, result_recall, summarize_session, write_episodic
+from .mil import memory_recall, process_closure, result_recall, summarize_session, write_episodic, SESSION_CACHE_FILE
 from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger, is_compact_pending as _is_compact_pending, set_compact_pending as _set_compact_pending, is_endure_approved as _is_endure_approved, set_endure_approved as _set_endure_approved
 from .sil import sha256_str as _sha256_str, write_evolution_auth as _write_evolution_auth
 from .stimuli import inject_evolution_result as _write_evolution_stimuli
@@ -414,7 +414,7 @@ def _session_to_turns(layout: Layout) -> list[tuple[str, str]]:
     faster boots. Cache is refreshed on every sleep cycle.
     """
     # Try to load cached session tail (populated after each sleep)
-    cache_file = layout.root / "memory" / ".session-cache.json"
+    cache_file = layout.root / "memory" / SESSION_CACHE_FILE
     if cache_file.exists():
         try:
             cache = read_json(cache_file)
