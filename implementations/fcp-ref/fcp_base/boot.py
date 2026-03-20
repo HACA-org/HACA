@@ -18,13 +18,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .acp import ACPEnvelope, crc32, parse_envelope_data
-from .fap import FAPError, run as fap_run
+from .fap import run as fap_run
 from .formats import IntegrityDocument, ImprintRecord, SkillIndex, StructuralBaseline
 from .sil import (
     _utcnow,
     activate_beacon,
     beacon_is_active,
-    build_skill_index,
     issue_session_token,
     operator_channel_available,
     session_token_present,

@@ -11,7 +11,6 @@ Usage (always run from inside the entity root):
 from __future__ import annotations
 
 import datetime as _dt
-import itertools
 import json
 import os
 import shutil
@@ -23,9 +22,7 @@ from pathlib import Path
 from .store import (
     API_KEY_ENV,
     Layout,
-    append_jsonl,
     atomic_write,
-    load_agenda,
     load_env_file,
     read_json,
     save_api_key,
