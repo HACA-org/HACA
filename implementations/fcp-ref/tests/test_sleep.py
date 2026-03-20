@@ -201,5 +201,79 @@ class TestPromoteSeverancePending(unittest.TestCase):
         self.assertIn("SEVERANCE_PENDING", content)
 
 
+class TestSessionCaching(unittest.TestCase):
+    def setUp(self) -> None:
+        self.layout, self.tmp = make_layout()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp)
+
+    def test_cache_session_tail_creates_file(self) -> None:
+        """cache_session_tail() creates .session-cache.json."""
+        from fcp_base import mil
+        cache_file = self.layout.root / "memory" / ".session-cache.json"
+        self.assertFalse(cache_file.exists())
+        mil.cache_session_tail(self.layout)
+        self.assertTrue(cache_file.exists())
+
+    def test_cache_contains_turns(self) -> None:
+        """Cached session contains turns structure."""
+        from fcp_base import mil
+        # Add some session entries
+        append_jsonl(self.layout.session_store, {
+            "actor": "user",
+            "data": "hello",
+        })
+        append_jsonl(self.layout.session_store, {
+            "actor": "assistant",
+            "data": "hi there",
+        })
+        mil.cache_session_tail(self.layout)
+        cache_file = self.layout.root / "memory" / ".session-cache.json"
+        cache = json.loads(cache_file.read_text())
+        self.assertIn("turns", cache)
+        self.assertEqual(len(cache["turns"]), 2)
+        self.assertEqual(cache["turns"][0]["role"], "user")
+        self.assertEqual(cache["turns"][1]["role"], "assistant")
+
+    def test_clear_session_cache(self) -> None:
+        """clear_session_cache() deletes cache file."""
+        from fcp_base import mil
+        mil.cache_session_tail(self.layout)
+        cache_file = self.layout.root / "memory" / ".session-cache.json"
+        self.assertTrue(cache_file.exists())
+        mil.clear_session_cache(self.layout)
+        self.assertFalse(cache_file.exists())
+
+    def test_session_recall_uses_cache(self) -> None:
+        """_session_to_turns() uses cache when available."""
+        from fcp_base import mil
+        from fcp_base.session import _session_to_turns
+        # Add session entries
+        append_jsonl(self.layout.session_store, {"actor": "user", "data": "test"})
+        # Cache it
+        mil.cache_session_tail(self.layout)
+        # Recall should use cache
+        turns = _session_to_turns(self.layout)
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0][0], "user")
+        self.assertEqual(turns[0][1], "test")
+
+    def test_cache_limits_turns(self) -> None:
+        """cache_session_tail() limits cache to max_turns."""
+        from fcp_base import mil
+        # Add more turns than limit
+        for i in range(150):
+            append_jsonl(self.layout.session_store, {
+                "actor": "user" if i % 2 == 0 else "assistant",
+                "data": f"msg {i}",
+            })
+        mil.cache_session_tail(self.layout, max_turns=50)
+        cache_file = self.layout.root / "memory" / ".session-cache.json"
+        cache = json.loads(cache_file.read_text())
+        # Should have at most 50 turns
+        self.assertLessEqual(len(cache["turns"]), 50)
+
+
 if __name__ == "__main__":
     unittest.main()

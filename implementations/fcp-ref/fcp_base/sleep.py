@@ -25,6 +25,7 @@ from .acp import make as acp_encode
 from .mil import (
     clean_stale_symlinks,
     clean_episodic_index,
+    cache_session_tail,
     process_closure,
     append_endure_commit,
     promote_to_semantic,
@@ -73,6 +74,9 @@ def run_sleep_cycle(layout: Layout) -> None:
 
     # Convert any unresolved SEVERANCE_COMMIT entries to SEVERANCE_PENDING
     _promote_severance_pending(layout)
+
+    # Cache session tail for faster boot on next cycle
+    cache_session_tail(layout)
 
     # Write SLEEP_COMPLETE
     _write_sleep_complete(layout)
