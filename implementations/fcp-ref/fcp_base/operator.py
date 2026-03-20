@@ -1368,7 +1368,7 @@ def _cmd_cmi(layout: Layout, args: list[str]) -> None:
 
 
 def _cmi_usage() -> None:
-    print("  usage: /cmi start | stop | status | token | invite | contacts [list|add|remove] | chan [list|init|close] | bb <id>")
+    print("  usage: /cmi start | stop | status | token | invite | contacts [list|add|remove] | chan [list|init|open|close] | bb <id>")
 
 
 def _cmi_start(layout: Layout) -> None:
@@ -1630,17 +1630,19 @@ def _cmi_contacts_remove(layout: Layout, node_id: str) -> None:
 
 def _cmi_channel(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /cmi chan list | init | close <id>")
+        print("  usage: /cmi chan list | init | open <id> | close <id>")
         return
     sub = args[0].lower()
     if sub == "list":
         _cmi_channel_list(layout)
     elif sub == "init":
         _cmi_channel_open(layout, None)
+    elif sub == "open" and len(args) > 1:
+        _cmi_channel_open(layout, args[1])
     elif sub == "close" and len(args) > 1:
         _cmi_channel_close(layout, args[1])
     else:
-        print("  usage: /cmi chan list | init | close <id>")
+        print("  usage: /cmi chan list | init | open <id> | close <id>")
 
 
 def _cmi_channel_list(layout: Layout) -> None:
@@ -1750,6 +1752,14 @@ def _cmi_channel_open(layout: Layout, chan_id: str | None) -> None:
     if ch.get("status") not in ("created", "active"):
         print(f"  channel status is '{ch.get('status')}' — cannot open")
         return
+
+    # Profile gating: haca-core cannot be HOST or PEER of public channels
+    profile = baseline.get("profile", "haca-core")
+    if profile == "haca-core":
+        contacts = baseline.get("cmi", {}).get("contacts", [])
+        if not contacts:
+            print("  haca-core profile cannot create/join channels without pre-registered contacts")
+            return
 
     role = ch.get("role", "peer")
 
@@ -1950,6 +1960,7 @@ def _cmd_help() -> None:
     /cmi contacts rm <id>                 — remove a contact by node_id or label
     /cmi chan list                        — list declared channels from baseline
     /cmi chan init                        — create and launch a new channel (interactive)
+    /cmi chan open <id>                   — launch a created channel (transition created → active)
     /cmi chan close <id>                  — signal close to an active channel
     /cmi bb <id>                          — display Blackboard contents for a channel
 
