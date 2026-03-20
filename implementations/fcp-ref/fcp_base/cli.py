@@ -179,8 +179,19 @@ def _run_update() -> None:
     # Resolve the physical path in case this was run from a symlink (e.g., ~/.local/bin/fcp)
     # cli.py is at: ~/.fcp/implementations/fcp-ref/fcp_base/cli.py
     # So the FCP root is 3 parents up.
-    fcp_root = Path(__file__).resolve().parents[3]
-    
+    cli_file = Path(__file__).resolve()
+    fcp_root = cli_file.parents[3]
+
+    # Guard: reject if this is running from within an entity root
+    # (check if any ancestor between cli_file and fcp_root contains .fcp-entity)
+    for ancestor in cli_file.parents:
+        if (ancestor / ".fcp-entity").exists():
+            ui.print_err("fcp update must be run from the global fcp installation.")
+            ui.print_err("Use the 'fcp' command in your PATH, not a local copy.")
+            sys.exit(1)
+        if ancestor == fcp_root:
+            break
+
     if not (fcp_root / ".git").exists():
         ui.print_err(f"Cannot update: FCP installation at {fcp_root} is not a git repository.")
         sys.exit(1)
