@@ -2,7 +2,9 @@
 
 Bridges any MCP-capable IDE or CLI to an active FCP pairing session.
 
-When FCP runs with `backend = pairing`, it writes prompts to the filesystem and waits for a completion. This server exposes those prompts as MCP tools, so any connected agent (Claude Code, Cursor, Zed, or any MCP client) can pick them up, process them, and return the response back to FCP — without API keys, without extra processes, and without manual intervention.
+⚠️ **HACA-Evolve only.** This server is exclusive to entities with `profile = "haca-evolve"`. haca-core entities have direct entity_root access and do not use the pairing backend.
+
+When FCP (haca-evolve) runs with `backend = pairing`, it writes prompts to the filesystem and waits for a completion. This server exposes those prompts as MCP tools, so any connected agent (Claude Code, Cursor, Zed, or any MCP client) can pick them up, process them, and return the response back to FCP — without API keys, without extra processes, and without manual intervention.
 
 ---
 
@@ -46,6 +48,17 @@ echo "{...}" > "${FCP_ENTITY_ROOT}/.fcp-entity/notifications/mcp/${SESSION_ID}.p
 ```
 
 The server is a **persistent, independent process** — it stays alive across multiple FCP sessions. No restart needed between `fcp` invocations.
+
+### Profile Gating
+
+Pairing backend is internal to haca-evolve and not available for haca-core entities:
+
+| Profile | Has Pairing? | Why |
+|---------|------|-----|
+| **haca-core** | ❌ No | Has direct `entity_root/` access; IDE is already present |
+| **haca-evolve** | ✅ Yes | Uses pairing as opaque CPE backend; entities run isolated |
+
+When you run `fcp init`, the pairing backend is only offered if you select `profile = "haca-evolve"`. Similarly, `/model pairing` is hidden for haca-core entities.
 
 ---
 
