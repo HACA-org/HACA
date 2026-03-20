@@ -280,7 +280,11 @@ def _maybe_prompt_shell_allowlist(
     output: str,
 ) -> str:
     """If shell_run returned a 'command not in allowlist' error, prompt the
-    operator to approve it once or permanently, then re-run if approved."""
+    operator to approve it once or permanently, then re-run if approved.
+
+    - "allow once" (y): sets SHELL_RUN_ALLOW_ONCE env var for single execution
+    - "allow always" (a): persists command to manifest allowlist_composite
+    """
     try:
         result = json.loads(output)
     except Exception:
@@ -308,9 +312,23 @@ def _maybe_prompt_shell_allowlist(
 
     if answer == "a":
         _shell_allowlist_add(layout, command)
+    elif answer == "y":
+        # For "allow once": pass via environment variable to bypass check
+        import os as _os
+        # Re-execute with bypass flag
+        orig_params = dict(params)
+        # Will be read by shell_run/run.py
+        _os.environ["FCP_SHELL_RUN_ALLOW_ONCE"] = command
+        try:
+            new_output = _run_skill(layout, entry, manifest, orig_params, timeout)
+            return new_output
+        finally:
+            _os.environ.pop("FCP_SHELL_RUN_ALLOW_ONCE", None)
 
     try:
-        new_output = _run_skill(layout, entry, manifest, params, timeout)
+        # For "allow always": reload manifest fresh before re-executing
+        new_manifest = _load_manifest(layout, entry)
+        new_output = _run_skill(layout, entry, new_manifest, params, timeout)
         return new_output
     except Exception:
         return output

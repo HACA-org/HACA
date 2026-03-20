@@ -164,7 +164,8 @@ def _print_help() -> None:
   fcp --verbose                    — boot entity with verbose mode enabled
   fcp --debugger[=all|chat|boot]   — boot entity with debugger mode enabled
   fcp update                       — update FCP from the main repository
-  fcp help | -h                    — this message
+  
+  fcp help                         — this message
 """)
 
 
