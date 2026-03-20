@@ -24,6 +24,7 @@ from typing import Any
 from .acp import make as acp_encode
 from .mil import (
     clean_stale_symlinks,
+    clean_episodic_index,
     process_closure,
     append_endure_commit,
     promote_to_semantic,
@@ -227,9 +228,10 @@ def _stage1_consolidation(layout: Layout) -> None:
 # ---------------------------------------------------------------------------
 
 def _stage2_gc(layout: Layout) -> None:
-    """Rotate session.jsonl if over threshold; clean stale symlinks."""
+    """Rotate session.jsonl if over threshold; clean stale symlinks and episodic index."""
     _rotate_session_store(layout)
     clean_stale_symlinks(layout)
+    clean_episodic_index(layout)
 
 
 def _rotate_session_store(layout: Layout) -> None:
