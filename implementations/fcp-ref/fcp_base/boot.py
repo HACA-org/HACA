@@ -40,6 +40,15 @@ class BootError(Exception):
 
 @dataclass
 class BootResult:
+    """Result of a successful boot sequence.
+
+    Attributes:
+        session_id: Unique identifier for the initialized session.
+        is_first_boot: True if this is a cold-start (first boot ever, FAP ran).
+        crash_recovered: True if boot recovered from a previous crash/timeout.
+        pending_proposals: List of Evolution Proposals awaiting operator approval.
+    """
+
     session_id: str
     is_first_boot: bool = False
     crash_recovered: bool = False
@@ -51,10 +60,30 @@ class BootResult:
 # ---------------------------------------------------------------------------
 
 def run(layout: Layout) -> BootResult:
-    """Execute the boot sequence.  Returns BootResult on success.
+    """Execute the FCP boot sequence (§5).
 
-    Raises BootError if any phase fails.
-    Raises FAPError (from fap.run) if this is a cold-start and FAP fails.
+    Performs multi-phase initialization:
+    - Phase 0: Operator Bound Verification (imprint record, channel availability)
+    - Phase 1: Host Introspection (baseline validity, system defaults)
+    - Phase 2: Persona & Skills (cognitive behavior, skills index)
+    - Phase 3: Memory Restoration (episodic history, semantic context, active frame)
+    - Phase 4: Evolution Proposals (pending autonomous changes)
+    - Phase 5: CMI Integration (messaging channel setup if enabled)
+    - Phase 6: Vital Status (health check)
+    - Phase 7: Session Initialization (session token generation)
+
+    Cold-start detection: If imprint.json is absent, FAP (First Activation Protocol) runs
+    to initialize baseline, credential, and imprint records.
+
+    Args:
+        layout: Entity store layout providing paths to all state directories.
+
+    Returns:
+        BootResult: Contains session_id, first_boot flag, any pending proposals.
+
+    Raises:
+        BootError: If any phase fails precondition checks or state validation.
+        FAPError: If this is a cold-start and FAP initialization fails.
     """
     # Cold-start detection: absence of memory/imprint.json → run FAP.
     if not layout.imprint.exists():
