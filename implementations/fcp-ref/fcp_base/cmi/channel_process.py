@@ -934,10 +934,10 @@ class ChannelProcess:
         return {}
 
     def _find_trusted_peer(self, node_identity: str) -> dict[str, Any] | None:
-        peers = self._cmi_cfg.get("trusted_peers", [])
-        for p in peers:
-            if p.get("node_identity") == node_identity:
-                return p
+        contacts = self._cmi_cfg.get("contacts", [])
+        for c in contacts:
+            if c.get("node_id") == node_identity:
+                return c
         return None
 
     def _find_enrolled_peer(self, node_identity: str) -> dict[str, Any] | None:

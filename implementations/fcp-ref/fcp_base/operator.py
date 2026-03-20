@@ -1489,8 +1489,8 @@ def _cmi_contacts_list(layout: Layout) -> None:
         print("  no contacts — use /cmi contacts add to add one")
         return
     for c in contacts:
-        label = c.get("label", c.get("alias", "?"))
-        node_id = c.get("node_id", c.get("node_identity", "?"))
+        label = c.get("label", "?")
+        node_id = c.get("node_id", "?")
         endpoint = c.get("endpoint", "?")
         added = c.get("added_at", "")
         print(f"  {label}  {node_id[:20]}...  {endpoint}  added:{added}")
