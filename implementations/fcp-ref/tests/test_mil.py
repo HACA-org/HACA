@@ -89,6 +89,96 @@ class TestMemoryRecall(unittest.TestCase):
         self.assertEqual(len(result["contents"]), 1)
         self.assertEqual(result["contents"][0]["content"], "content")
 
+    def test_recall_episodic_by_slug(self) -> None:
+        """Recall episodic file by slug uses index lookup (O(1))."""
+        mil.write_episodic(self.layout, "notes", "episodic content")
+        # Path is just the slug name, index resolves it
+        result = mil.memory_recall(self.layout, "", "notes")
+        self.assertEqual(result["status"], "found")
+        self.assertGreater(len(result["paths"]), 0)
+        self.assertIn("episodic content", result["contents"][0]["content"])
+
+    def test_recall_episodic_index_cached(self) -> None:
+        """Episodic index prevents repeated glob scans."""
+        mil.write_episodic(self.layout, "cached", "data")
+        # First recall populates index
+        result1 = mil.memory_recall(self.layout, "", "cached")
+        self.assertEqual(result1["status"], "found")
+        # Index file should exist
+        index_file = self.layout.episodic_dir / ".episodic-index.json"
+        self.assertTrue(index_file.exists())
+        # Second recall uses index
+        result2 = mil.memory_recall(self.layout, "", "cached")
+        self.assertEqual(result2["status"], "found")
+
+
+class TestEpisodicIndex(unittest.TestCase):
+    def setUp(self) -> None:
+        self.layout, self.tmp = make_layout()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp)
+
+    def test_index_created_on_write(self) -> None:
+        """write_episodic() creates and maintains index."""
+        mil.write_episodic(self.layout, "test", "content")
+        index_file = self.layout.episodic_dir / ".episodic-index.json"
+        self.assertTrue(index_file.exists())
+        index = json.loads(index_file.read_text())
+        self.assertIn("test", index)
+        self.assertGreater(len(index["test"]), 0)
+
+    def test_index_multiple_slugs(self) -> None:
+        """Index tracks multiple slugs."""
+        mil.write_episodic(self.layout, "slug1", "content1")
+        mil.write_episodic(self.layout, "slug2", "content2")
+        index_file = self.layout.episodic_dir / ".episodic-index.json"
+        index = json.loads(index_file.read_text())
+        self.assertIn("slug1", index)
+        self.assertIn("slug2", index)
+
+    def test_index_overwrite_removes_old(self) -> None:
+        """Overwriting episodic slug updates index."""
+        import time
+        path1 = mil.write_episodic(self.layout, "slug", "v1")
+        time.sleep(0.01)  # Ensure different timestamp
+        path2 = mil.write_episodic(self.layout, "slug", "v2", overwrite=True)
+        index_file = self.layout.episodic_dir / ".episodic-index.json"
+        index = json.loads(index_file.read_text())
+        # Index should reflect the new file path
+        self.assertIn("slug", index)
+        # Old file should be gone
+        self.assertFalse(path1.exists())
+        self.assertTrue(path2.exists())
+
+    def test_rebuild_episodic_index(self) -> None:
+        """_rebuild_episodic_index() recovers from missing index."""
+        mil.write_episodic(self.layout, "slug1", "c1")
+        mil.write_episodic(self.layout, "slug2", "c2")
+        # Delete index to simulate corruption
+        index_file = self.layout.episodic_dir / ".episodic-index.json"
+        index_file.unlink()
+        # Rebuild
+        index = mil._rebuild_episodic_index(self.layout)
+        self.assertIn("slug1", index)
+        self.assertIn("slug2", index)
+        # Index file recreated
+        self.assertTrue(index_file.exists())
+
+    def test_clean_episodic_index(self) -> None:
+        """clean_episodic_index() removes orphaned entries."""
+        path1 = mil.write_episodic(self.layout, "orphan", "content")
+        mil.write_episodic(self.layout, "valid", "content")
+        # Delete the orphan file manually
+        path1.unlink()
+        # Clean
+        mil.clean_episodic_index(self.layout)
+        index_file = self.layout.episodic_dir / ".episodic-index.json"
+        index = json.loads(index_file.read_text())
+        # orphan should be removed, valid should remain
+        self.assertNotIn("orphan", index)
+        self.assertIn("valid", index)
+
 
 class TestSeedActiveContext(unittest.TestCase):
     def setUp(self) -> None:
