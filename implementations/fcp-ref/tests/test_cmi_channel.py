@@ -50,7 +50,7 @@ def _make_layout_with_cmi(role: str = "host") -> tuple[Layout, Path]:
         "enabled": True,
         "node_identity": cred["node_identity"],
         "endpoint": "http://localhost:17700",
-        "trusted_peers": [],
+        "contacts": [],
         "channels": [dict(CHANNEL_CFG, role=role)],
     }
     atomic_write(layout.baseline, baseline)
@@ -419,11 +419,10 @@ class TestTrustedPeerLookup(unittest.TestCase):
 
     def test_find_existing_peer(self):
         baseline = read_json(self.layout.baseline)
-        baseline["cmi"]["trusted_peers"] = [{
-            "node_identity": "sha256:peer1",
+        baseline["cmi"]["contacts"] = [{
+            "node_id": "sha256:peer1",
             "endpoint": "http://peer:7700",
-            "trust_label": "FULL",
-            "alias": "bob",
+            "label": "bob",
             "pubkey": "deadbeef",
         }]
         atomic_write(self.layout.baseline, baseline)
@@ -431,7 +430,7 @@ class TestTrustedPeerLookup(unittest.TestCase):
         proc = _make_process(self.layout)
         peer = proc._find_trusted_peer("sha256:peer1")
         self.assertIsNotNone(peer)
-        self.assertEqual(peer["alias"], "bob")
+        self.assertEqual(peer["label"], "bob")
 
     def test_find_nonexistent_peer_returns_none(self):
         proc = _make_process(self.layout)
