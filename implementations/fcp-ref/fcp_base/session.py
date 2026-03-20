@@ -181,7 +181,6 @@ def run_session(
         try:
             response = adapter_ref.current.invoke(system, chat_history, tools)
         except Exception as exc:
-            from .cpe.base import CPEError
             err_msg = str(exc)
             print(f"\n{_DIM}  [fcp] CPE error: {err_msg}{_RESET}")
             _append_msg(layout, "fcp", f"CPE error: {err_msg}")
