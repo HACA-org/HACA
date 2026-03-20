@@ -62,25 +62,20 @@ def main() -> None:
     )
 
     sys.path.insert(0, str(entity_root))
-    from fcp_base.cpe.base import detect_adapter, make_adapter
+    from fcp_base.cpe.base import detect_adapter, load_cpe_adapter_from_baseline
     from fcp_base.store import Layout
-
-    # read backend/model from baseline.json
-    backend, model, api_key = "", "", ""
-    baseline_path = entity_root / "state" / "baseline.json"
-    if baseline_path.exists():
-        try:
-            baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-            cpe_cfg = baseline.get("cpe", {})
-            backend, model, api_key = cpe_cfg.get("backend", ""), cpe_cfg.get("model", ""), cpe_cfg.get("api_key", "")
-        except Exception: pass
 
     layout = Layout(entity_root)
     try:
-        adapter = make_adapter(backend, api_key, model, layout=layout) if backend else detect_adapter(model=model)
-    except Exception as exc:
-        print(json.dumps({"error": f"no CPE adapter available: {exc}"}))
-        sys.exit(1)
+        # Try to load from baseline config; fall back to auto-detect if not configured
+        adapter = load_cpe_adapter_from_baseline(layout)
+    except Exception:
+        # No baseline config or error reading it; auto-detect available adapters
+        try:
+            adapter = detect_adapter()
+        except Exception as exc:
+            print(json.dumps({"error": f"no CPE adapter available: {exc}"}))
+            sys.exit(1)
 
     # Tool definition
     TOOLS = [{

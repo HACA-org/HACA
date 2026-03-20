@@ -804,7 +804,7 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
         return
     from .cpe.base import make_adapter
     from .store import API_KEY_ENV, save_api_key, load_env_file
-    
+
     api_key = ""
     if backend not in ("ollama", "pairing"):
         env_var = API_KEY_ENV.get(backend, "")
@@ -816,6 +816,8 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
                 save_api_key(layout.root.name, env_var, api_key)
 
     try:
+        # Use direct make_adapter here (not load_cpe_adapter_from_baseline) because
+        # we're switching mid-session to a new backend/model, not loading from baseline
         new_adapter = make_adapter(backend=backend, model=new_model, api_key=api_key, layout=layout)
     except Exception as exc:
         print(f"  failed to create adapter: {exc}")

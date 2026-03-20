@@ -203,3 +203,27 @@ def fetch_ollama_models() -> list[str]:
         return [m["name"] for m in data.get("models", [])]
     except Exception:
         return []
+
+
+def load_cpe_adapter_from_baseline(layout: "Layout") -> CPEAdapter:
+    """Load CPE adapter from baseline.cpe configuration.
+
+    Reads backend, model, and api_key from baseline.json and instantiates
+    the appropriate adapter. Falls back to Ollama if backend is missing.
+
+    Raises ValueError if backend is unknown.
+    """
+    from ..store import read_json
+
+    baseline = {}
+    try:
+        baseline = read_json(layout.baseline)
+    except Exception:
+        pass
+
+    cpe_cfg = baseline.get("cpe", {})
+    backend = cpe_cfg.get("backend", "ollama")
+    model = cpe_cfg.get("model", "")
+    api_key = cpe_cfg.get("api_key", "")
+
+    return make_adapter(backend=backend, api_key=api_key, model=model, layout=layout)
