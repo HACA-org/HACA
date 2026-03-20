@@ -1820,8 +1820,13 @@ def _cmi_channel_open(layout: Layout, chan_id: str | None) -> None:
 
 
 def _cmi_channel_close(layout: Layout, chan_id: str) -> None:
-    """Signal close to an active CMI channel via HTTP POST."""
+    """Signal close to an active CMI channel via HTTP POST.
+
+    Sends close signal with 5-second timeout (CMI_TIMEOUT_MESSAGE from channel_process).
+    Gracefully handles network errors (peer offline or slow).
+    """
     import urllib.request, urllib.error
+    from .cmi.channel_process import CMI_TIMEOUT_MESSAGE
 
     # Read close_token from Entity Store — only the local Operator can do this
     close_token = ""
@@ -1852,7 +1857,7 @@ def _cmi_channel_close(layout: Layout, chan_id: str) -> None:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=5):
+        with urllib.request.urlopen(req, timeout=CMI_TIMEOUT_MESSAGE):
             pass
         print(f"  close signal sent: {chan_id}")
     except urllib.error.URLError as exc:
