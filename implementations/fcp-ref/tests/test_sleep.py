@@ -62,6 +62,38 @@ class TestStage2GC(unittest.TestCase):
         sleep_mod._stage2_gc(self.layout)
         self.assertTrue(link.is_symlink() and link.exists())
 
+    def test_orphaned_symlinks_removed(self) -> None:
+        """Symlinks not in working_memory are removed."""
+        from fcp_base.mil import write_semantic
+        from fcp_base.store import atomic_write
+        # Create two files and symlinks
+        write_semantic(self.layout, "keep", "kept")
+        write_semantic(self.layout, "remove", "removed")
+        keep_link = self.layout.active_context_dir / "keep.md"
+        remove_link = self.layout.active_context_dir / "remove.md"
+        keep_link.symlink_to(self.layout.semantic_dir / "keep.md")
+        remove_link.symlink_to(self.layout.semantic_dir / "remove.md")
+        # Set working_memory to only keep one
+        atomic_write(self.layout.working_memory, {
+            "entries": [{"priority": 1, "path": "memory/semantic/keep.md"}]
+        })
+        # Clean
+        sleep_mod._stage2_gc(self.layout)
+        # keep should still exist, remove should be gone
+        self.assertTrue(keep_link.is_symlink() and keep_link.exists())
+        self.assertFalse(remove_link.exists())
+
+    def test_empty_working_memory_keeps_symlinks(self) -> None:
+        """If working_memory is empty, don't aggressively remove symlinks."""
+        from fcp_base.mil import write_semantic
+        write_semantic(self.layout, "keep", "content")
+        link = self.layout.active_context_dir / "keep.md"
+        link.symlink_to(self.layout.semantic_dir / "keep.md")
+        # No working_memory or empty entries
+        sleep_mod._stage2_gc(self.layout)
+        # Should preserve symlink when working_memory is empty/missing
+        self.assertTrue(link.is_symlink() and link.exists())
+
 
 class TestSleepComplete(unittest.TestCase):
     def setUp(self) -> None:

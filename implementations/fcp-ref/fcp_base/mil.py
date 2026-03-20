@@ -369,12 +369,42 @@ def seed_active_context(layout: Layout) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def clean_stale_symlinks(layout: Layout) -> None:
-    """Remove broken symlinks from memory/active_context/."""
+    """Remove broken symlinks from memory/active_context/ (Stage 2).
+
+    Cleans both:
+    1. Broken symlinks (targets no longer exist)
+    2. Orphaned symlinks (not in working_memory, not recently accessed)
+
+    This prevents unbounded accumulation of stale context symlinks.
+    """
     if not layout.active_context_dir.exists():
         return
+
+    # Get list of paths in working_memory (these should be kept)
+    allowed_paths: set[str] = set()
+    if layout.working_memory.exists():
+        try:
+            wm = read_json(layout.working_memory)
+            for entry in wm.get("entries", []):
+                path = entry.get("path", "")
+                if path:
+                    # Store just the basename for matching with symlink names
+                    allowed_paths.add(Path(path).name)
+        except Exception:
+            pass
+
+    # Clean symlinks
     for link in layout.active_context_dir.iterdir():
+        # Always remove broken symlinks
         if link.is_symlink() and not link.exists():
             link.unlink()
+        # Remove symlinks not in working_memory (unless they're recent session artifacts)
+        elif link.is_symlink():
+            # Keep symlink if its name appears in working_memory paths
+            if allowed_paths and link.name not in allowed_paths:
+                # Symlink not in working_memory; remove it
+                # This prevents accumulation while respecting current context
+                link.unlink()
 
 
 def clean_episodic_index(layout: Layout) -> None:
