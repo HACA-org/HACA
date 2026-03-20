@@ -1949,7 +1949,7 @@ def _cmd_help() -> None:
     /skill rm <name>                      — remove a custom skill and delete its directory
     /skill audit <name>                   — audit a skill
 
-  Execution Allowlist:
+  Execution:
     /allowlist                            — list shell_run allowlist
     /allowlist add <command> [reason]     — add command to allowlist
     /allowlist rm <command>               — remove command from allowlist
