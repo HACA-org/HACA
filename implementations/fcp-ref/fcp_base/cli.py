@@ -222,7 +222,7 @@ def _run_update() -> None:
 
 def _run_normal(layout: "Layout") -> None:
     from .boot import run as boot_run, BootError
-    from .cpe.base import make_adapter
+    from .cpe.base import load_cpe_adapter_from_baseline
     from .fap import FAPError
     from .operator import (
         handle_platform_command,
@@ -244,14 +244,7 @@ def _run_normal(layout: "Layout") -> None:
 
 
     try:
-        baseline = read_json(layout.baseline)
-        cpe_cfg = baseline.get("cpe", {})
-        adapter = make_adapter(
-            backend=cpe_cfg.get("backend", "ollama"),
-            model=cpe_cfg.get("model", ""),
-            api_key="",
-            layout=layout,
-        )
+        adapter = load_cpe_adapter_from_baseline(layout)
     except Exception as exc:
         print(f"[CPE ERROR] {exc}")
         sys.exit(1)
@@ -355,14 +348,8 @@ def _run_auto(layout: "Layout", cron_id: str) -> None:
 
 
     try:
-        baseline = read_json(layout.baseline)
-        cpe_cfg = baseline.get("cpe", {})
-        adapter = make_adapter(
-            backend=cpe_cfg.get("backend", "ollama"),
-            model=cpe_cfg.get("model", ""),
-            api_key="",
-            layout=layout,
-        )
+        from .cpe.base import load_cpe_adapter_from_baseline
+        adapter = load_cpe_adapter_from_baseline(layout)
     except Exception as exc:
         print(f"[CPE ERROR] {exc}")
         sys.exit(1)
@@ -734,14 +721,8 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
         print(f"[BOOT FAILED] {exc}")
         sys.exit(1)
 
-    baseline = read_json(layout.baseline)
-    cpe_cfg = baseline.get("cpe", {})
-    adapter = make_adapter(
-        backend=cpe_cfg.get("backend", "ollama"),
-        model=cpe_cfg.get("model", ""),
-        api_key="",
-        layout=layout,
-    )
+    from .cpe.base import load_cpe_adapter_from_baseline
+    adapter = load_cpe_adapter_from_baseline(layout)
     index: dict = {}
     if layout.skills_index.exists():
         index = read_json(layout.skills_index)
