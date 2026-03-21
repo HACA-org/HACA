@@ -127,10 +127,22 @@ class FallbackChain:
             except CPEError as e:
                 last_error = e
                 logger.warning(f"[FallbackChain] {name} failed: {e}")
+                # Reset adapter state for next attempt (if supported)
+                if hasattr(adapter, '_reset_state'):
+                    try:
+                        adapter._reset_state()  # type: ignore
+                    except Exception as reset_err:
+                        logger.debug(f"Adapter {name} reset failed: {reset_err}")
                 continue
             except Exception as e:
                 last_error = e
                 logger.error(f"[FallbackChain] Unexpected error in {name}: {e}")
+                # Reset adapter state for next attempt (if supported)
+                if hasattr(adapter, '_reset_state'):
+                    try:
+                        adapter._reset_state()  # type: ignore
+                    except Exception as reset_err:
+                        logger.debug(f"Adapter {name} reset failed: {reset_err}")
                 continue
 
         # All adapters failed

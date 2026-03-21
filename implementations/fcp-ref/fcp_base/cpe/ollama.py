@@ -186,7 +186,10 @@ def _post(base_url: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _post_streaming(base_url: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Streaming POST to Ollama /api/chat (returns accumulated chunks)."""
+    """Streaming POST to Ollama /api/chat (returns accumulated chunks).
+
+    Accumulates chunks up to 100MB to prevent memory exhaustion.
+    """
     body = json.dumps(payload).encode()
     req = urllib.request.Request(
         f"{base_url}/api/chat",
@@ -195,12 +198,20 @@ def _post_streaming(base_url: str, payload: dict[str, Any]) -> list[dict[str, An
         method="POST",
     )
     chunks: list[dict[str, Any]] = []
+    accumulated_size = 0
+    _MAX_STREAMING_SIZE_BYTES = 100 * 1024 * 1024  # 100MB limit
     try:
         with urllib.request.urlopen(req, timeout=300) as resp:
             for line in resp:
                 if line.strip():
                     chunk = json.loads(line.decode())
                     chunks.append(chunk)
+                    # Track accumulated size to prevent memory exhaustion
+                    accumulated_size += len(line)
+                    if accumulated_size > _MAX_STREAMING_SIZE_BYTES:
+                        raise CPEError(
+                            f"Streaming response exceeded {_MAX_STREAMING_SIZE_BYTES / 1024 / 1024:.0f}MB limit"
+                        )
             return chunks
     except urllib.error.HTTPError as exc:
         body_text = _trunc(exc.read().decode())

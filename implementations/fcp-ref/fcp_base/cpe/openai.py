@@ -75,6 +75,15 @@ class OpenAIAdapter:
         """Return True if using official OpenAI API (supports prompt caching)."""
         return "api.openai.com" in self._base_url
 
+    def _reset_state(self) -> None:
+        """Reset adapter state for fallback chain recovery.
+
+        Clears prompt caching state so next adapter doesn't inherit
+        stale cached system prompts from failed invocation.
+        """
+        self._system_cached = False
+        self._cached_system = ""
+
 
 # ---------------------------------------------------------------------------
 # Prompt caching (OpenAI only)
