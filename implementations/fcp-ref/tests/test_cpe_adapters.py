@@ -434,6 +434,207 @@ class TestEdgeCases:
         assert result.text == ""
 
 
+class TestOpenAIPromptCaching:
+    """Test OpenAI prompt caching logic."""
+
+    def test_first_invoke_includes_system_with_cache_control(self):
+        """First invoke should include system message with cache_control."""
+        from fcp_base.cpe.openai import _build_messages_with_caching
+
+        system = "You are a helpful assistant."
+        messages = [{"role": "user", "content": "Hello"}]
+
+        result = _build_messages_with_caching(
+            system=system,
+            messages=messages,
+            base_url="https://api.openai.com/v1",
+            system_cached=False,
+            cached_system="",
+        )
+
+        assert len(result) == 2
+        assert result[0]["role"] == "system"
+        assert result[0]["content"] == system
+        assert result[0]["cache_control"] == {"type": "ephemeral"}
+        assert result[1] == messages[0]
+
+    def test_subsequent_invoke_omits_system_if_unchanged(self):
+        """Subsequent invoke should omit system message if unchanged."""
+        from fcp_base.cpe.openai import _build_messages_with_caching
+
+        system = "You are a helpful assistant."
+        messages = [{"role": "user", "content": "What is 2+2?"}]
+
+        result = _build_messages_with_caching(
+            system=system,
+            messages=messages,
+            base_url="https://api.openai.com/v1",
+            system_cached=True,
+            cached_system=system,  # same as current system
+        )
+
+        # System message should be omitted (cached)
+        assert len(result) == 1
+        assert result[0] == messages[0]
+
+    def test_system_change_resends_with_cache_control(self):
+        """If system message changes, resend it with cache_control."""
+        from fcp_base.cpe.openai import _build_messages_with_caching
+
+        old_system = "You are a helpful assistant."
+        new_system = "You are a strict code reviewer."
+        messages = [{"role": "user", "content": "Review this code."}]
+
+        result = _build_messages_with_caching(
+            system=new_system,
+            messages=messages,
+            base_url="https://api.openai.com/v1",
+            system_cached=True,
+            cached_system=old_system,  # different from new_system
+        )
+
+        assert len(result) == 2
+        assert result[0]["role"] == "system"
+        assert result[0]["content"] == new_system
+        assert result[0]["cache_control"] == {"type": "ephemeral"}
+        assert result[1] == messages[0]
+
+    def test_compatible_endpoint_always_includes_system(self):
+        """Compatible endpoints should always include system (no caching)."""
+        from fcp_base.cpe.openai import _build_messages_with_caching
+
+        system = "You are helpful."
+        messages = [{"role": "user", "content": "Hi"}]
+
+        # Even with system_cached=True, compatible endpoint includes system
+        result = _build_messages_with_caching(
+            system=system,
+            messages=messages,
+            base_url="http://localhost:8000/v1",  # compatible endpoint
+            system_cached=True,
+            cached_system=system,
+        )
+
+        assert len(result) == 2
+        assert result[0]["role"] == "system"
+        assert result[0]["content"] == system
+        assert "cache_control" not in result[0]
+
+
+class TestOllamaStreaming:
+    """Test Ollama streaming mode."""
+
+    def test_streaming_accumulates_content(self):
+        """Streaming chunks accumulate content across multiple chunks."""
+        from fcp_base.cpe.ollama import _parse_streaming_response
+
+        chunks = [
+            {
+                "message": {"content": "Hello, "},
+                "done": False,
+            },
+            {
+                "message": {"content": "how can I help?"},
+                "done": False,
+            },
+            {
+                "message": {"content": ""},
+                "done": True,
+                "prompt_eval_count": 100,
+                "eval_count": 50,
+                "done_reason": "stop",
+            },
+        ]
+
+        result = _parse_streaming_response(chunks)
+        assert result.text == "Hello, how can I help?"
+        assert result.input_tokens == 100
+        assert result.output_tokens == 50
+        assert result.stop_reason == "stop"
+
+    def test_streaming_with_tool_calls(self):
+        """Streaming can extract tool calls from chunks."""
+        from fcp_base.cpe.ollama import _parse_streaming_response
+
+        chunks = [
+            {
+                "message": {"content": "I'll help with that."},
+                "done": False,
+            },
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "fcp_exec",
+                                "arguments": {"command": "ls"}
+                            }
+                        }
+                    ]
+                },
+                "done": False,
+            },
+            {
+                "message": {"content": ""},
+                "done": True,
+                "prompt_eval_count": 120,
+                "eval_count": 75,
+                "done_reason": "tool_calls",
+            },
+        ]
+
+        result = _parse_streaming_response(chunks)
+        assert result.text == "I'll help with that."
+        assert len(result.tool_use_calls) == 1
+        assert result.tool_use_calls[0].id == "call_0"
+        assert result.tool_use_calls[0].tool == "fcp_exec"
+
+    def test_streaming_multiple_tool_calls_sequential_ids(self):
+        """Streaming extracts multiple tool calls with sequential IDs."""
+        from fcp_base.cpe.ollama import _parse_streaming_response
+
+        chunks = [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "tool_a",
+                                "arguments": {}
+                            }
+                        }
+                    ]
+                },
+                "done": False,
+            },
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "tool_b",
+                                "arguments": {"x": 1}
+                            }
+                        }
+                    ]
+                },
+                "done": False,
+            },
+            {
+                "message": {"content": ""},
+                "done": True,
+                "prompt_eval_count": 100,
+                "eval_count": 50,
+                "done_reason": "tool_calls",
+            },
+        ]
+
+        result = _parse_streaming_response(chunks)
+        assert len(result.tool_use_calls) == 2
+        assert result.tool_use_calls[0].id == "call_0"
+        assert result.tool_use_calls[1].id == "call_1"
+
+
 class TestOllamaParsing:
     """Test Ollama API response parsing."""
 

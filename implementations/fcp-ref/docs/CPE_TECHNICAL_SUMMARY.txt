@@ -1,0 +1,309 @@
+================================================================================
+CPE ADAPTERS — TECHNICAL SUMMARY (Quick Reference)
+================================================================================
+
+Base Interface: Protocol[invoke(system, messages, tools) -> CPEResponse]
+Location: fcp_base/cpe/base.py
+
+================================================================================
+ADAPTER DETAILS
+================================================================================
+
+ANTHROPIC
+────────────────────────────────────────────────────────────────────────────
+API URL:        https://api.anthropic.com/v1/messages
+API Version:    2023-06-01 (🟡 OUTDATED - should be 2024-06-15)
+Default Model:  claude-opus-4-6
+Max Tokens:     8192
+
+Tool Calling:
+  Format:       content[].{type:"tool_use", id, name, input{}}
+  Input Type:   dict (native)
+  Support:      ✅ Native, tool IDs present, parallel calls
+  
+Response Fields:
+  stop_reason:  "end_turn" | "tool_use"
+  tokens:       usage.{input_tokens, output_tokens}
+
+Issues:
+  - API version 2 years old (missing extended thinking)
+  - No support for thinking blocks
+  - Action: Update to 2024-06-15
+
+────────────────────────────────────────────────────────────────────────────
+
+OPENAI
+────────────────────────────────────────────────────────────────────────────
+API URL:        https://api.openai.com/v1/chat/completions
+API Version:    2024 (✅ Current)
+Default Model:  gpt-4o
+Max Tokens:     8192
+Base URL Env:   OPENAI_BASE_URL (supports OpenAI-compatible endpoints)
+
+Tool Calling:
+  Format:       message.tool_calls[].{id, function:{name, arguments}}
+  Input Type:   JSON string (REQUIRES PARSING)
+  Support:      ✅ Native, tool IDs present, parallel calls
+  
+Response Fields:
+  stop_reason:  finish_reason ("tool_calls" | "stop")
+  tokens:       usage.{prompt_tokens, completion_tokens}
+
+Issues:
+  - System message injected in every request (token waste ~100/req)
+  - Arguments come as JSON strings (requires parsing + error handling)
+  - Silent fallback to empty dict on parse failure
+  - Action: Implement prompt caching (P2) + add logging (P0)
+
+────────────────────────────────────────────────────────────────────────────
+
+GOOGLE
+────────────────────────────────────────────────────────────────────────────
+API URL:        https://generativelanguage.googleapis.com/v1beta/models
+Endpoint:       /{model}:generateContent
+API Version:    v1beta (🟡 EXPERIMENTAL - may have breaking changes)
+Default Model:  gemini-2.0-flash
+Max Tokens:     8192
+
+Tool Calling:
+  Format:       candidates[0].content.parts[].{functionCall:{name, args{}}}
+  Input Type:   dict (native)
+  Support:      ⚠️ NO TOOL IDs - order-dependent mapping
+  
+Response Fields:
+  stop_reason:  finishReason ("STOP" | "TOOL_CALLS" | etc)
+  tokens:       usageMetadata.{promptTokenCount, candidatesTokenCount}
+
+Quirks:
+  - NO TOOL CALL IDs (Google API limitation)
+  - Assumes order preserved (fragile)
+  - Requires _last_model_parts/_last_function_calls state
+  - Tool results sent as functionResponse parts (not user messages)
+  - Ignores "thought" parts (extended thinking)
+  
+Issues:
+  - Order-dependent mapping can break if results reordered
+  - Stateful adapter (bad design smell)
+  - API is v1beta (experimental, may change)
+  - Action: Add synthetic IDs (P0) + document limitation
+
+────────────────────────────────────────────────────────────────────────────
+
+OLLAMA
+────────────────────────────────────────────────────────────────────────────
+API URL:        http://localhost:11434/api/chat
+API Version:    Latest (✅ Current, local only)
+Default Model:  llama3.2
+Max Tokens:     8192
+Base URL Env:   OLLAMA_BASE_URL
+
+Tool Calling:
+  Format:       message.tool_calls[].{function:{name, arguments}}
+  Input Type:   dict OR JSON string (🟡 INCONSISTENT)
+  Support:      ⚠️ NO TOOL IDs - order-dependent mapping
+  
+Response Fields:
+  stop_reason:  done_reason ("stop" | "tool_calls")
+  tokens:       {prompt_eval_count, eval_count}
+
+Quirks:
+  - Arguments can be dict OR JSON string (normalize both)
+  - NO TOOL CALL IDs (Ollama API limitation)
+  - Tool results converted to role:tool messages (not user messages)
+  - No streaming support (always stream=False)
+  - Has is_available() check
+  
+Issues:
+  - Arguments format inconsistent (dict vs string)
+  - Order-dependent mapping (like Google)
+  - No streaming (high latency for long outputs)
+  - Action: Investigate format inconsistency (P1) + add logging (P0) + streaming (P2)
+
+────────────────────────────────────────────────────────────────────────────
+
+PAIRING
+────────────────────────────────────────────────────────────────────────────
+Architecture:   Filesystem-based bridge to external agent
+Directory:      ~/.fcp/pairing/<session-id>.{request,response,meta}.json
+Model:          "external" (cosmetic only)
+
+Tool Calling:
+  Format:       tool_use_calls[].{id?, tool, input{}}
+  Input Type:   dict (passed through)
+  Support:      ✅ Depends on external agent
+  
+Protocol:
+  1. PairingAdapter creates .meta.json (session_id, key)
+  2. Fires on_prompt_pending hook
+  3. Writes .request.json (system, messages, tools)
+  4. **BLOCKS** up to 300s waiting for .response.json
+  5. Parses response → CPEResponse
+  6. Deletes .response.json
+
+External Agent Flow:
+  1. Connects to fcp_mcp_server via IDE/CLI
+  2. Polls .request.json (via fcp_poll tool)
+  3. Processes prompt
+  4. Writes .response.json (via fcp_respond tool)
+  5. PairingAdapter unblocks and returns response
+
+Issues:
+  - Filesystem polling not ideal (latency, race conditions)
+  - Timeout 300s may be too long
+  - Poll interval 0.25s (many wakeups)
+  - No built-in retry on file errors
+  - Action: Document limitations (P1) + consider inotify (future)
+
+================================================================================
+COMPARISON TABLE
+================================================================================
+
+                Anthropic  OpenAI    Google       Ollama       Pairing
+────────────────────────────────────────────────────────────────────────────
+Tool IDs        ✅ Yes     ✅ Yes    ❌ No        ❌ No        Optional
+Parallel Calls  ✅ Yes     ✅ Yes    ⚠️ Fragile   ✅ Yes       Depends
+Args Format     dict       string    dict         dict|string  dict
+Parse Robust    ✅ Native  ⚠️ Fallback✅ Native   ⚠️ Fallback  N/A (ext)
+Streaming       ❌ No      ✅ Yes    ❌ No        ❌ No        Depends
+Stateful        ❌ No      ❌ No     ✅ YES       ❌ No        ✅ YES
+API Current     🟡 2023    ✅ 2024   🟡 v1beta    ✅ Latest    N/A
+Production      ✅ Yes     ✅ Yes    🟡 Beta      ⚠️ Local     🟡 Beta
+────────────────────────────────────────────────────────────────────────────
+
+================================================================================
+P0 ISSUES (MUST FIX THIS WEEK)
+================================================================================
+
+1. ANTHROPIC API VERSION
+   File: fcp_base/cpe/anthropic.py (line 17)
+   Change: _API_VERSION = "2024-06-15"
+   Test: All Anthropic models
+   Impact: HIGH (missing features)
+   Effort: 1-2 hours
+
+2. GOOGLE SYNTHETIC TOOL IDS
+   File: fcp_base/cpe/google.py (line 193-196)
+   Change: id=f"google-{i:03d}" instead of ""
+   Test: Multi-tool scenarios
+   Impact: HIGH (order-dependent mapping)
+   Effort: 1 hour
+
+3. OPENAI/OLLAMA PARSE ERROR LOGGING
+   Files: openai.py (line 78), ollama.py (line 200)
+   Change: Add logger.warning() instead of silent fallback
+   Test: Malformed JSON
+   Impact: MEDIUM (debugging difficulty)
+   Effort: 30 minutes
+
+================================================================================
+P1 ISSUES (DO THIS NEXT WEEK)
+================================================================================
+
+1. WRITE UNIT TESTS
+   Missing for all 5 adapters
+   Target: ≥80% coverage per adapter
+   Effort: 4-5 hours
+   Includes: Happy path, edge cases, parse failures, multi-tool
+
+2. INVESTIGATE OLLAMA ARGUMENT FORMAT
+   Question: Why dict AND JSON string?
+   Action: Check Ollama versions, GitHub issues
+   Effort: 2-3 hours
+   Outcome: Recommendation (normalize vs log)
+
+3. DOCUMENT ADAPTER QUIRKS
+   Create cpe_adapter_integration_guide.md
+   Template for new adapters
+   Effort: 2 hours
+
+================================================================================
+P2 OPTIMIZATION (WEEK 3)
+================================================================================
+
+1. OPENAI PROMPT CACHING
+   Reduces token usage ~10% (system message ~100 tokens saved)
+   Effort: 2-3 hours
+
+2. OLLAMA STREAMING
+   Current: stream=False (always waits for full response)
+   New: stream=True option (incremental parsing)
+   Effort: 3 hours
+
+3. REMOTE MODEL REGISTRY
+   Replace hardcoded KNOWN_MODELS with remote config
+   Effort: 2 hours
+
+================================================================================
+ERROR HANDLING
+================================================================================
+
+HTTP Errors (via _http.py):
+  401 → CPEAuthError
+  429 → CPERateLimitError
+  Other → CPEError (with status code)
+
+Parse Errors:
+  Anthropic: None (direct dict)
+  OpenAI: json.loads() → fallback to empty dict (⚠️ SILENT)
+  Google: None (direct dict)
+  Ollama: json.loads() → fallback to empty dict (⚠️ SILENT)
+  Pairing: Depends on external agent
+
+Recommendation:
+  Add logger.warning() on all parse failures
+  So developers can debug: "Tool received empty args because..."
+
+================================================================================
+TOOL RESULT HANDLING
+================================================================================
+
+Format sent by FCP:
+  user message with content = "[fcp_exec] {json}\n[fcp_mil] {json}"
+
+How each adapter handles:
+
+  Anthropic: Passes as user text (no special handling)
+  OpenAI: Passes as user text (no special handling)
+  Google: Parses & converts to functionResponse parts (special)
+  Ollama: Parses & converts to role:tool messages (special)
+  Pairing: Passes as user text (external agent decides)
+
+Key: Google/Ollama convert format; Anthropic/OpenAI pass through
+
+================================================================================
+RESOURCE ALLOCATION
+================================================================================
+
+Week 1 (P0):        8 hours  (@dev)
+Week 2 (P1):        6 hours  (@research, @docs)
+Week 3 (P2):        6 hours  (@optimization)
+Week 4 (P3):        4 hours  (@docs, @perf)
+────────────────────────────────────
+Total:              24 hours (team)
+
+================================================================================
+CHECKLIST FOR IMPLEMENTATION
+================================================================================
+
+Week 1:
+  [ ] Update Anthropic API version (2024-06-15)
+  [ ] Add synthetic IDs to Google adapter
+  [ ] Add error logging to OpenAI/Ollama
+  [ ] Write unit tests for all 5 adapters
+
+Week 2:
+  [ ] Investigate Ollama argument format
+  [ ] Document Anthropic extended thinking
+  [ ] Create adapter integration guide
+
+Week 3:
+  [ ] Implement OpenAI prompt caching (optional)
+  [ ] Implement Ollama streaming (optional)
+  [ ] Create remote model registry (optional)
+
+Week 4:
+  [ ] Performance benchmarking
+  [ ] Final documentation pass
+  [ ] Team review & sign-off
+
+================================================================================
