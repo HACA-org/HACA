@@ -244,7 +244,7 @@ def run_session(
         _vlog_response(response)
         tokens_used += response.input_tokens + response.output_tokens
 
-        # add CPE response to chat history
+        # add CPE response to chat history and display status
         if response.tool_use_calls:
             tools_repr = ", ".join(c.tool for c in response.tool_use_calls)
             print(f"\n{_DIM}  [fcp] working... cycle {cycle} — {tools_repr}{_RESET}")
