@@ -72,11 +72,18 @@ def _parse_response(data: dict[str, Any]) -> CPEResponse:
     message = choice.get("message", {})
     text = message.get("content") or ""
     tool_calls: list[ToolUseCall] = []
-    for tc in message.get("tool_calls", []):
+    for tc in message.get("tool_calls") or []:
         raw_args = tc.get("function", {}).get("arguments", "{}")
         try:
             parsed_input = json.loads(raw_args)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as exc:
+            # Log parse failure for debugging (silent fallback to {})
+            import sys
+            tool_name = tc.get("function", {}).get("name", "unknown")
+            print(
+                f"[OpenAI] Warning: failed to parse tool arguments for '{tool_name}': {exc}",
+                file=sys.stderr,
+            )
             parsed_input = {}
         tool_calls.append(ToolUseCall(
             id=tc.get("id", ""),

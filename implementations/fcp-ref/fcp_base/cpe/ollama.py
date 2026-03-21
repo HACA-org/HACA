@@ -184,13 +184,16 @@ def _parse_response(data: dict[str, Any]) -> CPEResponse:
       done_reason — completion reason
 
     Tool call arguments can be either dict or JSON string; both are normalized.
+    Ollama API doesn't provide tool call IDs, so we generate synthetic IDs (call_0, call_1, ...)
+    to maintain order-based mapping for tool results.
     """
     message = data.get("message", {})
     content = message.get("content") or ""
     tool_calls: list[ToolUseCall] = []
 
     # Parse tool_calls from official format: message.tool_calls[]
-    for tc in message.get("tool_calls", []):
+    tc_index = 0  # Counter for synthetic tool call IDs
+    for tc in message.get("tool_calls") or []:
         fn = tc.get("function", {})
         raw_args = fn.get("arguments", {})
 
@@ -202,11 +205,15 @@ def _parse_response(data: dict[str, Any]) -> CPEResponse:
                 raw_args = {}
 
         parsed_input = raw_args if isinstance(raw_args, dict) else {}
+        # Generate synthetic ID: Ollama API doesn't provide tool call IDs
+        # Use index-based ID to maintain order (allows proper tool result mapping)
+        synthetic_id = f"call_{tc_index}"
         tool_calls.append(ToolUseCall(
-            id="",
+            id=synthetic_id,
             tool=fn.get("name", ""),
             input=parsed_input,
         ))
+        tc_index += 1
 
     return CPEResponse(
         text=content,

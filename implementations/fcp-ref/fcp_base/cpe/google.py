@@ -183,17 +183,22 @@ def _parse_response(data: dict[str, Any]) -> tuple[CPEResponse, list[dict[str, A
     tool_calls: list[ToolUseCall] = []
     raw_model_parts: list[dict[str, Any]] = list(content.get("parts", []))
     raw_fc_parts: list[dict[str, Any]] = []
+    fc_index = 0  # Counter for synthetic tool call IDs
     for part in raw_model_parts:
         if "text" in part and not part.get("thought"):
             text = part["text"]
         elif "functionCall" in part:
             raw_fc_parts.append(part)
             fc = part["functionCall"]
+            # Generate synthetic ID: Gemini API doesn't provide tool call IDs
+            # Use index-based ID to maintain order (allows proper tool result mapping)
+            synthetic_id = f"call_{fc_index}"
             tool_calls.append(ToolUseCall(
-                id="",
+                id=synthetic_id,
                 tool=fc.get("name", ""),
                 input=fc.get("args", {}),
             ))
+            fc_index += 1
     usage = data.get("usageMetadata", {})
     return CPEResponse(
         text=text,
