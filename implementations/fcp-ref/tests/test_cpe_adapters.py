@@ -12,12 +12,20 @@ Date: 2026-03-21
 """
 
 import json
+import os
 import pytest
 from fcp_base.cpe.base import CPEResponse, ToolUseCall
 from fcp_base.cpe.anthropic import _parse_response as anthropic_parse
 from fcp_base.cpe.openai import _parse_response as openai_parse
 from fcp_base.cpe.google import _parse_response as google_parse
 from fcp_base.cpe.ollama import _parse_response as ollama_parse
+from fcp_base.cpe.models import (
+    get_default_model,
+    get_api_version,
+    get_max_tokens,
+    list_models,
+    supports_feature,
+)
 
 
 class TestAnthropicParsing:
@@ -432,6 +440,73 @@ class TestEdgeCases:
         }
         result = openai_parse(openai_data)
         assert result.text == ""
+
+
+class TestModelRegistry:
+    """Test CPE model registry and configuration."""
+
+    def test_get_default_model_anthropic(self):
+        """Default model for Anthropic."""
+        model = get_default_model("anthropic")
+        assert model == "claude-opus-4-6"
+
+    def test_get_default_model_openai(self):
+        """Default model for OpenAI."""
+        model = get_default_model("openai")
+        assert model == "gpt-4o"
+
+    def test_get_default_model_google(self):
+        """Default model for Google."""
+        model = get_default_model("google")
+        assert model == "gemini-2.0-flash"
+
+    def test_get_default_model_ollama(self):
+        """Default model for Ollama."""
+        model = get_default_model("ollama")
+        assert model == "llama3.2"
+
+    def test_get_api_version_anthropic(self):
+        """API version for Anthropic."""
+        version = get_api_version("anthropic")
+        assert version == "2024-06-15"
+
+    def test_get_max_tokens(self):
+        """Max tokens per adapter."""
+        assert get_max_tokens("anthropic") == 8192
+        assert get_max_tokens("openai") == 8192
+        assert get_max_tokens("google") == 8192
+        assert get_max_tokens("ollama") == 8192
+
+    def test_list_models_anthropic(self):
+        """List Anthropic models."""
+        models = list_models("anthropic")
+        assert len(models) > 0
+        assert "claude-opus-4-6" in models
+
+    def test_supports_feature_openai_caching(self):
+        """OpenAI supports prompt caching."""
+        assert supports_feature("openai", "prompt_caching") is True
+
+    def test_supports_feature_ollama_streaming(self):
+        """Ollama supports streaming."""
+        assert supports_feature("ollama", "streaming") is True
+
+    def test_supports_feature_google_thinking(self):
+        """Google supports thinking."""
+        assert supports_feature("google", "thinking") is True
+
+    def test_env_override_model(self):
+        """Environment variable can override default model."""
+        os.environ["OPENAI_MODEL"] = "gpt-4o-mini"
+        model = get_default_model("openai")
+        assert model == "gpt-4o-mini"
+        # Clean up
+        del os.environ["OPENAI_MODEL"]
+
+    def test_unknown_adapter_returns_empty(self):
+        """Unknown adapter returns empty string."""
+        model = get_default_model("unknown_adapter")
+        assert model == ""
 
 
 class TestOpenAIPromptCaching:
