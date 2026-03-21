@@ -14,7 +14,7 @@ Date: 2026-03-21
 import json
 import os
 import pytest
-from fcp_base.cpe.base import CPEResponse, ToolUseCall
+from fcp_base.cpe.base import CPEError, CPEResponse, ToolUseCall
 from fcp_base.cpe.anthropic import _parse_response as anthropic_parse
 from fcp_base.cpe.openai import _parse_response as openai_parse
 from fcp_base.cpe.google import _parse_response as google_parse
@@ -32,6 +32,7 @@ from fcp_base.cpe.benchmark import (
     BenchmarkSuite,
 )
 from fcp_base.cpe.cost_tracker import CostEntry, CostTracker
+from fcp_base.cpe.fallback import FallbackChain, build_fallback_chain
 
 
 class TestAnthropicParsing:
@@ -446,6 +447,113 @@ class TestEdgeCases:
         }
         result = openai_parse(openai_data)
         assert result.text == ""
+
+
+class TestFallbackChain:
+    """Test fallback chain resilience."""
+
+    def test_fallback_chain_init(self):
+        """Initialize fallback chain."""
+        from fcp_base.cpe.anthropic import AnthropicAdapter
+
+        adapter = AnthropicAdapter()
+        chain = FallbackChain([("anthropic", adapter)])
+        assert len(chain.adapters) == 1
+        assert chain.adapters[0][0] == "anthropic"
+
+    def test_fallback_chain_no_adapters(self):
+        """Fallback chain requires at least one adapter."""
+        with pytest.raises(ValueError):
+            FallbackChain([])
+
+    def test_fallback_chain_uses_first_on_success(self):
+        """Chain uses first adapter if successful."""
+        # Create mock adapter that always succeeds
+        class MockAdapter:
+            def invoke(self, system, messages, tools):
+                return CPEResponse(
+                    text="response",
+                    tool_use_calls=[],
+                    input_tokens=10,
+                    output_tokens=20,
+                    stop_reason="end_turn",
+                )
+
+        adapter1 = MockAdapter()
+        adapter2 = MockAdapter()
+        chain = FallbackChain([("adapter1", adapter1), ("adapter2", adapter2)])
+
+        response, name = chain.invoke("system", [], [])
+        assert name == "adapter1"  # First adapter used
+        assert response.text == "response"
+
+    def test_fallback_chain_falls_back_on_failure(self):
+        """Chain falls back to second adapter if first fails."""
+        class FailAdapter:
+            def invoke(self, system, messages, tools):
+                raise Exception("API down")
+
+        class SuccessAdapter:
+            def invoke(self, system, messages, tools):
+                return CPEResponse(
+                    text="fallback response",
+                    tool_use_calls=[],
+                    input_tokens=10,
+                    output_tokens=20,
+                    stop_reason="end_turn",
+                )
+
+        chain = FallbackChain([("fail", FailAdapter()), ("success", SuccessAdapter())])
+        response, name = chain.invoke("system", [], [])
+
+        assert name == "success"
+        assert response.text == "fallback response"
+
+    def test_fallback_chain_tracks_events(self):
+        """Chain tracks fallback events."""
+        class FailAdapter:
+            def invoke(self, system, messages, tools):
+                raise Exception("Failed")
+
+        class SuccessAdapter:
+            def invoke(self, system, messages, tools):
+                return CPEResponse(
+                    text="ok",
+                    tool_use_calls=[],
+                    input_tokens=10,
+                    output_tokens=20,
+                    stop_reason="end_turn",
+                )
+
+        chain = FallbackChain([("fail", FailAdapter()), ("success", SuccessAdapter())])
+        chain.invoke("system", [], [])
+
+        summary = chain.get_fallback_summary()
+        assert summary["total_fallbacks"] == 1
+        assert summary["primary_adapter"] == "fail"
+
+    def test_fallback_chain_all_fail(self):
+        """Chain raises error if all adapters fail."""
+        class FailAdapter:
+            def invoke(self, system, messages, tools):
+                raise Exception("Failed")
+
+        chain = FallbackChain([("fail1", FailAdapter()), ("fail2", FailAdapter())])
+
+        with pytest.raises(CPEError) as exc_info:
+            chain.invoke("system", [], [])
+
+        assert "all" in str(exc_info.value).lower()
+
+    def test_build_fallback_chain(self):
+        """Build chain from helper function."""
+        from fcp_base.cpe.anthropic import AnthropicAdapter
+
+        adapter = AnthropicAdapter()
+        chain = build_fallback_chain(
+            ("anthropic", adapter),
+        )
+        assert len(chain.adapters) == 1
 
 
 class TestCostTracker:
