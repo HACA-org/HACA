@@ -463,11 +463,10 @@ def run_session(
             stimulus_ready = False
             continue
         cycle_elapsed = time.time() - cycle_start_time
-        _vlog_response(response, cycle, cycle_elapsed)
         tokens_used = tokens_used + response.input_tokens + response.output_tokens
 
         # add CPE response to chat history and display status
-        if response.tool_use_calls:
+        if response.tool_use_calls and not _is_verbose():
             tools_repr = ", ".join(c.tool for c in response.tool_use_calls)
             print(f"\n{_DIM}  [fcp] working... cycle {cycle} — {tools_repr}{_RESET}")
         if response.text:
@@ -487,17 +486,14 @@ def run_session(
 
         session_closed = False
         tool_results: list[str] = []
-
-        # Log dispatch header in new format
-        if _is_verbose() and tool_calls:
-            _vprint("  ├─ [DISPATCH]")
+        tool_log_lines: list[str] = []
 
         for i, call in enumerate(tool_calls):
             tool_start = time.time()
             result, closed = dispatch_tool_use(layout, call, index)
             tool_elapsed = time.time() - tool_start
 
-            # Log tool result in new tree format
+            # Accumulate tool log lines (printed later in cycle summary)
             if _is_verbose():
                 is_last = i == len(tool_calls) - 1
                 prefix = "  │  └─" if is_last else "  │  ├─"
@@ -505,7 +501,7 @@ def run_session(
                 result_size = _format_bytes(len(json.dumps(result, ensure_ascii=False)))
                 status = "OK" if isinstance(result, dict) and result.get("error") is None else "FAIL"
                 timing_str = f", {tool_elapsed*1000:.0f}ms" if tool_elapsed > 0.01 else ""
-                _vprint(f"{prefix} {call.tool} ... input ({input_size}) → {status} ({result_size}{timing_str})")
+                tool_log_lines.append(f"{prefix} {call.tool} ... input ({input_size}) → {status} ({result_size}{timing_str})")
 
             _return_tool_result(layout, call.id, call.tool, result)
             # Serialize result once and reuse for chat history
@@ -520,6 +516,9 @@ def run_session(
             if _is_endure_approved():
                 close_reason = "endure_approved"
                 session_closed = True
+
+        # Print cycle summary: [DISPATCH] + [← CPE] in correct order
+        _vlog_cycle_summary(response, cycle_elapsed, tool_log_lines)
 
         if session_closed:
             break
@@ -1382,20 +1381,17 @@ def _vlog_request(
     tools: list[dict[str, Any]],
     cycle: int,
 ) -> None:
-    """Log request to CPE with new tree-based verbose format."""
+    """Log cycle header (before CPE invoke)."""
     dbg = _get_debugger()
     if not _is_verbose() and dbg is None:
         return
 
     if _is_verbose():
-        # New tree-based format: header only at request time
         sys_size = _format_bytes(len(system))
-        tool_names = ", ".join(t["name"] for t in tools)
         _vprint(f"[CYCLE {cycle}] [→ CPE] {sys_size} system + {len(messages)} msgs + {len(tools)} tools")
-        _vprint(f"  tools: {tool_names}")
         return
 
-    # debugger mode — keep original detailed format for now
+    # debugger mode — keep original detailed format
     _vprint("[debugger] fcp→cpe request")
     if dbg in ("boot", "all"):
         _vprint(f"  [system] {len(system)} chars:")
@@ -1417,25 +1413,34 @@ def _vlog_request(
     _vprint(f"  tools: {[t['name'] for t in tools]}")
 
 
-def _vlog_response(response: CPEResponse, cycle: int, elapsed_secs: float) -> None:
-    """Log response from CPE with new tree-based verbose format."""
+def _vlog_cycle_summary(
+    response: CPEResponse,
+    elapsed_secs: float,
+    tool_log_lines: list[str],
+) -> None:
+    """Print cycle summary after dispatch: [DISPATCH] tree + [← CPE] line.
+
+    Called after all tool calls are done so the tree is printed in the
+    correct order: dispatch block first, then CPE response line at the bottom.
+    """
     if not _is_verbose() and _get_debugger() is None:
         return
 
     if _is_verbose():
-        # New tree-based format: timing, tokens, stop reason, response preview
-        tool_count = len(response.tool_use_calls)
-        tool_label = f"{tool_count} tool" if tool_count == 1 else f"{tool_count} tools"
-        _vprint(f"  ├─ [← CPE] ⏱ {elapsed_secs:.1f}s | {response.input_tokens}→{response.output_tokens} | {response.stop_reason}")
+        # Dispatch block
+        if tool_log_lines:
+            _vprint("  ├─ [DISPATCH]")
+            for line in tool_log_lines:
+                _vprint(line)
+
+        # CPE response line — always last (└─ if no further output, ├─ not needed)
+        _vprint(f"  └─ [← CPE] ⏱ {elapsed_secs:.1f}s | {response.input_tokens}→{response.output_tokens} | {response.stop_reason}")
         if response.text:
             preview = response.text[:50].replace("\n", " ")
-            char_count = len(response.text)
-            _vprint(f"  │  └─ text: {preview!r} ({char_count} chars)")
-        if tool_count > 0:
-            _vprint(f"  │  └─ tools: {tool_count} call{'s' if tool_count != 1 else ''}")
+            _vprint(f"     └─ text: {preview!r} ({len(response.text)} chars)")
         return
 
-    # debugger mode — keep original format for now
+    # debugger mode — keep original format
     _vprint("[cpe→fcp] response")
     _vprint(f"  stop_reason  : {response.stop_reason}")
     _vprint(f"  tokens       : {response.input_tokens} in / {response.output_tokens} out")
