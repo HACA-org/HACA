@@ -555,6 +555,71 @@ class TestFallbackChain:
         )
         assert len(chain.adapters) == 1
 
+    def test_fallback_chain_notification_callback(self):
+        """Chain calls notification callback on fallback."""
+        class FailAdapter:
+            def invoke(self, system, messages, tools):
+                raise Exception("Failed")
+
+        class SuccessAdapter:
+            def invoke(self, system, messages, tools):
+                return CPEResponse(
+                    text="ok",
+                    tool_use_calls=[],
+                    input_tokens=10,
+                    output_tokens=20,
+                    stop_reason="end_turn",
+                )
+
+        # Track callback invocations
+        notifications = []
+
+        def notify(primary, fallback_to, error):
+            notifications.append({
+                "primary": primary,
+                "fallback_to": fallback_to,
+                "error": error,
+            })
+
+        chain = FallbackChain(
+            [("fail", FailAdapter()), ("success", SuccessAdapter())],
+            notify_callback=notify,
+        )
+
+        response, name = chain.invoke("system", [], [])
+
+        # Verify notification was called
+        assert len(notifications) == 1
+        assert notifications[0]["primary"] == "fail"
+        assert notifications[0]["fallback_to"] == "success"
+
+    def test_fallback_chain_no_notification_on_primary_success(self):
+        """No notification if primary adapter succeeds."""
+        class SuccessAdapter:
+            def invoke(self, system, messages, tools):
+                return CPEResponse(
+                    text="ok",
+                    tool_use_calls=[],
+                    input_tokens=10,
+                    output_tokens=20,
+                    stop_reason="end_turn",
+                )
+
+        notifications = []
+
+        def notify(primary, fallback_to, error):
+            notifications.append({"primary": primary, "fallback_to": fallback_to})
+
+        chain = FallbackChain(
+            [("success", SuccessAdapter())],
+            notify_callback=notify,
+        )
+
+        chain.invoke("system", [], [])
+
+        # No notification since primary succeeded
+        assert len(notifications) == 0
+
 
 class TestCostTracker:
     """Test cost tracking and persistence."""
