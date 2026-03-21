@@ -36,6 +36,25 @@ def main() -> None:
     focus = json.loads(focus_file.read_text(encoding="utf-8"))
     focus_path = Path(str(focus.get("path", ""))).resolve()
 
+    # --- Stage 0: operator "allow once" bypass via env var ---
+    import os as _os
+    allow_once = _os.environ.get("FCP_SHELL_RUN_ALLOW_ONCE", "")
+    if allow_once and allow_once == command:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            cwd=str(focus_path),
+        )
+        print(json.dumps({
+            "status": "ok" if result.returncode == 0 else "error",
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        }))
+        return
+
     # load allowlists from manifest
     manifest_path = entity_root / "skills" / "lib" / "shell_run" / "manifest.json"
     allowlist: list[str] = []
