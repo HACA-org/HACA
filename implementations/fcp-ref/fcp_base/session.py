@@ -451,7 +451,10 @@ def run_session(
             result, closed = dispatch_tool_use(layout, call, index)
             _vlog_json(f"{call.tool}→fcp", result)
             _return_tool_result(layout, call.id, call.tool, result)
-            tool_results.append(f"[{call.tool}] {json.dumps(result, ensure_ascii=False)}")
+            # Serialize result once and reuse for chat history
+            # This avoids triple JSON serialization (verbose logging, chat history, loop detection)
+            result_str = json.dumps(result, ensure_ascii=False)
+            tool_results.append(f"[{call.tool}] {result_str}")
             if call.tool == "cmi_send":
                 _cmi_send_indicator(call.input, result)
             if closed:
