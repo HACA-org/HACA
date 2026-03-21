@@ -71,17 +71,19 @@ def _build_contents(
 ) -> list[dict[str, Any]]:
     """Convert chat_history to Gemini contents format.
 
-    When an assistant turn had tool_use (content==""), the following user turn
-    contains tool results in the format "[tool_name] {json}\\n[tool_name] {json}".
-    We detect this pattern and emit functionResponse parts.
+    The Gemini API requires that functionCall parts in the model turn carry the
+    original thought_signature from when the model generated them. We only have
+    that signature for the LAST tool-use turn (preserved in last_model_parts).
 
-    For the LAST tool-use turn, we use last_model_parts verbatim to preserve
-    thought_signature. For historical turns, we reconstruct minimal functionCall
-    parts from the tool names extracted from the result lines.
+    Strategy:
+    - LAST tool-use cycle: emit last_model_parts verbatim + functionResponse parts.
+    - HISTORICAL tool-use cycles: emit as plain text (no functionCall/functionResponse).
+      This avoids the "missing thought_signature" HTTP 400 error on historical turns.
+      The model still sees the full conversation context in text form.
     """
     contents: list[dict[str, Any]] = []
 
-    # Find the last empty assistant turn index (for thought_signature preservation)
+    # Find the last empty assistant turn (marks the most recent tool-use cycle)
     last_tool_turn_idx = -1
     for j in range(len(messages) - 1, -1, -1):
         if messages[j]["role"] == "assistant" and not messages[j].get("content", ""):
@@ -96,57 +98,50 @@ def _build_contents(
 
         if role == "assistant":
             if not content:
-                # Tool-use turn
                 is_last = (i == last_tool_turn_idx)
                 if is_last and last_model_parts:
-                    # Preserve thought_signature for the last tool turn
+                    # Last tool turn: use verbatim to preserve thought_signature
                     contents.append({"role": "model", "parts": last_model_parts})
                 else:
-                    # Historical turn: reconstruct minimal functionCall parts by peeking
-                    # at the following user turn to extract tool names
-                    fc_parts: list[dict[str, Any]] = []
-                    if i + 1 < len(messages):
-                        next_results = _parse_tool_results(messages[i + 1].get("content", ""))
-                        if next_results:
-                            fc_parts = [
-                                {"functionCall": {"name": name, "args": {}}}
-                                for name, _ in next_results
-                            ]
-                    if fc_parts:
-                        contents.append({"role": "model", "parts": fc_parts})
-                    else:
-                        contents.append({"role": "model", "parts": [{"text": ""}]})
+                    # Historical tool turn: emit as plain text to avoid thought_signature error.
+                    # Gemini requires thought_signature on all functionCall parts, but we only
+                    # have it for the last turn. Plain text preserves conversation context.
+                    contents.append({"role": "model", "parts": [{"text": ""}]})
             else:
                 contents.append({"role": "model", "parts": [{"text": content}]})
             i += 1
             continue
 
-        # user turn — check if it follows an empty assistant turn (tool result)
-        if (role == "user" and i > 0
+        # user turn
+        if role == "user":
+            is_after_empty_assistant = (
+                i > 0
                 and messages[i - 1]["role"] == "assistant"
-                and not messages[i - 1].get("content", "")):
-            tool_results = _parse_tool_results(content)
-            if tool_results is not None:
-                # Build functionResponse parts using extracted tool names
-                # Names come from the results themselves — no dependency on last_function_calls
-                parts: list[dict[str, Any]] = [
-                    {
-                        "functionResponse": {
-                            "name": name,
-                            "response": {"output": data},
-                        }
-                    }
-                    for name, data in tool_results
-                ]
-                if parts:
-                    contents.append({"role": "user", "parts": parts})
-                    i += 1
-                    continue
-            else:
-                logger.debug(
-                    f"Could not parse tool results from user turn after empty assistant. "
-                    f"Content preview: {content[:100]}"
-                )
+                and not messages[i - 1].get("content", "")
+            )
+            if is_after_empty_assistant:
+                is_last_result = (i == last_tool_turn_idx + 1)
+                if is_last_result:
+                    # Last tool result: use proper functionResponse format
+                    tool_results = _parse_tool_results(content)
+                    if tool_results is not None:
+                        parts: list[dict[str, Any]] = [
+                            {
+                                "functionResponse": {
+                                    "name": name,
+                                    "response": {"output": data},
+                                }
+                            }
+                            for name, data in tool_results
+                        ]
+                        if parts:
+                            contents.append({"role": "user", "parts": parts})
+                            i += 1
+                            continue
+                # Historical result (or parse failed): emit as plain text
+                contents.append({"role": "user", "parts": [{"text": content}]})
+                i += 1
+                continue
 
         contents.append({"role": "user", "parts": [{"text": content}]})
         i += 1
