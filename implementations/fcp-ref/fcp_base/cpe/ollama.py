@@ -24,7 +24,7 @@ import urllib.request
 from typing import Any
 
 from .base import (
-    CPEError, CPEResponse, ToolUseCall, _trunc,
+    CPEError, CPEResponse, ToolUseCall, _trunc, validate_invoke_inputs,
 )
 
 _DEFAULT_BASE_URL = "http://localhost:11434"
@@ -50,6 +50,9 @@ class OllamaAdapter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> CPEResponse:
+        # Validate inputs early
+        validate_invoke_inputs(system, messages, tools)
+
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": [{"role": "system", "content": system}] + _convert_messages(messages),

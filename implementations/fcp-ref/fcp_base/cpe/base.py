@@ -93,6 +93,38 @@ def _trunc(s: str, n: int = 200) -> str:
     return "".join(itertools.islice(s, n))
 
 
+def validate_invoke_inputs(
+    system: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+) -> None:
+    """Validate invoke() input parameters.
+
+    Raises ValueError if inputs are invalid.
+    Early validation prevents wasting tokens on malformed requests.
+    """
+    if not isinstance(system, str) or not system.strip():
+        raise ValueError("system must be a non-empty string")
+
+    if not isinstance(messages, list):
+        raise ValueError("messages must be a list")
+
+    for i, msg in enumerate(messages):
+        if not isinstance(msg, dict):
+            raise ValueError(f"messages[{i}] must be a dict, got {type(msg).__name__}")
+        if "role" not in msg or "content" not in msg:
+            raise ValueError(f"messages[{i}] must have 'role' and 'content' keys")
+
+    if tools is not None:
+        if not isinstance(tools, list):
+            raise ValueError("tools must be a list or None")
+        for i, tool in enumerate(tools):
+            if not isinstance(tool, dict):
+                raise ValueError(f"tools[{i}] must be a dict, got {type(tool).__name__}")
+            if "name" not in tool:
+                raise ValueError(f"tools[{i}] must have 'name' key")
+
+
 # ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------

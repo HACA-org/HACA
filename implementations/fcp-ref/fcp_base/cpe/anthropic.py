@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .base import CPEAuthError, CPEResponse, ToolUseCall, _trunc
+from .base import CPEAuthError, CPEResponse, ToolUseCall, _trunc, validate_invoke_inputs
 from ._http import post_json
 
 _API_URL = "https://api.anthropic.com/v1/messages"
@@ -35,6 +35,9 @@ class AnthropicAdapter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> CPEResponse:
+        # Validate inputs early
+        validate_invoke_inputs(system, messages, tools)
+
         payload: dict[str, Any] = {
             "model": self._model,
             "max_tokens": _MAX_TOKENS,
