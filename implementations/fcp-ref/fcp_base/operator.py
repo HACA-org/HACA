@@ -546,22 +546,36 @@ def _inbox_clear(layout: Layout) -> None:
 
 def _cmd_work(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /work set <subdir> | clone <repo> | status | clear")
+        print("  usage: /work set <subdir> | clone <repo> | status | unset")
         return
     sub = args[0].lower()
     if sub == "set" and len(args) > 1:
+        from pathlib import Path as PathlibPath
         subdir = args[1]
+        entity_root = layout.root
+        workspace_dir = layout.workspace_dir
+
+        # Determine target path:
+        # - Relative path (or ".") → resolve against entity_root/workspace/
+        # - Absolute path → use as-is (but validate it's not an ancestor of entity_root)
+        if subdir in (".", ""):
+            target = workspace_dir.resolve()
+        elif PathlibPath(subdir).is_absolute():
+            target = PathlibPath(subdir).resolve()
+        else:
+            # Relative path → resolve against workspace_dir
+            target = (workspace_dir / subdir).resolve()
+
+        # Security: target cannot be an ancestor of entity_root (including entity_root itself)
         try:
-            profile = read_json(layout.baseline).get("profile", "haca-core")
-        except Exception:
-            profile = "haca-core"
-        boundary = layout.root if profile == "haca-evolve" else layout.workspace_dir
-        target = (boundary / subdir).resolve() if subdir not in (".", "") else boundary.resolve()
-        try:
-            target.relative_to(boundary)
-        except ValueError:
-            print(f"  path outside {'entity root' if profile == 'haca-evolve' else 'workspace'}: {subdir}")
+            entity_root.relative_to(target)
+            # If we get here, target is an ancestor of entity_root → REJECT
+            print(f"  path is an ancestor of entity root: {target}")
             return
+        except ValueError:
+            # Good: target is NOT an ancestor of entity_root
+            pass
+
         if not target.exists():
             target.mkdir(parents=True)
             print(f"  created: {target}")
@@ -1938,7 +1952,8 @@ def _cmd_help() -> None:
 
   Workspace:
     /work status                          — show active workspace focus
-    /work set <subdir>                    — set workspace focus
+    /work set <subdir>                    — set workspace focus (within entity_root/workspace/)
+    /work set .                           — set focus to entity_root/workspace/
     /work clone <repo>                    — clone repo and set as workspace focus
     /work unset                           — unset workspace focus
 
