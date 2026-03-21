@@ -18,7 +18,7 @@ import logging
 import os
 from typing import Any
 
-from .base import CPEAuthError, CPEResponse, ToolUseCall, _trunc
+from .base import CPEAuthError, CPEResponse, ToolUseCall, _trunc, validate_invoke_inputs
 from ._http import post_json
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,9 @@ class OpenAIAdapter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> CPEResponse:
+        # Validate inputs early
+        validate_invoke_inputs(system, messages, tools)
+
         # Build messages with optional prompt caching
         full_messages = _build_messages_with_caching(
             system, messages, self._base_url, self._system_cached, self._cached_system

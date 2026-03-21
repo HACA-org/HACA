@@ -8,13 +8,16 @@ API reference: https://ai.google.dev/api/generate-content
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import urllib.parse
 from typing import Any
 
-from .base import CPEAuthError, CPEResponse, ToolUseCall, _trunc
+from .base import CPEAuthError, CPEResponse, ToolUseCall, _trunc, validate_invoke_inputs
 from ._http import post_json
+
+logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 _DEFAULT_MODEL = "gemini-2.0-flash"
@@ -38,6 +41,9 @@ class GoogleAdapter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> CPEResponse:
+        # Validate inputs early
+        validate_invoke_inputs(system, messages, tools)
+
         contents = _build_contents(messages, self._last_model_parts, self._last_function_calls)
 
         payload: dict[str, Any] = {
@@ -91,6 +97,12 @@ def _build_contents(
                 and not messages[i - 1].get("content", "")):
             tool_results = _parse_tool_results(content)
             if tool_results is not None:
+                # Validate tool result count matches function calls
+                if len(tool_results) != len(last_function_calls):
+                    logger.warning(
+                        f"Tool result count mismatch: expected {len(last_function_calls)}, "
+                        f"got {len(tool_results)}"
+                    )
                 parts: list[dict[str, Any]] = []
                 for j, fc in enumerate(last_function_calls):
                     resp = tool_results[j] if j < len(tool_results) else {}
