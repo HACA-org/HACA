@@ -14,11 +14,14 @@ Prompt caching support (OpenAI only):
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
 from .base import CPEAuthError, CPEResponse, ToolUseCall, _trunc
 from ._http import post_json
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 _DEFAULT_MODEL = "gpt-4o"
@@ -52,6 +55,7 @@ class OpenAIAdapter:
         )
         # Update cache state if using official OpenAI API
         if self._is_openai_api():
+            # Always update cached system for next comparison
             self._system_cached = True
             self._cached_system = system
 
@@ -140,7 +144,8 @@ def _post(api_key: str, base_url: str, payload: dict[str, Any]) -> dict[str, Any
 # ---------------------------------------------------------------------------
 
 def _parse_response(data: dict[str, Any]) -> CPEResponse:
-    choice = data.get("choices", [{}])[0]
+    choices = data.get("choices", [])
+    choice = choices[0] if choices else {}
     message = choice.get("message", {})
     text = message.get("content") or ""
     tool_calls: list[ToolUseCall] = []
@@ -150,11 +155,9 @@ def _parse_response(data: dict[str, Any]) -> CPEResponse:
             parsed_input = json.loads(raw_args)
         except (json.JSONDecodeError, TypeError) as exc:
             # Log parse failure for debugging (silent fallback to {})
-            import sys
             tool_name = tc.get("function", {}).get("name", "unknown")
-            print(
-                f"[OpenAI] Warning: failed to parse tool arguments for '{tool_name}': {exc}",
-                file=sys.stderr,
+            logger.warning(
+                f"Failed to parse tool arguments for '{tool_name}': {exc}"
             )
             parsed_input = {}
         tool_calls.append(ToolUseCall(

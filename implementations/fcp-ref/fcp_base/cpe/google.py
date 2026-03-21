@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.parse
 from typing import Any
 
@@ -177,28 +178,29 @@ def _post(api_key: str, model: str, payload: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _parse_response(data: dict[str, Any]) -> tuple[CPEResponse, list[dict[str, Any]], list[dict[str, Any]]]:
-    candidate = data.get("candidates", [{}])[0]
+    candidates = data.get("candidates", [])
+    candidate = candidates[0] if candidates else {}
     content = candidate.get("content", {})
     text = ""
     tool_calls: list[ToolUseCall] = []
     raw_model_parts: list[dict[str, Any]] = list(content.get("parts", []))
     raw_fc_parts: list[dict[str, Any]] = []
-    fc_index = 0  # Counter for synthetic tool call IDs
-    for part in raw_model_parts:
+    # Timestamp-based prefix for globally unique synthetic IDs (avoids collisions across adapter instances)
+    timestamp_ms = int(time.time() * 1000)
+    for fc_index, part in enumerate(raw_model_parts):
         if "text" in part and not part.get("thought"):
             text = part["text"]
         elif "functionCall" in part:
             raw_fc_parts.append(part)
             fc = part["functionCall"]
-            # Generate synthetic ID: Gemini API doesn't provide tool call IDs
-            # Use index-based ID to maintain order (allows proper tool result mapping)
-            synthetic_id = f"call_{fc_index}"
+            # Generate globally unique synthetic ID: timestamp + index
+            # Avoids collisions when multiple adapter instances generate IDs in same second
+            synthetic_id = f"call_{timestamp_ms}_{fc_index}"
             tool_calls.append(ToolUseCall(
                 id=synthetic_id,
                 tool=fc.get("name", ""),
                 input=fc.get("args", {}),
             ))
-            fc_index += 1
     usage = data.get("usageMetadata", {})
     return CPEResponse(
         text=text,
