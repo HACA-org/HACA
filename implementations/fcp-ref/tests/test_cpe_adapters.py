@@ -26,6 +26,12 @@ from fcp_base.cpe.models import (
     list_models,
     supports_feature,
 )
+from fcp_base.cpe.benchmark import (
+    calculate_cost,
+    BenchmarkResult,
+    BenchmarkSuite,
+)
+from fcp_base.cpe.cost_tracker import CostEntry, CostTracker
 
 
 class TestAnthropicParsing:
@@ -440,6 +446,163 @@ class TestEdgeCases:
         }
         result = openai_parse(openai_data)
         assert result.text == ""
+
+
+class TestCostTracker:
+    """Test cost tracking and persistence."""
+
+    def test_cost_entry_to_from_dict(self):
+        """CostEntry serialization/deserialization."""
+        entry = CostEntry(
+            timestamp="2026-03-21T12:00:00Z",
+            adapter="openai",
+            model="gpt-4o",
+            input_tokens=100,
+            output_tokens=50,
+            cost_usd=0.001,
+            latency_ms=123.45,
+        )
+        data = entry.to_dict()
+        restored = CostEntry.from_dict(data)
+        assert restored.adapter == "openai"
+        assert restored.input_tokens == 100
+
+    def test_tracker_record_and_summary(self, tmp_path):
+        """Record entries and get summary."""
+        tracker = CostTracker(log_file=tmp_path / "costs.jsonl")
+
+        # Record multiple invocations
+        tracker.record("openai", "gpt-4o", 100, 50, 50.0)
+        tracker.record("openai", "gpt-4o", 120, 60, 55.0)
+        tracker.record("ollama", "llama3.2", 100, 50, 10.0)
+
+        # Check summary
+        summary = tracker.get_summary()
+        assert summary["invocation_count"] == 3
+        assert summary["total_input_tokens"] == 320
+        assert summary["total_output_tokens"] == 160
+
+    def test_tracker_adapter_filter(self, tmp_path):
+        """Filter summary by adapter."""
+        tracker = CostTracker(log_file=tmp_path / "costs.jsonl")
+
+        tracker.record("openai", "gpt-4o", 100, 50, 50.0)
+        tracker.record("ollama", "llama3.2", 100, 50, 10.0)
+
+        openai_summary = tracker.get_adapter_summary("openai")
+        assert openai_summary["invocation_count"] == 1
+        assert openai_summary["total_input_tokens"] == 100
+
+        ollama_summary = tracker.get_adapter_summary("ollama")
+        assert ollama_summary["invocation_count"] == 1
+        assert ollama_summary["total_cost_usd"] == 0.0  # Local = free
+
+    def test_tracker_cost_calculation(self, tmp_path):
+        """Cost calculation in tracker."""
+        tracker = CostTracker(log_file=tmp_path / "costs.jsonl")
+
+        # OpenAI: $0.005 per 1M input, $0.015 per 1M output
+        tracker.record("openai", "gpt-4o", 1_000_000, 1_000_000, 100.0)
+
+        summary = tracker.get_summary()
+        expected_cost = 0.005 + 0.015
+        assert summary["total_cost_usd"] == pytest.approx(expected_cost, abs=0.001)
+
+    def test_tracker_persistence(self, tmp_path):
+        """Cost data persists across tracker instances."""
+        log_file = tmp_path / "costs.jsonl"
+
+        # First tracker: record entries
+        tracker1 = CostTracker(log_file=log_file)
+        tracker1.record("openai", "gpt-4o", 100, 50, 50.0)
+        tracker1.record("openai", "gpt-4o", 100, 50, 50.0)
+
+        # Second tracker: load and verify
+        tracker2 = CostTracker(log_file=log_file)
+        summary = tracker2.get_summary()
+        assert summary["invocation_count"] == 2
+
+    def test_tracker_all_adapters_summary(self, tmp_path):
+        """Get summary for all adapters."""
+        tracker = CostTracker(log_file=tmp_path / "costs.jsonl")
+
+        tracker.record("openai", "gpt-4o", 100, 50, 50.0)
+        tracker.record("ollama", "llama3.2", 100, 50, 10.0)
+        tracker.record("anthropic", "claude-opus-4-6", 100, 50, 200.0)
+
+        all_summary = tracker.get_all_adapters_summary()
+        assert len(all_summary) == 3
+        assert "openai" in all_summary
+        assert "ollama" in all_summary
+        assert "anthropic" in all_summary
+
+
+class TestBenchmarking:
+    """Test performance benchmarking utilities."""
+
+    def test_calculate_cost_anthropic(self):
+        """Calculate cost for Anthropic model."""
+        # claude-opus-4-6: $0.015 per 1M input, $0.075 per 1M output
+        cost = calculate_cost("anthropic", "claude-opus-4-6", 1_000_000, 1_000_000)
+        assert cost == pytest.approx(0.015 + 0.075, abs=0.001)
+
+    def test_calculate_cost_openai(self):
+        """Calculate cost for OpenAI model."""
+        # gpt-4o: $0.005 per 1M input, $0.015 per 1M output
+        cost = calculate_cost("openai", "gpt-4o", 1_000_000, 1_000_000)
+        assert cost == pytest.approx(0.005 + 0.015, abs=0.001)
+
+    def test_calculate_cost_ollama(self):
+        """Calculate cost for Ollama (local, free)."""
+        cost = calculate_cost("ollama", "llama3.2", 1_000_000, 1_000_000)
+        assert cost == 0.0
+
+    def test_calculate_cost_google(self):
+        """Calculate cost for Google model."""
+        # gemini-2.0-flash: $0.075 per 1M input, $0.3 per 1M output
+        cost = calculate_cost("google", "gemini-2.0-flash", 1_000_000, 1_000_000)
+        assert cost == pytest.approx(0.075 + 0.3, abs=0.01)
+
+    def test_calculate_cost_zero_tokens(self):
+        """Cost with zero tokens is zero."""
+        cost = calculate_cost("openai", "gpt-4o", 0, 0)
+        assert cost == 0.0
+
+    def test_benchmark_result_str(self):
+        """BenchmarkResult stringification."""
+        result = BenchmarkResult(
+            adapter="openai",
+            model="gpt-4o",
+            input_tokens=100,
+            output_tokens=50,
+            latency_ms=123.45,
+            cost_usd=0.001234,
+            total_tokens=150,
+        )
+        s = str(result)
+        assert "openai" in s
+        assert "gpt-4o" in s
+        assert "100" in s
+        assert "50" in s
+
+    def test_benchmark_suite_str(self):
+        """BenchmarkSuite stringification."""
+        suite = BenchmarkSuite(
+            adapter="openai",
+            model="gpt-4o",
+            runs=5,
+            total_input_tokens=500,
+            total_output_tokens=250,
+            avg_latency_ms=100.0,
+            min_latency_ms=95.0,
+            max_latency_ms=110.0,
+            total_cost_usd=0.005,
+            avg_cost_per_call_usd=0.001,
+        )
+        s = str(suite)
+        assert "openai" in s
+        assert "5" in s  # runs
+        assert "500" in s  # total input
 
 
 class TestModelRegistry:
