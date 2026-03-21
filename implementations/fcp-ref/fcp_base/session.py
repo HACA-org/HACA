@@ -119,6 +119,37 @@ def _trim_chat_history(
 
 
 # ---------------------------------------------------------------------------
+# Command Parsing Helper
+# ---------------------------------------------------------------------------
+
+def _parse_command(line: str) -> tuple[str, list[str]]:
+    """Parse a command line into command name and arguments.
+
+    Returns (command, args) tuple. Command is lowercased.
+    Returns ('', []) if line is empty or doesn't start with '/'.
+
+    Example:
+    >>> _parse_command('/verbose --debug')
+    ('/verbose', ['--debug'])
+    >>> _parse_command('/')
+    ('', [])
+    >>> _parse_command('hello')
+    ('', [])
+    """
+    stripped = line.strip()
+    if not stripped.startswith('/'):
+        return ('', [])
+
+    parts = stripped.split()
+    if not parts:
+        return ('', [])
+
+    command = parts[0].lower()
+    args = parts[1:] if len(parts) > 1 else []
+    return (command, args)
+
+
+# ---------------------------------------------------------------------------
 # Loop Detection — Deterministic Fingerprinting
 # ---------------------------------------------------------------------------
 
@@ -291,16 +322,17 @@ def run_session(
                 from .operator import handle_platform_command
                 handled = handle_platform_command(layout, stripped, adapter_ref=adapter_ref)
                 if handled:
-                    if stripped.lower().split()[0] in ("/verbose", "/debugger"):
+                    cmd, _args = _parse_command(stripped)
+                    if cmd in ("/verbose", "/debugger"):
                         pass  # debug output appears on next CPE cycle
                     if _is_endure_approved():
                         _set_endure_approved(False)
                         close_reason = "endure_approved"
                         break
-                    if stripped.lower().split()[0] in ("/exit", "/bye", "/close"):
+                    if cmd in ("/exit", "/bye", "/close"):
                         close_reason = "operator_exit"
                         break
-                    if stripped.lower().split()[0] in ("/new", "/clear", "/reset"):
+                    if cmd in ("/new", "/clear", "/reset"):
                         close_reason = "operator_reset"
                         break
                     # check if /compact was just requested
@@ -319,8 +351,12 @@ def run_session(
                     continue  # back to top — wait for next input, no CPE call
                 if not handled:
                     from .operator import _cmd_output
+                    cmd, _args = _parse_command(stripped)
                     with _cmd_output():
-                        print(f"unknown command: {stripped.split()[0]}")
+                        if cmd:
+                            print(f"unknown command: {cmd}")
+                        else:
+                            print("invalid command (must start with /)")
                     continue
             _vlog("operator", f"input: {stripped!r}")
             _append_msg(layout, "operator", user_input)
