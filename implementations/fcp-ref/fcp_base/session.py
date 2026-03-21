@@ -253,8 +253,12 @@ def run_session(
         if layout.session_token.exists():
             _session_id = str(read_json(layout.session_token).get("session_id", ""))
         _vital_state = _vital.VitalCheckState(session_id=_session_id)
-    except Exception:
-        pass  # no baseline — vital check disabled
+    except FileNotFoundError:
+        _vlog("fcp", "baseline file not found — vital check disabled")
+    except json.JSONDecodeError as e:
+        _vlog("fcp", f"baseline file corrupted ({e}) — vital check disabled")
+    except Exception as e:
+        _vlog("fcp", f"baseline load error ({e}) — vital check disabled")
 
     while True:
         # drain io/inbox/ → consolidate to session.jsonl
@@ -567,8 +571,12 @@ def build_boot_context(
             if f.suffix == ".json":
                 try:
                     presession_lines.append(f.read_text(encoding="utf-8").strip())
-                except Exception:
-                    pass
+                except UnicodeDecodeError as e:
+                    _vlog("fcp", f"presession file {f.name} has encoding error: {e}")
+                except OSError as e:
+                    _vlog("fcp", f"presession file {f.name} cannot be read: {e}")
+                except Exception as e:
+                    _vlog("fcp", f"presession file {f.name} error: {e}")
 
     # --- initial chat history: instruction block + session tail ---
     chat_history: list[dict[str, Any]] = [
@@ -603,8 +611,12 @@ def _session_to_turns(layout: Layout) -> list[tuple[str, str]]:
             # Convert back to list of tuples
             pairs = [(turn["role"], turn["content"]) for turn in cached_turns]
             return pairs
-        except Exception:
-            pass  # Fall through to full scan if cache is corrupted
+        except json.JSONDecodeError as e:
+            _vlog("fcp", f"session cache corrupted ({e}) — performing full scan")
+        except (KeyError, TypeError) as e:
+            _vlog("fcp", f"session cache schema error ({e}) — performing full scan")
+        except Exception as e:
+            _vlog("fcp", f"session cache error ({e}) — performing full scan")
 
     # Full scan if no cache (cold boot)
     pairs: list[tuple[str, str]] = []
@@ -616,7 +628,11 @@ def _session_to_turns(layout: Layout) -> list[tuple[str, str]]:
         if isinstance(raw_data, str):
             try:
                 data = json.loads(raw_data)
-            except Exception:
+            except json.JSONDecodeError:
+                # Not JSON — treat as raw string data
+                data = raw_data
+            except Exception as e:
+                _vlog("fcp", f"envelope data parse error ({e}) — using raw data")
                 data = raw_data
         else:
             data = raw_data
@@ -712,7 +728,11 @@ def _parse_env_data(env: dict[str, Any]) -> Any:
     if isinstance(raw_data, str):
         try:
             return json.loads(raw_data)
-        except Exception:
+        except json.JSONDecodeError:
+            # Not JSON — return as raw string
+            return raw_data
+        except Exception as e:
+            _vlog("fcp", f"envelope data parse error in _parse_env_data ({e})")
             return raw_data
     return raw_data
 
@@ -786,8 +806,11 @@ def dispatch_tool_use(
     if "action" in inp and isinstance(inp["action"], str) and len(inp) == 1:
         try:
             inp = json.loads(inp["action"])
-        except Exception:
+        except json.JSONDecodeError:
+            # Not JSON — use raw action string as-is
             pass
+        except Exception as e:
+            _vlog("fcp", f"tool input action parse error ({e}) — using raw action")
 
     # --- MIL tools ---
     if tool in ("memory_recall", "memory_write", "result_recall", "closure_payload"):
@@ -908,7 +931,11 @@ def _dispatch_exec(
             if isinstance(params, str):
                 try:
                     params = json.loads(params)
-                except Exception:
+                except json.JSONDecodeError:
+                    _vlog("fcp", f"skill params not valid JSON, using empty dict")
+                    params = {}
+                except Exception as e:
+                    _vlog("fcp", f"skill params parse error ({e}), using empty dict")
                     params = {}
             if not isinstance(params, dict):
                 params = {}
@@ -959,7 +986,11 @@ def _dispatch_sil(
                     profile == "haca-evolve"
                     and baseline.get("evolve", {}).get("scope", {}).get("autonomous_evolution", False)
                 )
-            except Exception:
+            except FileNotFoundError:
+                _vlog("fcp", "baseline not found — autonomous evolution disabled")
+                autonomous = False
+            except Exception as e:
+                _vlog("fcp", f"baseline load error ({e}) — autonomous evolution disabled")
                 autonomous = False
             if autonomous:
                 auth_digest = _sha256_str(content)
@@ -1041,8 +1072,12 @@ def _rebuild_compact_history(
                 compact_parts.append("Pending tasks:\n" + "\n".join(f"- {t}" for t in handoff["pending_tasks"]))
             if handoff.get("next_steps"):
                 compact_parts.append(f"Next steps: {handoff['next_steps']}")
-        except Exception:
-            pass
+        except json.JSONDecodeError as e:
+            _vlog("fcp", f"session handoff corrupted ({e}) — skipping")
+        except (KeyError, TypeError) as e:
+            _vlog("fcp", f"session handoff schema error ({e}) — skipping")
+        except Exception as e:
+            _vlog("fcp", f"session handoff load error ({e}) — skipping")
     new_history.append({"role": "user", "content": "\n\n".join(compact_parts)})
     new_history.append({"role": "assistant", "content": ""})
 
@@ -1111,9 +1146,12 @@ def build_boot_stats(
                 raw = rec.get("data", "{}")
                 d = json.loads(raw) if isinstance(raw, str) else raw
                 if isinstance(d, dict) and d.get("type") == "SLEEP_COMPLETE":
-                    sessions += 1
-            except Exception:
+                    sessions = sessions + 1
+            except json.JSONDecodeError:
+                # Malformed line in log — skip
                 pass
+            except Exception as e:
+                _vlog("fcp", f"integrity log parse error ({e}) — skipping line")
 
     # cycles — count ENDURE_COMMIT entries in integrity_chain.jsonl
     cycles = 0
@@ -1122,9 +1160,12 @@ def build_boot_stats(
             try:
                 rec = json.loads(line)
                 if rec.get("type") == "ENDURE_COMMIT":
-                    cycles += 1
-            except Exception:
+                    cycles = cycles + 1
+            except json.JSONDecodeError:
+                # Malformed line in chain — skip
                 pass
+            except Exception as e:
+                _vlog("fcp", f"integrity chain parse error ({e}) — skipping line")
 
     # memories — episodic + semantic files
     memories = 0
@@ -1142,12 +1183,15 @@ def build_boot_stats(
                 raw = rec.get("data", "{}")
                 d = json.loads(raw) if isinstance(raw, str) else raw
                 if isinstance(d, dict) and d.get("type") == "EVOLUTION_AUTH":
-                    evolutions_total += 1
-                    evolutions_auth += 1
+                    evolutions_total = evolutions_total + 1
+                    evolutions_auth = evolutions_auth + 1
                 elif isinstance(d, dict) and d.get("type") == "ENDURE_COMMIT":
-                    evolutions_total += 1
-            except Exception:
+                    evolutions_total = evolutions_total + 1
+            except json.JSONDecodeError:
+                # Malformed line in log — skip
                 pass
+            except Exception as e:
+                _vlog("fcp", f"evolution stats parse error ({e}) — skipping line")
 
     # skills and tools
     n_skills = len(index.get("skills", []))
