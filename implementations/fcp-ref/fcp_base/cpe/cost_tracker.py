@@ -9,12 +9,15 @@ Date: 2026-03-21
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .benchmark import calculate_cost
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -94,9 +97,11 @@ class CostTracker:
                     if line.strip():
                         data = json.loads(line)
                         self._entries.append(CostEntry.from_dict(data))
-        except Exception:
-            # Silently ignore load errors
+        except FileNotFoundError:
+            # Log file doesn't exist yet; will be created on first write
             pass
+        except Exception as e:
+            logger.warning(f"Cost tracker failed to load from {self.log_file}: {e}")
 
     def record(
         self,
@@ -137,11 +142,12 @@ class CostTracker:
     def _save_entry(self, entry: CostEntry) -> None:
         """Append entry to log file."""
         try:
+            # Ensure directory exists
+            self.log_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.log_file, "a") as f:
                 f.write(json.dumps(entry.to_dict()) + "\n")
-        except Exception:
-            # Silently ignore write errors
-            pass
+        except Exception as e:
+            logger.error(f"Cost tracker failed to save to {self.log_file}: {e}")
 
     def get_summary(self, adapter: str | None = None, model: str | None = None) -> dict[str, Any]:
         """Get cost summary, optionally filtered by adapter/model.

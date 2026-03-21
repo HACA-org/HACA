@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -226,8 +227,9 @@ def _parse_response(data: dict[str, Any]) -> CPEResponse:
     tool_calls: list[ToolUseCall] = []
 
     # Parse tool_calls from official format: message.tool_calls[]
-    tc_index = 0  # Counter for synthetic tool call IDs
-    for tc in message.get("tool_calls") or []:
+    # Timestamp-based prefix for globally unique synthetic IDs (avoids collisions across adapter instances)
+    timestamp_ms = int(time.time() * 1000)
+    for tc_index, tc in enumerate(message.get("tool_calls") or []):
         fn = tc.get("function", {})
         raw_args = fn.get("arguments", {})
 
@@ -239,15 +241,14 @@ def _parse_response(data: dict[str, Any]) -> CPEResponse:
                 raw_args = {}
 
         parsed_input = raw_args if isinstance(raw_args, dict) else {}
-        # Generate synthetic ID: Ollama API doesn't provide tool call IDs
-        # Use index-based ID to maintain order (allows proper tool result mapping)
-        synthetic_id = f"call_{tc_index}"
+        # Generate globally unique synthetic ID: timestamp + index
+        # Avoids collisions when multiple adapter instances generate IDs in same second
+        synthetic_id = f"call_{timestamp_ms}_{tc_index}"
         tool_calls.append(ToolUseCall(
             id=synthetic_id,
             tool=fn.get("name", ""),
             input=parsed_input,
         ))
-        tc_index += 1
 
     return CPEResponse(
         text=content,
@@ -271,7 +272,9 @@ def _parse_streaming_response(chunks: list[dict[str, Any]]) -> CPEResponse:
     total_output_tokens = 0
     stop_reason = ""
 
-    tc_index = 0  # Counter for synthetic IDs
+    # Timestamp-based prefix for globally unique synthetic IDs
+    timestamp_ms = int(time.time() * 1000)
+    tc_index = 0  # Local counter within this streaming response
     for chunk in chunks:
         message = chunk.get("message", {})
 
@@ -292,7 +295,8 @@ def _parse_streaming_response(chunks: list[dict[str, Any]]) -> CPEResponse:
                     raw_args = {}
 
             parsed_input = raw_args if isinstance(raw_args, dict) else {}
-            synthetic_id = f"call_{tc_index}"
+            # Generate globally unique synthetic ID: timestamp + index
+            synthetic_id = f"call_{timestamp_ms}_{tc_index}"
             tool_calls.append(ToolUseCall(
                 id=synthetic_id,
                 tool=fn.get("name", ""),
