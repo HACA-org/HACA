@@ -7,9 +7,10 @@ Base URL defaults to http://localhost:11434 (set OLLAMA_BASE_URL to override).
 
 Auto-detection: is_available() checks if Ollama is reachable before invoking.
 
-Streaming Support (2026-03-20):
-- Respects "stream" parameter (True enables incremental response processing)
-- Non-streaming (default): Single complete response
+Streaming Support (2026-03-21):
+- Optional streaming mode (default: disabled for backward compatibility)
+- When enabled: accumulates streaming chunks, extracts tool calls incrementally
+- Non-streaming: Single complete response (current default)
 - Tool call format synchronized with official Ollama API (message.tool_calls[])
 """
 
@@ -31,12 +32,16 @@ _MAX_TOKENS = 8192
 
 
 class OllamaAdapter:
-    """CPEAdapter for Ollama local inference (/api/chat)."""
+    """CPEAdapter for Ollama local inference (/api/chat).
 
-    def __init__(self, api_key: str = "", model: str = _DEFAULT_MODEL, base_url: str = "") -> None:
+    Supports optional streaming mode for incremental response processing.
+    """
+
+    def __init__(self, api_key: str = "", model: str = _DEFAULT_MODEL, base_url: str = "", enable_streaming: bool = False) -> None:
         self._model = model
         base = base_url or os.environ.get("OLLAMA_BASE_URL", _DEFAULT_BASE_URL)
         self._base_url = base.rstrip("/")
+        self._enable_streaming = enable_streaming
 
     def invoke(
         self,
@@ -47,12 +52,16 @@ class OllamaAdapter:
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": [{"role": "system", "content": system}] + _convert_messages(messages),
-            "stream": False,  # Currently non-streaming for simplicity; can enable streaming in future
+            "stream": self._enable_streaming,
             "options": {"num_predict": _MAX_TOKENS},
         }
         if tools:
             payload["tools"] = [_convert_tool(t) for t in tools]
-        return _parse_response(_post(self._base_url, payload))
+
+        if self._enable_streaming:
+            return _parse_streaming_response(_post_streaming(self._base_url, payload))
+        else:
+            return _parse_response(_post(self._base_url, payload))
 
     def is_available(self) -> bool:
         """Return True if the Ollama server is reachable."""
@@ -154,6 +163,7 @@ def _parse_tool_result_lines(content: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def _post(base_url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Non-streaming POST to Ollama /api/chat."""
     body = json.dumps(payload).encode()
     req = urllib.request.Request(
         f"{base_url}/api/chat",
@@ -164,6 +174,30 @@ def _post(base_url: str, payload: dict[str, Any]) -> dict[str, Any]:
     try:
         with urllib.request.urlopen(req, timeout=300) as resp:
             return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        body_text = _trunc(exc.read().decode())
+        raise CPEError(f"Ollama: HTTP {exc.code} — {body_text}") from exc
+    except urllib.error.URLError as exc:
+        raise CPEError(f"Ollama: network error — {exc.reason}") from exc
+
+
+def _post_streaming(base_url: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Streaming POST to Ollama /api/chat (returns accumulated chunks)."""
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        f"{base_url}/api/chat",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    chunks: list[dict[str, Any]] = []
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            for line in resp:
+                if line.strip():
+                    chunk = json.loads(line.decode())
+                    chunks.append(chunk)
+            return chunks
     except urllib.error.HTTPError as exc:
         body_text = _trunc(exc.read().decode())
         raise CPEError(f"Ollama: HTTP {exc.code} — {body_text}") from exc
@@ -221,4 +255,61 @@ def _parse_response(data: dict[str, Any]) -> CPEResponse:
         input_tokens=int(data.get("prompt_eval_count", 0)),
         output_tokens=int(data.get("eval_count", 0)),
         stop_reason=data.get("done_reason", ""),
+    )
+
+
+def _parse_streaming_response(chunks: list[dict[str, Any]]) -> CPEResponse:
+    """Parse accumulated streaming chunks into CPEResponse.
+
+    Streaming format: each chunk is a partial message update.
+    Accumulates content and tool calls across chunks.
+    Final chunk has done=True and contains usage metadata.
+    """
+    content = ""
+    tool_calls: list[ToolUseCall] = []
+    total_input_tokens = 0
+    total_output_tokens = 0
+    stop_reason = ""
+
+    tc_index = 0  # Counter for synthetic IDs
+    for chunk in chunks:
+        message = chunk.get("message", {})
+
+        # Accumulate text content
+        if "content" in message:
+            content += message.get("content", "")
+
+        # Process tool calls (may appear in multiple chunks)
+        for tc in message.get("tool_calls") or []:
+            fn = tc.get("function", {})
+            raw_args = fn.get("arguments", {})
+
+            # Normalize: arguments may be dict or JSON string
+            if isinstance(raw_args, str):
+                try:
+                    raw_args = json.loads(raw_args)
+                except (json.JSONDecodeError, ValueError):
+                    raw_args = {}
+
+            parsed_input = raw_args if isinstance(raw_args, dict) else {}
+            synthetic_id = f"call_{tc_index}"
+            tool_calls.append(ToolUseCall(
+                id=synthetic_id,
+                tool=fn.get("name", ""),
+                input=parsed_input,
+            ))
+            tc_index += 1
+
+        # Extract usage and stop reason from final chunk
+        if chunk.get("done"):
+            total_input_tokens = int(chunk.get("prompt_eval_count", 0))
+            total_output_tokens = int(chunk.get("eval_count", 0))
+            stop_reason = chunk.get("done_reason", "")
+
+    return CPEResponse(
+        text=content,
+        tool_use_calls=tool_calls,
+        input_tokens=total_input_tokens,
+        output_tokens=total_output_tokens,
+        stop_reason=stop_reason,
     )
