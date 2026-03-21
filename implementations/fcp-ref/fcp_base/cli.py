@@ -305,9 +305,13 @@ def _run_auto(layout: "Layout", cron_id: str) -> None:
     from .boot import run as boot_run, BootError
     from .cpe.base import make_adapter
     from .fap import FAPError
+    from .session import set_session_mode, SessionMode
     from .sleep import run_sleep_cycle
     from .store import read_json
     from .sil import write_notification
+
+    # Set session mode to AUTO (no operator interaction)
+    set_session_mode(SessionMode.AUTO)
 
     # Load agenda and find task
     if not layout.agenda.exists():
@@ -386,10 +390,13 @@ def _run_auto(layout: "Layout", cron_id: str) -> None:
 def _run_auto_worker(layout: "Layout", task: dict, wake_up_message: str) -> None:
     """Run a worker_skill task directly without a CPE session."""
     import json
+    from .session import set_session_mode, SessionMode
     from .store import atomic_write, read_json
     from .sil import write_notification
     from .exec_ import dispatch
 
+    # Set session mode to AUTO (no operator interaction)
+    set_session_mode(SessionMode.AUTO)
 
     index: dict = {}
     if layout.skills_index.exists():

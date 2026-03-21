@@ -279,8 +279,10 @@ def _maybe_prompt_shell_allowlist(
     timeout: int,
     output: str,
 ) -> str:
-    """If shell_run returned a 'command not in allowlist' error, prompt the
-    operator to approve it once or permanently, then re-run if approved.
+    """If shell_run returned a 'command not in allowlist' error, handle based on session mode.
+
+    In main:session: prompt operator to approve once/always.
+    In auto:session: log to operator_notifications and return error (no interactive prompt).
 
     - "allow once" (y): sets SHELL_RUN_ALLOW_ONCE env var for single execution
     - "allow always" (a): persists command to manifest allowlist_composite
@@ -295,6 +297,27 @@ def _maybe_prompt_shell_allowlist(
         return output
 
     command = str(params.get("command", "")).strip()
+
+    # In auto:session: no interactive prompt — just log and return error
+    from .session import is_auto_session
+    if is_auto_session():
+        from .sil import write_notification
+        ui.print_warn(f"[auto:session] shell_run blocked — command not in allowlist: {command!r}")
+        # Log to operator_notifications for review
+        write_notification(
+            layout,
+            severity="shell_run_blocked",
+            payload={
+                "message": "Command blocked in autonomous session (auto:session)",
+                "command": command,
+                "context": "auto:session",
+                "timestamp": time.time(),
+                "note": "Operator can approve in main:session if needed"
+            }
+        )
+        return output  # Return original error
+
+    # In main:session: prompt operator interactively
     print()
     ui.hr("operator action required")
     ui.print_warn(f"shell_run blocked — command not in allowlist:")
