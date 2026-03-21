@@ -1479,6 +1479,9 @@ def _vlog_cycle_summary(
         preview = response.text[:50].replace("\n", " ")
         print(f"{_DIM}     └─ text: {preview!r} ({len(response.text)} chars){_RESET}")
 
+    # Add blank line for visual separation between tree and next input prompt
+    print()
+
     # Debugger mode — show original detailed format
     if dbg and not verbose:
         print(f"{_DIM}[cpe→fcp] response{_RESET}")

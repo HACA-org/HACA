@@ -105,26 +105,39 @@ def _build_contents(
                 and messages[i - 1]["role"] == "assistant"
                 and not messages[i - 1].get("content", "")):
             tool_results = _parse_tool_results(content)
-            if tool_results is not None:
-                # Validate tool result count matches function calls
-                if len(tool_results) != len(last_function_calls):
-                    logger.warning(
-                        f"Tool result count mismatch: expected {len(last_function_calls)}, "
-                        f"got {len(tool_results)}"
-                    )
-                parts: list[dict[str, Any]] = []
-                for j, fc in enumerate(last_function_calls):
-                    resp = tool_results[j] if j < len(tool_results) else {}
-                    parts.append({
-                        "functionResponse": {
-                            "name": fc["functionCall"]["name"],
-                            "response": {"output": resp},
-                        }
-                    })
-                if parts:
-                    contents.append({"role": "user", "parts": parts})
-                    i += 1
-                    continue
+            if tool_results is None:
+                # Failed to parse as tool results — treat as regular user message
+                logger.debug(
+                    f"Could not parse tool results from user turn. "
+                    f"Expected {len(last_function_calls)} results, but format is not "
+                    f"'[tool_name] {{json}}'. Content: {content[:100]}"
+                )
+                contents.append({"role": "user", "parts": [{"text": content}]})
+                i += 1
+                continue
+
+            # tool_results is not None — validate count and process
+            if len(tool_results) != len(last_function_calls):
+                # Debug: show which tools were expected vs parsed
+                expected_tools = [fc["functionCall"]["name"] for fc in last_function_calls]
+                logger.warning(
+                    f"Tool result count mismatch: expected {len(last_function_calls)} "
+                    f"(tools: {expected_tools}), but got {len(tool_results)} results. "
+                    f"Content preview: {content[:200]}"
+                )
+            parts: list[dict[str, Any]] = []
+            for j, fc in enumerate(last_function_calls):
+                resp = tool_results[j] if j < len(tool_results) else {}
+                parts.append({
+                    "functionResponse": {
+                        "name": fc["functionCall"]["name"],
+                        "response": {"output": resp},
+                    }
+                })
+            if parts:
+                contents.append({"role": "user", "parts": parts})
+                i += 1
+                continue
 
         contents.append({"role": "user", "parts": [{"text": content}]})
         i += 1
