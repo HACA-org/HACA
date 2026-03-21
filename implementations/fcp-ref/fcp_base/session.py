@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from .acp import drain_inbox, make as acp_encode
-from .cpe.base import AdapterRef, CPEAdapter, CPEResponse
+from .cpe.base import AdapterRef, CPEAdapter, CPEResponse, CPEError, CPEAuthError, CPERateLimitError
 from .mil import memory_recall, process_closure, result_recall, summarize_session, write_episodic, SESSION_CACHE_FILE
 from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger, is_compact_pending as _is_compact_pending, set_compact_pending as _set_compact_pending, is_endure_approved as _is_endure_approved, set_endure_approved as _set_endure_approved
 from .sil import sha256_str as _sha256_str, write_evolution_auth as _write_evolution_auth, write_notification as _write_notification
@@ -235,6 +235,12 @@ def run_session(
     _loop_window: list[Any] = []
     _LOOP_THRESHOLD = 3
 
+    # CPE error handling — exponential backoff for transient failures
+    _cpe_consecutive_errors = 0
+    _cpe_last_error_time = 0.0
+    _CPE_MAX_CONSECUTIVE_ERRORS = 5
+    _CPE_INITIAL_BACKOFF_SECS = 1.0
+
     # Vital Check state — triggers on cycle_threshold or interval_seconds
     _baseline = None
     _vital_state = None
@@ -324,14 +330,59 @@ def run_session(
         # invoke CPE (adapter_ref.current may be swapped mid-session via /model)
         try:
             response = adapter_ref.current.invoke(system, chat_history, tools)
+            # Reset consecutive error counter on success
+            _cpe_consecutive_errors = 0
+            _cpe_last_error_time = 0.0
+        except CPEAuthError as exc:
+            # Authentication errors are not retryable — exit immediately
+            err_msg = f"CPE authentication failed: {str(exc)}"
+            print(f"\n{_DIM}  [fcp] {err_msg}{_RESET}")
+            _append_msg(layout, "fcp", err_msg)
+            _vlog("fcp", f"auth error: {err_msg}")
+            close_reason = "cpe_auth_error"
+            break
+        except CPERateLimitError as exc:
+            # Rate limit is transient — apply exponential backoff
+            _cpe_consecutive_errors = _cpe_consecutive_errors + 1
+            backoff_secs = _CPE_INITIAL_BACKOFF_SECS * (2 ** (_cpe_consecutive_errors - 1))
+            err_msg = f"CPE rate limited (attempt {_cpe_consecutive_errors}): {str(exc)}"
+            print(f"\n{_DIM}  [fcp] {err_msg} (backoff {backoff_secs:.1f}s){_RESET}")
+            _append_msg(layout, "fcp", f"{err_msg} — retrying in {backoff_secs:.0f}s")
+            _vlog("fcp", f"rate limit backoff: {backoff_secs}s")
+            if _cpe_consecutive_errors >= _CPE_MAX_CONSECUTIVE_ERRORS:
+                close_reason = "cpe_rate_limit_exceeded"
+                break
+            time.sleep(backoff_secs)
+            stimulus_ready = False
+            continue
+        except CPEError as exc:
+            # Other CPE errors (network, model errors) are retryable
+            _cpe_consecutive_errors = _cpe_consecutive_errors + 1
+            backoff_secs = _CPE_INITIAL_BACKOFF_SECS * (2 ** (_cpe_consecutive_errors - 1))
+            err_msg = f"CPE error (attempt {_cpe_consecutive_errors}): {str(exc)}"
+            print(f"\n{_DIM}  [fcp] {err_msg} (backoff {backoff_secs:.1f}s){_RESET}")
+            _append_msg(layout, "fcp", f"{err_msg} — retrying in {backoff_secs:.0f}s")
+            _vlog("fcp", f"cpe error backoff: {backoff_secs}s")
+            if _cpe_consecutive_errors >= _CPE_MAX_CONSECUTIVE_ERRORS:
+                close_reason = "cpe_error_max_retries"
+                break
+            time.sleep(backoff_secs)
+            stimulus_ready = False
+            continue
         except Exception as exc:
-            err_msg = str(exc)
-            print(f"\n{_DIM}  [fcp] CPE error: {err_msg}{_RESET}")
-            _append_msg(layout, "fcp", f"CPE error: {err_msg}")
+            # Unexpected error (shouldn't happen with proper exception hierarchy)
+            _cpe_consecutive_errors = _cpe_consecutive_errors + 1
+            err_msg = f"CPE unexpected error (attempt {_cpe_consecutive_errors}): {str(exc)}"
+            print(f"\n{_DIM}  [fcp] {err_msg}{_RESET}")
+            _append_msg(layout, "fcp", err_msg)
+            _vlog("fcp", f"unexpected error: {err_msg}")
+            if _cpe_consecutive_errors >= _CPE_MAX_CONSECUTIVE_ERRORS:
+                close_reason = "cpe_error_max_retries"
+                break
             stimulus_ready = False
             continue
         _vlog_response(response)
-        tokens_used += response.input_tokens + response.output_tokens
+        tokens_used = tokens_used + response.input_tokens + response.output_tokens
 
         # add CPE response to chat history and display status
         if response.tool_use_calls:
