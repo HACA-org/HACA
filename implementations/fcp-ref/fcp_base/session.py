@@ -1438,55 +1438,57 @@ def _vlog_cycle_summary(
     elapsed_secs: float,
     tool_log_lines: list[dict[str, Any]],
 ) -> None:
-    """Print cycle summary after dispatch: [DISPATCH] tree + [← CPE] line.
+    """Print cycle summary: [DISPATCH] tree + [← CPE] line (always visible).
 
-    Called after all tool calls are done so the tree is printed in the
-    correct order: dispatch block first, then CPE response line at the bottom.
+    Tree is always shown. With verbose: includes input/output JSON payloads.
+    Without verbose: compact format with sizes and timing only.
 
     tool_log_lines: list of dicts with tool, input, output, input_size, result_size, status, timing_ms, is_last
     """
-    if not _is_verbose() and _get_debugger() is None:
-        return
+    dbg = _get_debugger()
+    verbose = _is_verbose()
 
-    if _is_verbose():
-        # Dispatch block
-        if tool_log_lines:
-            _vprint("  ├─ [DISPATCH]")
-            for tool_info in tool_log_lines:
-                tool = tool_info["tool"]
-                is_last = tool_info["is_last"]
-                input_size = tool_info["input_size"]
-                result_size = tool_info["result_size"]
-                status = tool_info["status"]
-                timing_ms = tool_info["timing_ms"]
-                timing_str = f", {timing_ms:.0f}ms" if timing_ms > 10 else ""
+    # Dispatch block — ALWAYS show (if tools were called)
+    if tool_log_lines:
+        print(f"{_DIM}  ├─ [DISPATCH]{_RESET}")
+        for tool_info in tool_log_lines:
+            tool = tool_info["tool"]
+            is_last = tool_info["is_last"]
+            input_size = tool_info["input_size"]
+            result_size = tool_info["result_size"]
+            status = tool_info["status"]
+            timing_ms = tool_info["timing_ms"]
+            timing_str = f", {timing_ms:.0f}ms" if timing_ms > 10 else ""
 
-                prefix = "  │  └─" if is_last else "  │  ├─"
-                _vprint(f"{prefix} {tool}")
+            prefix = "  │  └─" if is_last else "  │  ├─"
 
-                # Show input/output JSONs (compact format)
+            if verbose:
+                # Verbose mode: show tool name + input/output JSONs
+                print(f"{_DIM}{prefix} {tool}{_RESET}")
                 input_json = _compact_json(tool_info["input"])
                 output_json = _compact_json(tool_info["output"])
-                _vprint(f"{prefix[:-2]}│  ├─ input: {input_json}")
-                _vprint(f"{prefix[:-2]}│  └─ output: {output_json}")
+                print(f"{_DIM}{prefix[:-2]}│  ├─ input: {input_json}{_RESET}")
+                print(f"{_DIM}{prefix[:-2]}│  └─ output: {output_json}{_RESET}")
+            else:
+                # Compact mode: tool name + sizes
+                print(f"{_DIM}{prefix} {tool} ... input ({input_size}) → {status} ({result_size}{timing_str}){_RESET}")
 
-        # CPE response line — always last (└─ if no further output, ├─ not needed)
-        # Note: tokens already shown in footer of CPE block above, so omit here
-        _vprint(f"  └─ [← CPE] ⏱ {elapsed_secs:.1f}s | {response.stop_reason}")
+    # CPE response line — ALWAYS show
+    print(f"{_DIM}  └─ [← CPE] ⏱ {elapsed_secs:.1f}s | {response.stop_reason}{_RESET}")
+    if verbose and response.text:
+        preview = response.text[:50].replace("\n", " ")
+        print(f"{_DIM}     └─ text: {preview!r} ({len(response.text)} chars){_RESET}")
+
+    # Debugger mode — show original detailed format
+    if dbg and not verbose:
+        print(f"{_DIM}[cpe→fcp] response{_RESET}")
+        print(f"{_DIM}  stop_reason  : {response.stop_reason}{_RESET}")
+        print(f"{_DIM}  tokens       : {response.input_tokens} in / {response.output_tokens} out{_RESET}")
         if response.text:
-            preview = response.text[:50].replace("\n", " ")
-            _vprint(f"     └─ text: {preview!r} ({len(response.text)} chars)")
-        return
-
-    # debugger mode — keep original format
-    _vprint("[cpe→fcp] response")
-    _vprint(f"  stop_reason  : {response.stop_reason}")
-    _vprint(f"  tokens       : {response.input_tokens} in / {response.output_tokens} out")
-    if response.text:
-        preview = response.text[:200].replace("\n", " ")
-        _vprint(f"  text         : {preview!r}")
-    for call in response.tool_use_calls:
-        _vprint(f"  tool_use     : {call.tool} (id={call.id})")
+            preview = response.text[:200].replace("\n", " ")
+            print(f"{_DIM}  text         : {preview!r}{_RESET}")
+        for call in response.tool_use_calls:
+            print(f"{_DIM}  tool_use     : {call.tool} (id={call.id}){_RESET}")
 
 
 def _readline_with_history(prompt: str) -> str:
