@@ -101,14 +101,22 @@ def _convert_tool(tool: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _convert_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert FCP chat_history to Ollama message format.
+    """Convert FCP chat_history to Ollama multi-turn tool use format.
 
-    FCP sends tool results as role:user with '[tool_name] {json}' text.
-    Ollama expects role:tool with tool_name and content fields.
+    Ollama (OpenAI-compatible) requires a strict message structure for tool use:
+      assistant: {content: null, tool_calls: [{id, type, function: {name, arguments}}]}
+      tool:      {role: "tool", tool_call_id: <matching id>, content: "..."}
 
-    Tool result lines are identified by: a user message that follows an empty
-    assistant turn (content=="", which signals a tool-use cycle in FCP), where
-    the content starts with "[" (the tool result bracket format).
+    FCP stores tool results as:
+      assistant: {content: ""} or {content: text}  (NO tool_calls field)
+      user: {content: "[tool_name] {json}\\n[tool_name] {json}"}
+
+    This function detects the tool result pattern and reconstructs the proper format:
+    - Updates the preceding assistant message to include tool_calls
+    - Emits role:tool messages with matching tool_call_id
+
+    Detection: a user message that follows any assistant turn AND starts with "["
+    (handles both empty-content assistant turns AND text+tools turns).
     """
     result: list[dict[str, Any]] = []
     i = 0
@@ -118,21 +126,39 @@ def _convert_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         if role == "user":
             content = msg.get("content", "")
-            prev = result[-1] if result else {}
-            # Detect tool result turn: follows an empty assistant turn AND starts with "["
-            # Empty assistant (content=="") means the assistant made tool calls that cycle.
-            # The "tool_calls" key is NOT present in FCP chat_history — we detect by content=="".
-            prev_is_tool_turn = (
-                prev.get("role") == "assistant"
-                and not prev.get("content", "")
-                and content.startswith("[")
-            )
-            if prev_is_tool_turn:
-                tool_msgs = _parse_tool_result_lines(content)
-                if tool_msgs:
-                    result.extend(tool_msgs)
+            prev_idx = len(result) - 1
+            prev = result[prev_idx] if result else {}
+
+            # Detect tool result turn: follows any assistant turn AND content is "[tool] {json}"
+            if prev.get("role") == "assistant" and content.startswith("["):
+                tool_parsed = _parse_tool_result_lines(content)
+                if tool_parsed:
+                    # Reconstruct proper Ollama tool_calls on the assistant turn.
+                    # We don't have original call args, so use "{}" — the name is what matters
+                    # for conversation coherence. IDs are synthetic but must match.
+                    synthetic_calls = [
+                        {
+                            "id": f"call_{j}",
+                            "type": "function",
+                            "function": {
+                                "name": tm["tool_name"],
+                                "arguments": "{}",
+                            },
+                        }
+                        for j, tm in enumerate(tool_parsed)
+                    ]
+                    # Overwrite the previous assistant entry with tool_calls added
+                    result[prev_idx] = dict(prev, tool_calls=synthetic_calls)
+                    # Emit role:tool messages with matching tool_call_id
+                    for j, tm in enumerate(tool_parsed):
+                        result.append({
+                            "role": "tool",
+                            "tool_call_id": f"call_{j}",
+                            "content": tm["content"],
+                        })
                     i += 1
                     continue
+
             result.append(msg)
         else:
             result.append(msg)
