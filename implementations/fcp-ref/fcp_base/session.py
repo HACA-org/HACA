@@ -119,6 +119,43 @@ def _trim_chat_history(
 
 
 # ---------------------------------------------------------------------------
+# Loop Detection — Deterministic Fingerprinting
+# ---------------------------------------------------------------------------
+
+def _make_cycle_fingerprint(
+    tool_calls: list[Any],
+    tool_results: list[str],
+) -> frozenset[tuple[str, str, str]]:
+    """Create deterministic fingerprint of cycle (tool calls + results).
+
+    Returns frozenset of (tool_name, input_hash, result_hash) tuples.
+    Frozenset ensures order-independence and proper set comparison.
+
+    Raises ValueError if tool_calls and tool_results counts don't match.
+    """
+    import hashlib
+
+    if len(tool_calls) != len(tool_results):
+        raise ValueError(
+            f"Tool call/result count mismatch: {len(tool_calls)} calls, "
+            f"{len(tool_results)} results"
+        )
+
+    fingerprints = []
+    for call, result in zip(tool_calls, tool_results):
+        # Hash input to avoid JSON stringification issues
+        input_str = json.dumps(call.input, sort_keys=True, ensure_ascii=False)
+        input_hash = hashlib.sha256(input_str.encode()).hexdigest()[:8]
+
+        # Hash result similarly
+        result_hash = hashlib.sha256(result.encode()).hexdigest()[:8]
+
+        fingerprints.append((call.tool, input_hash, result_hash))
+
+    return frozenset(fingerprints)
+
+
+# ---------------------------------------------------------------------------
 # Main session loop
 # ---------------------------------------------------------------------------
 
@@ -344,24 +381,30 @@ def run_session(
 
         # --- loop detection: same set of (tool, input, result) tuples repeated >= threshold ---
         if tool_calls:
-            cycle_fingerprint = tuple(sorted(
-                (c.tool, json.dumps(c.input, sort_keys=True), tr)
-                for c, tr in zip(tool_calls, tool_results)
-            ))
-            _loop_window.append(cycle_fingerprint)
-            if len(_loop_window) > _LOOP_THRESHOLD:
-                _loop_window.pop(0)
-            if len(_loop_window) == _LOOP_THRESHOLD and len(set(_loop_window)) == 1:
+            try:
+                # Create deterministic fingerprint (handles JSON stringification issues)
+                cycle_fingerprint = _make_cycle_fingerprint(tool_calls, tool_results)
+                _loop_window.append(cycle_fingerprint)
+                if len(_loop_window) > _LOOP_THRESHOLD:
+                    _loop_window.pop(0)
+
+                # Detect loop: same fingerprint repeated THRESHOLD times
+                if len(_loop_window) == _LOOP_THRESHOLD and len(set(_loop_window)) == 1:
+                    _loop_window.clear()
+                    tools_repr = ", ".join(c.tool for c in tool_calls)
+                    intervention = (
+                        f"[FCP] Loop detected: the same tool call(s) ({tools_repr}) returned "
+                        f"identical results {_LOOP_THRESHOLD} times in a row. "
+                        "Stop and report the situation to the Operator. Do not retry."
+                    )
+                    _vlog("fcp", f"loop detected: {tools_repr}")
+                    _append_msg(layout, "fcp", intervention)
+                    chat_history.append({"role": "user", "content": intervention})
+                    stimulus_ready = True
+            except ValueError as e:
+                # Tool call/result count mismatch (shouldn't happen, but log if it does)
+                _vlog("fcp", f"loop detection skipped: {e}")
                 _loop_window.clear()
-                tools_repr = ", ".join(c.tool for c in tool_calls)
-                intervention = (
-                    f"[FCP] Loop detected: the same tool call(s) ({tools_repr}) returned "
-                    f"identical results {_LOOP_THRESHOLD} times in a row. "
-                    "Stop and report the situation to the Operator. Do not retry."
-                )
-                _append_msg(layout, "fcp", intervention)
-                chat_history.append({"role": "user", "content": intervention})
-                stimulus_ready = True
         else:
             _loop_window.clear()
 
