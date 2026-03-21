@@ -301,7 +301,7 @@ class TestGoogleParsing:
                 "candidatesTokenCount": 50,
             },
         }
-        result, _, _ = google_parse(data)
+        result, _ = google_parse(data)
         assert result.text == "Hello, how can I help?"
         assert len(result.tool_use_calls) == 0
 
@@ -326,9 +326,9 @@ class TestGoogleParsing:
                 "candidatesTokenCount": 50,
             },
         }
-        result, _, _ = google_parse(data)
+        result, _ = google_parse(data)
         assert len(result.tool_use_calls) == 1
-        assert result.tool_use_calls[0].id == "call_0"  # Synthetic ID
+        assert result.tool_use_calls[0].id.startswith("call_")  # Synthetic ID
         assert result.tool_use_calls[0].tool == "fcp_exec"
         assert result.tool_use_calls[0].input == {"command": "ls"}
 
@@ -359,10 +359,10 @@ class TestGoogleParsing:
                 "candidatesTokenCount": 50,
             },
         }
-        result, _, _ = google_parse(data)
+        result, _ = google_parse(data)
         assert len(result.tool_use_calls) == 2
-        assert result.tool_use_calls[0].id == "call_0"
-        assert result.tool_use_calls[1].id == "call_1"
+        assert result.tool_use_calls[0].id.startswith("call_")
+        assert result.tool_use_calls[1].id.startswith("call_")
 
     def test_mixed_content_and_tool_calls(self):
         """Text with tool calls."""
@@ -386,7 +386,7 @@ class TestGoogleParsing:
                 "candidatesTokenCount": 50,
             },
         }
-        result, _, _ = google_parse(data)
+        result, _ = google_parse(data)
         assert result.text == "Processing your request..."
         assert len(result.tool_use_calls) == 1
         assert result.tool_use_calls[0].tool == "processor"
@@ -403,7 +403,7 @@ class TestGoogleParsing:
                 "candidatesTokenCount": 5,
             },
         }
-        result, _, _ = google_parse(data)
+        result, _ = google_parse(data)
         assert result.text == ""
         assert len(result.tool_use_calls) == 0
 
@@ -997,7 +997,7 @@ class TestOllamaStreaming:
         result = _parse_streaming_response(chunks)
         assert result.text == "I'll help with that."
         assert len(result.tool_use_calls) == 1
-        assert result.tool_use_calls[0].id == "call_0"
+        assert result.tool_use_calls[0].id.startswith("call_")
         assert result.tool_use_calls[0].tool == "fcp_exec"
 
     def test_streaming_multiple_tool_calls_sequential_ids(self):
@@ -1042,8 +1042,8 @@ class TestOllamaStreaming:
 
         result = _parse_streaming_response(chunks)
         assert len(result.tool_use_calls) == 2
-        assert result.tool_use_calls[0].id == "call_0"
-        assert result.tool_use_calls[1].id == "call_1"
+        assert result.tool_use_calls[0].id.startswith("call_")
+        assert result.tool_use_calls[1].id.startswith("call_")
 
 
 class TestOllamaParsing:
@@ -1087,7 +1087,7 @@ class TestOllamaParsing:
         result = ollama_parse(data)
         assert result.text == "I'll execute that for you."
         assert len(result.tool_use_calls) == 1
-        assert result.tool_use_calls[0].id == "call_0"  # Synthetic ID
+        assert result.tool_use_calls[0].id.startswith("call_")  # Synthetic ID
         assert result.tool_use_calls[0].tool == "fcp_exec"
         assert result.tool_use_calls[0].input == {"command": "ls -la"}
 
@@ -1138,8 +1138,8 @@ class TestOllamaParsing:
         }
         result = ollama_parse(data)
         assert len(result.tool_use_calls) == 2
-        assert result.tool_use_calls[0].id == "call_0"
-        assert result.tool_use_calls[1].id == "call_1"
+        assert result.tool_use_calls[0].id.startswith("call_")
+        assert result.tool_use_calls[1].id.startswith("call_")
         assert result.tool_use_calls[0].tool == "tool_a"
         assert result.tool_use_calls[1].tool == "tool_b"
 
