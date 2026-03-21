@@ -105,8 +105,10 @@ def _convert_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     FCP sends tool results as role:user with '[tool_name] {json}' text.
     Ollama expects role:tool with tool_name and content fields.
-    Tool result lines that follow an assistant turn with tool_calls are
-    converted to individual role:tool messages.
+
+    Tool result lines are identified by: a user message that follows an empty
+    assistant turn (content=="", which signals a tool-use cycle in FCP), where
+    the content starts with "[" (the tool result bracket format).
     """
     result: list[dict[str, Any]] = []
     i = 0
@@ -116,10 +118,16 @@ def _convert_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         if role == "user":
             content = msg.get("content", "")
-            # Check if the previous message was an assistant with tool calls
             prev = result[-1] if result else {}
-            if prev.get("role") == "assistant" and prev.get("tool_calls"):
-                # Parse tool result lines: "[tool_name] {json}" per line
+            # Detect tool result turn: follows an empty assistant turn AND starts with "["
+            # Empty assistant (content=="") means the assistant made tool calls that cycle.
+            # The "tool_calls" key is NOT present in FCP chat_history — we detect by content=="".
+            prev_is_tool_turn = (
+                prev.get("role") == "assistant"
+                and not prev.get("content", "")
+                and content.startswith("[")
+            )
+            if prev_is_tool_turn:
                 tool_msgs = _parse_tool_result_lines(content)
                 if tool_msgs:
                     result.extend(tool_msgs)
