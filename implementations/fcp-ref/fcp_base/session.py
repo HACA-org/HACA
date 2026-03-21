@@ -119,6 +119,101 @@ def _trim_chat_history(
 
 
 # ---------------------------------------------------------------------------
+# Stimulus Collection and Input Handling
+# ---------------------------------------------------------------------------
+
+def _process_stimulus_and_input(
+    layout: Layout,
+    chat_history: list[dict[str, Any]],
+    adapter_ref: AdapterRef,
+) -> tuple[bool, bool, str]:
+    """Collect stimuli from inbox and user input, return (stimulus_ready, session_closed, close_reason).
+
+    Processes:
+    1. Inbox drainage and consolidation
+    2. User input handling (operator commands, text input)
+    3. Command dispatch (/verbose, /exit, /new, /compact)
+
+    Returns:
+    - stimulus_ready: True if chat_history was updated with new content
+    - session_closed: True if /exit or error occurred
+    - close_reason: Reason for session close (if session_closed)
+    """
+    close_reason = ""
+    stimulus_ready = False
+
+    # Drain io/inbox/ → consolidate to session.jsonl
+    inbox_envs = _drain_and_consolidate(layout)
+    for env in inbox_envs:
+        indicator = _cmi_indicator(env)
+        if indicator:
+            print(f"{_DIM}{indicator}{_RESET}")
+        text = _envelope_to_text(env)
+        if text:
+            chat_history.append({"role": "user", "content": text})
+            stimulus_ready = True
+
+    # If no stimulus from inbox, wait for operator input before invoking CPE
+    if not stimulus_ready:
+        try:
+            user_input = _readline_with_history("> ")
+        except KeyboardInterrupt:
+            print()
+            return True, True, "operator_interrupt"
+        except EOFError:
+            return True, True, "operator_eof"
+
+        stripped = user_input.strip()
+        if not stripped:
+            return False, False, ""
+
+        # Platform commands — handle without invoking CPE
+        if stripped.startswith("/"):
+            from .operator import handle_platform_command
+            handled = handle_platform_command(layout, stripped, adapter_ref=adapter_ref)
+            if handled:
+                cmd, _args = _parse_command(stripped)
+                if cmd in ("/verbose", "/debugger"):
+                    pass  # debug output appears on next CPE cycle
+                if _is_endure_approved():
+                    _set_endure_approved(False)
+                    return True, True, "endure_approved"
+                if cmd in ("/exit", "/bye", "/close"):
+                    return True, True, "operator_exit"
+                if cmd in ("/new", "/clear", "/reset"):
+                    return True, True, "operator_reset"
+                # Check if /compact was requested
+                if _is_compact_pending():
+                    _set_compact_pending(False)
+                    compact_msg = (
+                        "[COMPACT_REQUEST] The operator has requested session compaction. "
+                        "Generate a closure_payload now via fcp_mil to preserve your working context. "
+                        "The session will continue after compaction — use session_handoff.next_steps "
+                        "to describe where to resume."
+                    )
+                    _append_msg(layout, "fcp", compact_msg)
+                    chat_history.append({"role": "user", "content": compact_msg})
+                    return True, False, "compact_requested"
+                return False, False, ""
+            if not handled:
+                from .operator import _cmd_output
+                cmd, _args = _parse_command(stripped)
+                with _cmd_output():
+                    if cmd:
+                        print(f"unknown command: {cmd}")
+                    else:
+                        print("invalid command (must start with /)")
+                return False, False, ""
+
+        _vlog("operator", f"input: {stripped!r}")
+        _append_msg(layout, "operator", user_input)
+        chat_history.append({"role": "user", "content": stripped})
+        stimulus_ready = True
+
+    return stimulus_ready, False, ""
+
+
+# ---------------------------------------------------------------------------
 # Command Parsing Helper
 # ---------------------------------------------------------------------------
 
@@ -292,75 +387,21 @@ def run_session(
         _vlog("fcp", f"baseline load error ({e}) — vital check disabled")
 
     while True:
-        # drain io/inbox/ → consolidate to session.jsonl
-        inbox_envs = _drain_and_consolidate(layout)
-        for env in inbox_envs:
-            indicator = _cmi_indicator(env)
-            if indicator:
-                print(f"{_DIM}{indicator}{_RESET}")
-            text = _envelope_to_text(env)
-            if text:
-                chat_history.append({"role": "user", "content": text})
+        # Collect stimuli from inbox and user input
+        stimulus_ready, should_close, close_reason = _process_stimulus_and_input(
+            layout, chat_history, adapter_ref
+        )
+        if should_close:
+            if close_reason == "compact_requested":
+                # Compact was requested; set flag and inject message
+                compact_in_progress = True
                 stimulus_ready = True
+            else:
+                # Session should close
+                break
 
-        # if no stimulus, wait for operator input before invoking CPE
         if not stimulus_ready:
-            try:
-                user_input = _readline_with_history("> ")
-            except KeyboardInterrupt:
-                print()
-                close_reason = "operator_interrupt"
-                break
-            except EOFError:
-                close_reason = "operator_eof"
-                break
-            stripped = user_input.strip()
-            if not stripped:
-                continue
-            # platform commands — handle without invoking CPE
-            if stripped.startswith("/"):
-                from .operator import handle_platform_command
-                handled = handle_platform_command(layout, stripped, adapter_ref=adapter_ref)
-                if handled:
-                    cmd, _args = _parse_command(stripped)
-                    if cmd in ("/verbose", "/debugger"):
-                        pass  # debug output appears on next CPE cycle
-                    if _is_endure_approved():
-                        _set_endure_approved(False)
-                        close_reason = "endure_approved"
-                        break
-                    if cmd in ("/exit", "/bye", "/close"):
-                        close_reason = "operator_exit"
-                        break
-                    if cmd in ("/new", "/clear", "/reset"):
-                        close_reason = "operator_reset"
-                        break
-                    # check if /compact was just requested
-                    if _is_compact_pending():
-                        _set_compact_pending(False)
-                        compact_in_progress = True
-                        compact_msg = (
-                            "[COMPACT_REQUEST] The operator has requested session compaction. "
-                            "Generate a closure_payload now via fcp_mil to preserve your working context. "
-                            "The session will continue after compaction — use session_handoff.next_steps "
-                            "to describe where to resume."
-                        )
-                        _append_msg(layout, "fcp", compact_msg)
-                        chat_history.append({"role": "user", "content": compact_msg})
-                        stimulus_ready = True
-                    continue  # back to top — wait for next input, no CPE call
-                if not handled:
-                    from .operator import _cmd_output
-                    cmd, _args = _parse_command(stripped)
-                    with _cmd_output():
-                        if cmd:
-                            print(f"unknown command: {cmd}")
-                        else:
-                            print("invalid command (must start with /)")
-                    continue
-            _vlog("operator", f"input: {stripped!r}")
-            _append_msg(layout, "operator", user_input)
-            chat_history.append({"role": "user", "content": stripped})
+            continue
 
         stimulus_ready = False
         cycle += 1
