@@ -18,7 +18,7 @@ from fcp_base.cpe.base import CPEError, CPEResponse, ToolUseCall
 from fcp_base.cpe.anthropic import _parse_response as anthropic_parse
 from fcp_base.cpe.openai import _parse_response as openai_parse
 from fcp_base.cpe.google import _parse_response as google_parse
-from fcp_base.cpe.ollama import _parse_response as ollama_parse
+from fcp_base.cpe.ollama import _parse_response as ollama_parse, _convert_messages
 from fcp_base.cpe.models import (
     get_default_model,
     get_api_version,
@@ -1154,3 +1154,83 @@ class TestOllamaParsing:
         result = ollama_parse(data)
         assert result.text == ""
         assert len(result.tool_use_calls) == 0
+
+
+class TestOllamaConvertMessages:
+    """Test _convert_messages() multi-turn tool use conversion."""
+
+    def test_plain_messages_passthrough(self):
+        """Regular user/assistant turns pass through unchanged."""
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there"},
+            {"role": "user", "content": "Bye"},
+        ]
+        result = _convert_messages(messages)
+        assert result == messages
+
+    def test_tool_result_after_empty_assistant(self):
+        """Tool results after empty assistant turn → proper tool_calls + role:tool."""
+        messages = [
+            {"role": "user", "content": "do it"},
+            {"role": "assistant", "content": ""},
+            {"role": "user", "content": '[memory_recall] {"status": "ok"}'},
+        ]
+        result = _convert_messages(messages)
+        # Assistant turn gets tool_calls added
+        assert result[1]["role"] == "assistant"
+        assert "tool_calls" in result[1]
+        assert result[1]["tool_calls"][0]["function"]["name"] == "memory_recall"
+        assert result[1]["tool_calls"][0]["id"] == "call_0"
+        # role:tool message with matching ID
+        assert result[2]["role"] == "tool"
+        assert result[2]["tool_call_id"] == "call_0"
+        assert len(result) == 3
+
+    def test_tool_result_after_assistant_with_text(self):
+        """Tool results after assistant with text (text+tools case) → proper format."""
+        messages = [
+            {"role": "user", "content": "do it"},
+            {"role": "assistant", "content": "Sure, running now"},
+            {"role": "user", "content": '[memory_write] {"results": [{"status": "ok"}]}'},
+        ]
+        result = _convert_messages(messages)
+        # Assistant turn gets tool_calls added (content preserved)
+        assert result[1]["content"] == "Sure, running now"
+        assert "tool_calls" in result[1]
+        assert result[1]["tool_calls"][0]["function"]["name"] == "memory_write"
+        # role:tool message
+        assert result[2]["role"] == "tool"
+        assert result[2]["tool_call_id"] == "call_0"
+
+    def test_multiple_tool_results(self):
+        """Multiple tool results in one turn → multiple tool_calls + role:tool messages."""
+        messages = [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": ""},
+            {"role": "user", "content": '[memory_recall] {"r": 1}\n[file_reader] {"r": 2}'},
+        ]
+        result = _convert_messages(messages)
+        # Two tool_calls on assistant
+        assert len(result[1]["tool_calls"]) == 2
+        assert result[1]["tool_calls"][0]["function"]["name"] == "memory_recall"
+        assert result[1]["tool_calls"][1]["function"]["name"] == "file_reader"
+        assert result[1]["tool_calls"][0]["id"] == "call_0"
+        assert result[1]["tool_calls"][1]["id"] == "call_1"
+        # Two role:tool messages
+        assert result[2]["role"] == "tool"
+        assert result[2]["tool_call_id"] == "call_0"
+        assert result[3]["role"] == "tool"
+        assert result[3]["tool_call_id"] == "call_1"
+        assert len(result) == 4
+
+    def test_non_tool_user_message_not_converted(self):
+        """User message not starting with '[' is not treated as tool result."""
+        messages = [
+            {"role": "assistant", "content": ""},
+            {"role": "user", "content": "normal user message"},
+        ]
+        result = _convert_messages(messages)
+        assert result[1]["role"] == "user"
+        assert "tool_call_id" not in result[1]
+        assert "tool_calls" not in result[0]
