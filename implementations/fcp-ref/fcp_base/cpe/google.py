@@ -116,18 +116,26 @@ def _build_contents(
                 i += 1
                 continue
 
-            # tool_results is not None — validate count and process
+            # tool_results is not None — validate count matches
             if len(tool_results) != len(last_function_calls):
-                # Debug: show which tools were expected vs parsed
+                # Mismatch: don't try to force-map results to calls
+                # Treat as regular user message instead
                 expected_tools = [fc["functionCall"]["name"] for fc in last_function_calls]
-                logger.warning(
+                logger.error(
                     f"Tool result count mismatch: expected {len(last_function_calls)} "
                     f"(tools: {expected_tools}), but got {len(tool_results)} results. "
+                    f"Treating as regular user message instead of function responses. "
                     f"Content preview: {content[:200]}"
                 )
+                # Skip function response mapping — treat as regular message
+                contents.append({"role": "user", "parts": [{"text": content}]})
+                i += 1
+                continue
+
+            # Counts match — build proper function response parts
             parts: list[dict[str, Any]] = []
             for j, fc in enumerate(last_function_calls):
-                resp = tool_results[j] if j < len(tool_results) else {}
+                resp = tool_results[j]
                 parts.append({
                     "functionResponse": {
                         "name": fc["functionCall"]["name"],
