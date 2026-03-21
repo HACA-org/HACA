@@ -205,7 +205,6 @@ def _process_stimulus_and_input(
                         print("invalid command (must start with /)")
                 return False, False, ""
 
-        _vlog("operator", f"input: {stripped!r}")
         _append_msg(layout, "operator", user_input)
         chat_history.append({"role": "user", "content": stripped})
         stimulus_ready = True
@@ -1435,7 +1434,8 @@ def _vlog_cycle_summary(
                 _vprint(line)
 
         # CPE response line — always last (└─ if no further output, ├─ not needed)
-        _vprint(f"  └─ [← CPE] ⏱ {elapsed_secs:.1f}s | {response.input_tokens}→{response.output_tokens} | {response.stop_reason}")
+        # Note: tokens already shown in footer of CPE block above, so omit here
+        _vprint(f"  └─ [← CPE] ⏱ {elapsed_secs:.1f}s | {response.stop_reason}")
         if response.text:
             preview = response.text[:50].replace("\n", " ")
             _vprint(f"     └─ text: {preview!r} ({len(response.text)} chars)")
