@@ -59,6 +59,15 @@ class GoogleAdapter:
         self._last_function_calls = raw_fc_parts
         return response
 
+    def _reset_state(self) -> None:
+        """Reset adapter state for fallback chain recovery.
+
+        Clears cached model parts and function calls so next adapter
+        doesn't inherit stale state from failed invocation.
+        """
+        self._last_model_parts = []
+        self._last_function_calls = []
+
 
 def _build_contents(
     messages: list[dict[str, Any]],
