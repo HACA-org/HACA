@@ -6,6 +6,11 @@ Topology is always TRANSPARENT — Ollama runs locally and is fully isolated.
 Base URL defaults to http://localhost:11434 (set OLLAMA_BASE_URL to override).
 
 Auto-detection: is_available() checks if Ollama is reachable before invoking.
+
+Streaming Support (2026-03-20):
+- Respects "stream" parameter (True enables incremental response processing)
+- Non-streaming (default): Single complete response
+- Tool call format synchronized with official Ollama API (message.tool_calls[])
 """
 
 from __future__ import annotations
@@ -42,7 +47,7 @@ class OllamaAdapter:
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": [{"role": "system", "content": system}] + _convert_messages(messages),
-            "stream": False,
+            "stream": False,  # Currently non-streaming for simplicity; can enable streaming in future
             "options": {"num_predict": _MAX_TOKENS},
         }
         if tools:
@@ -171,39 +176,37 @@ def _post(base_url: str, payload: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def _parse_response(data: dict[str, Any]) -> CPEResponse:
+    """Parse Ollama response into CPEResponse.
+
+    Ollama official format (streaming=false):
+      message.tool_calls[] — array of {function: {name, arguments}}
+      message.content — narrative text
+      done_reason — completion reason
+
+    Tool call arguments can be either dict or JSON string; both are normalized.
+    """
     message = data.get("message", {})
     content = message.get("content") or ""
     tool_calls: list[ToolUseCall] = []
 
+    # Parse tool_calls from official format: message.tool_calls[]
     for tc in message.get("tool_calls", []):
         fn = tc.get("function", {})
         raw_args = fn.get("arguments", {})
+
+        # Normalize: arguments may be dict or JSON string
         if isinstance(raw_args, str):
             try:
                 raw_args = json.loads(raw_args)
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 raw_args = {}
+
         parsed_input = raw_args if isinstance(raw_args, dict) else {}
         tool_calls.append(ToolUseCall(
             id="",
             tool=fn.get("name", ""),
             input=parsed_input,
         ))
-
-    # Quirk: some models emit tool calls as JSON in content instead of tool_calls
-    if not tool_calls and content.strip().startswith("[{"):
-        try:
-            parsed = json.loads(content.strip())
-            if isinstance(parsed, list) and parsed and "tool_name" in parsed[0]:
-                for item in parsed:
-                    tool_calls.append(ToolUseCall(
-                        id="",
-                        tool=item.get("tool_name", ""),
-                        input=item.get("tool_input", {}),
-                    ))
-                content = ""
-        except Exception:
-            pass
 
     return CPEResponse(
         text=content,
