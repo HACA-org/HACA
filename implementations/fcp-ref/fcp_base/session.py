@@ -486,22 +486,30 @@ def run_session(
 
         session_closed = False
         tool_results: list[str] = []
-        tool_log_lines: list[str] = []
+        tool_log_lines: list[dict[str, Any]] = []
 
         for i, call in enumerate(tool_calls):
             tool_start = time.time()
             result, closed = dispatch_tool_use(layout, call, index)
             tool_elapsed = time.time() - tool_start
 
-            # Accumulate tool log lines (printed later in cycle summary)
-            if _is_verbose():
-                is_last = i == len(tool_calls) - 1
-                prefix = "  │  └─" if is_last else "  │  ├─"
-                input_size = _format_bytes(len(json.dumps(call.input, ensure_ascii=False)))
-                result_size = _format_bytes(len(json.dumps(result, ensure_ascii=False)))
-                status = "OK" if isinstance(result, dict) and result.get("error") is None else "FAIL"
-                timing_str = f", {tool_elapsed*1000:.0f}ms" if tool_elapsed > 0.01 else ""
-                tool_log_lines.append(f"{prefix} {call.tool} ... input ({input_size}) → {status} ({result_size}{timing_str})")
+            # Accumulate tool execution info (printed later in cycle summary)
+            is_last = i == len(tool_calls) - 1
+            input_size = _format_bytes(len(json.dumps(call.input, ensure_ascii=False)))
+            result_size = _format_bytes(len(json.dumps(result, ensure_ascii=False)))
+            status = "OK" if isinstance(result, dict) and result.get("error") is None else "FAIL"
+            timing_ms = tool_elapsed * 1000
+
+            tool_log_lines.append({
+                "tool": call.tool,
+                "is_last": is_last,
+                "input": call.input,
+                "output": result,
+                "input_size": input_size,
+                "result_size": result_size,
+                "status": status,
+                "timing_ms": timing_ms,
+            })
 
             _return_tool_result(layout, call.id, call.tool, result)
             # Serialize result once and reuse for chat history
@@ -1362,6 +1370,18 @@ def _format_bytes(num_bytes: int) -> str:
         return f"{num_bytes / (1024 * 1024):.1f}MB"
 
 
+def _compact_json(data: Any, max_len: int = 150) -> str:
+    """Format data as compact JSON, truncating if too long.
+
+    Useful for inline logging in verbose mode.
+    Truncates long strings and shows ... if output exceeds max_len.
+    """
+    j = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+    if len(j) > max_len:
+        return j[:max_len] + "...}"
+    return j
+
+
 def _vlog(actor: str, msg: str) -> None:
     if not _is_verbose():
         return
@@ -1416,12 +1436,14 @@ def _vlog_request(
 def _vlog_cycle_summary(
     response: CPEResponse,
     elapsed_secs: float,
-    tool_log_lines: list[str],
+    tool_log_lines: list[dict[str, Any]],
 ) -> None:
     """Print cycle summary after dispatch: [DISPATCH] tree + [← CPE] line.
 
     Called after all tool calls are done so the tree is printed in the
     correct order: dispatch block first, then CPE response line at the bottom.
+
+    tool_log_lines: list of dicts with tool, input, output, input_size, result_size, status, timing_ms, is_last
     """
     if not _is_verbose() and _get_debugger() is None:
         return
@@ -1430,8 +1452,23 @@ def _vlog_cycle_summary(
         # Dispatch block
         if tool_log_lines:
             _vprint("  ├─ [DISPATCH]")
-            for line in tool_log_lines:
-                _vprint(line)
+            for tool_info in tool_log_lines:
+                tool = tool_info["tool"]
+                is_last = tool_info["is_last"]
+                input_size = tool_info["input_size"]
+                result_size = tool_info["result_size"]
+                status = tool_info["status"]
+                timing_ms = tool_info["timing_ms"]
+                timing_str = f", {timing_ms:.0f}ms" if timing_ms > 10 else ""
+
+                prefix = "  │  └─" if is_last else "  │  ├─"
+                _vprint(f"{prefix} {tool}")
+
+                # Show input/output JSONs (compact format)
+                input_json = _compact_json(tool_info["input"])
+                output_json = _compact_json(tool_info["output"])
+                _vprint(f"{prefix[:-2]}│  ├─ input: {input_json}")
+                _vprint(f"{prefix[:-2]}│  └─ output: {output_json}")
 
         # CPE response line — always last (└─ if no further output, ├─ not needed)
         # Note: tokens already shown in footer of CPE block above, so omit here
