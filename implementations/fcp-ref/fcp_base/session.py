@@ -387,18 +387,19 @@ def run_session(
         _vlog("fcp", f"baseline load error ({e}) — vital check disabled")
 
     while True:
-        # Collect stimuli from inbox and user input
-        stimulus_ready, should_close, close_reason = _process_stimulus_and_input(
-            layout, chat_history, adapter_ref
-        )
-        if should_close:
-            if close_reason == "compact_requested":
-                # Compact was requested; set flag and inject message
-                compact_in_progress = True
-                stimulus_ready = True
-            else:
-                # Session should close
-                break
+        # If pre-loaded stimulus (first_stimuli, greeting, inject), skip input collection
+        if not stimulus_ready:
+            stimulus_ready, should_close, close_reason = _process_stimulus_and_input(
+                layout, chat_history, adapter_ref
+            )
+            if should_close:
+                if close_reason == "compact_requested":
+                    # Compact was requested; set flag and inject message
+                    compact_in_progress = True
+                    stimulus_ready = True
+                else:
+                    # Session should close
+                    break
 
         if not stimulus_ready:
             continue
