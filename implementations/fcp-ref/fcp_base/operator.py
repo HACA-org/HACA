@@ -592,15 +592,38 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
         print(f"  workspace focus set: {target}")
     elif sub == "clone" and len(args) > 1:
         import subprocess
+        # Clone into current workspace_focus (must be set first)
+        if not layout.workspace_focus.exists():
+            print("  workspace_focus not set, use '/work set <path>' first")
+            return
+        try:
+            focus_data = read_json(layout.workspace_focus)
+            focus_path = focus_data.get("path", "")
+            if not focus_path:
+                print("  workspace_focus not set, use '/work set <path>' first")
+                return
+            focus_dir = Path(focus_path)
+        except Exception:
+            print("  workspace_focus not set, use '/work set <path>' first")
+            return
+
         repo = args[1]
         name = repo.rstrip("/").split("/")[-1].removesuffix(".git")
-        dest = layout.workspace_dir / name
+        dest = focus_dir / name
+
+        # Validate: dest must not be an ancestor of entity_root
+        try:
+            layout.root.relative_to(dest)
+            print(f"  path is an ancestor of entity root: {dest}")
+            return
+        except ValueError:
+            pass  # Good: dest is NOT an ancestor of entity_root
+
         r = subprocess.run(["git", "clone", repo, str(dest)], capture_output=True, text=True)
         if r.returncode != 0:
             print(f"  clone failed: {r.stderr.strip()}")
             return
-        atomic_write(layout.workspace_focus, {"path": str(dest)})
-        print(f"  cloned and focus set: {dest}")
+        print(f"  cloned: {dest}")
     elif sub == "status":
         wf = ""
         if layout.workspace_focus.exists():
@@ -1952,9 +1975,10 @@ def _cmd_help() -> None:
 
   Workspace:
     /work status                          — show active workspace focus
-    /work set <subdir>                    — set workspace focus (within entity_root/workspace/)
-    /work set .                           — set focus to entity_root/workspace/
-    /work clone <repo>                    — clone repo and set as workspace focus
+    /work set <path>                      — set workspace focus
+                                            • relative path: resolve against entity_root/workspace/ ('.' → workspace/)
+                                            • absolute path: allow outside entity_root/, no ancestor dir ('/full/path' → project/)
+    /work clone <repo>                    — clone repo into current workspace_focus (must be set first) 
     /work unset                           — unset workspace focus
 
   Skills:
