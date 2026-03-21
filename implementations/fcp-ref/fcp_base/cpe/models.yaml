@@ -1,0 +1,100 @@
+# CPE Model Registry
+#
+# Defines default models for each adapter and provider.
+# Can be overridden via environment variables or constructor parameters.
+#
+# Last Updated: 2026-03-21
+
+adapters:
+  anthropic:
+    # Claude family — best for reasoning and extended thinking
+    default: claude-opus-4-6
+    description: "Enterprise-grade reasoning, supports extended thinking"
+    api_version: "2024-06-15"
+    max_tokens: 8192
+    models:
+      - claude-opus-4-6
+      - claude-sonnet-4-6
+      - claude-haiku-4-5-20251001
+
+  openai:
+    # GPT family — best-in-class for reasoning at scale
+    default: gpt-4o
+    description: "Latest GPT model with reasoning and tool use"
+    api_url: "https://api.openai.com/v1"
+    max_tokens: 8192
+    supports:
+      - prompt_caching: true
+      - streaming: false
+      - vision: true
+    models:
+      - gpt-4o
+      - gpt-4o-mini
+      - gpt-4-turbo
+
+  google:
+    # Gemini family — competitive reasoning with thinking
+    default: gemini-2.0-flash
+    description: "Latest Gemini with thinking blocks and tool use"
+    api_url: "https://generativelanguage.googleapis.com/v1beta/models"
+    max_tokens: 8192
+    supports:
+      - thinking: true
+      - streaming: false
+    models:
+      - gemini-2.0-flash
+      - gemini-2.0-flash-thinking-exp-01-21
+      - gemini-1.5-pro
+
+  ollama:
+    # Local inference — zero cost, full control
+    default: llama3.2
+    description: "Local inference, configurable model"
+    api_url: "http://localhost:11434"
+    max_tokens: 8192
+    supports:
+      - streaming: true
+      - local_only: true
+    models:
+      - llama3.2
+      - llama2
+      - neural-chat
+      - mistral
+      - neural-chat
+    notes: "Check local Ollama instance for available models"
+
+  pairing:
+    # IDE/CLI pairing — full shell access
+    default: null
+    description: "Filesystem-based MCP bridge; no model"
+    topology: "opaque"
+    sandbox: true
+
+# Environment Variable Overrides
+#
+# Each adapter respects these env vars:
+# - ANTHROPIC_API_KEY
+# - ANTHROPIC_MODEL (default: claude-opus-4-6)
+# - OPENAI_API_KEY
+# - OPENAI_MODEL (default: gpt-4o)
+# - OPENAI_BASE_URL (default: https://api.openai.com/v1)
+# - GOOGLE_API_KEY
+# - GOOGLE_MODEL (default: gemini-2.0-flash)
+# - OLLAMA_BASE_URL (default: http://localhost:11434)
+# - OLLAMA_MODEL (default: llama3.2)
+
+# Recommendations by Use Case
+#
+# Accuracy & Reasoning (enterprise):
+#   - Anthropic: claude-opus-4-6 (best for complex reasoning)
+#   - OpenAI: gpt-4o (best for mixed reasoning + speed)
+#
+# Speed & Cost (consumer):
+#   - OpenAI: gpt-4o-mini (fast, cheap)
+#   - Google: gemini-2.0-flash (very fast)
+#
+# Local & Private:
+#   - Ollama: llama3.2 (privacy-first, zero cost)
+#
+# IDE Integration:
+#   - Pairing: filesystem MCP bridge (full shell access)
