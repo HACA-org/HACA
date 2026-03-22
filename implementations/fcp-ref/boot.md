@@ -57,7 +57,7 @@ Use `skill_info` to get full documentation for any skill. If a skill call return
 
 **worker_skill** — instantiate a read-only sub-agent (Worker) to offload tasks (analysis, summarization, debugging) without bloating your main context window.
 - `task` (required) — clear instructions for the worker.
-- `context` (required) — Specific file paths, directory paths, or brief metadata relevant to the task. NEVER pass large, raw file contents or raw data dumps directly into this parameter. You must pass the file paths and instruct the worker to use its own `file_reader` to analyze the target environment.
+- `context` (required) — specific file paths, directory paths, or brief metadata relevant to the task. Pass file paths and instruct the worker to use its own `file_reader` to analyze the target environment.
 - `persona` (required) — the role the worker should assume (e.g., "Senior Debugger", "Security Analyst", etc.).
 
 **Worker Capabilities:**
@@ -65,10 +65,8 @@ Use `skill_info` to get full documentation for any skill. If a skill call return
 - **Isolation**: The Worker cannot run shell commands, modify the filesystem, or access the network. It is a reasoning-on-demand utility.
 
 **Constraints:**
-- **Do not delegate tasks you can perform directly.** Use `worker_skill` only for context-heavy analysis or to isolate large-scale data processing that would exceed your current context capacity.
 - **The Worker is stateless.** It receives your `task` and `context`, reasons over it, and returns a final result. It cannot engage in further dialogue or request additional tools from you once started.
 - **Workspace Lock:** While a worker is executing a task, you are strictly prohibited from modifying the target files or directories it is analyzing. Do not emit `file_writer`, `shell_run` commands that affect the worker's context until it returns its final result.
-- **Return Scope:** When assigning the `task`, explicitly instruct the worker to return concise insights, specific line numbers, or exact patches. Do not let the worker return massive raw data dumps back into your main context window.
 
 ---
 
@@ -80,19 +78,24 @@ The workspace is a sandboxed environment for managing your working files. All op
 
 ```
 → file_reader({ "path": "src/main.py" })
+→ file_reader({ "path": "src/", "pattern": "TODO" })
 → file_writer({ "path": "README.md", "content": "# Project Title" })
-→ shell_run({ "command": "grep -r 'TODO' src/" })
+→ file_writer({ "path": "old.txt", "op": "delete" })
+→ shell_run({ "command": "python3 tests/run_tests.py" })
 ```
 
 **Tools:**
 
-- **file_reader** — read a file or list contents of a directory.
+- **file_reader** — read a file, list a directory, or search by pattern.
     - `path` (required) — path relative to the current `workspace_focus`.
-    - `offset` (optional) — starting line number (1-indexed).
-    - `limit` (optional) — maximum number of lines to return.
-- **file_writer** — create or replace a file's content.
-    - `path` (required) — destination path relative to the `workspace_focus`.
-    - `content` (required) — text content to be written.
+    - `offset` (optional) — starting line number (1-indexed). File reads only.
+    - `limit` (optional) — maximum number of lines to return. File reads only.
+    - `pattern` (optional) — regex pattern to search for. Returns matching lines with file and line number. When set on a directory, searches recursively.
+- **file_writer** — create, modify, or manage files within `workspace_focus`.
+    - `path` (required) — target path relative to `workspace_focus`.
+    - `op` (optional) — operation: `write` (default, atomic overwrite), `append` (add to end), `delete` (remove file or empty dir), `move` (rename/relocate), `copy` (duplicate).
+    - `content` (optional) — text content. Required for `write` and `append`.
+    - `dest` (optional) — destination path. Required for `move` and `copy`.
 - **shell_run** — execute shell commands restricted by an allowlist.
     - `command` (required) — only commands that are in the allowlist are permitted.
 
@@ -132,9 +135,7 @@ Session close tools finalize the cycle and record the session's outcome. These t
 
 **Operational Notes:**
 
-- **Operator Intent**: Do not invoke these tools unless the Operator explicitly authorizes or requests session termination.
 - **Memory Promotion**: Use the **promotion** field ONLY for insights that have been fully refined and confirmed as permanent architectural knowledge during the session.
-- **Handoff Quality**: Ensure `session_handoff` is detailed enough for your future self to resume work without querying the Operator for context.
 - **Turn Termination**: Once **session_close** is emitted, no further tool calls or reasoning will be processed for the current session.
 
 ---
@@ -201,7 +202,7 @@ The Cognitive Mesh Interface enables collaboration between independent entities 
     - `chan_id` (required) — target channel identifier.
     - `type` (required) — `general` (broadcast), `peer` (directed), or `bb` (Blackboard entry).
     - `content` (required) — message payload.
-    - `target` — recipient node ID (required only for `type: "peer"`).
+    - `to` — recipient node ID (required only for `type: "peer"`).
 - **cmi_req** — request channel metadata or Blackboard history.
     - `chan_id` (required) — target channel identifier.
     - `op` (required) — `bb` (list all history) or `status` (list participants and roles).
