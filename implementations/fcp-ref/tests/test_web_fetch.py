@@ -239,20 +239,20 @@ class TestWebAllowlistAdd(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_add_prefix_from_url(self):
-        from fcp_base.exec_ import _web_allowlist_add
+        from fcp_base.exec_ import web_allowlist_add as _web_allowlist_add
         _web_allowlist_add(self.layout, "https://example.com/some/path")
         manifest = json.loads(self.manifest_path.read_text())
         self.assertIn("https://example.com/", manifest["allowlist"])
 
     def test_add_is_idempotent(self):
-        from fcp_base.exec_ import _web_allowlist_add
+        from fcp_base.exec_ import web_allowlist_add as _web_allowlist_add
         _web_allowlist_add(self.layout, "https://example.com/page1")
         _web_allowlist_add(self.layout, "https://example.com/page2")
         manifest = json.loads(self.manifest_path.read_text())
         self.assertEqual(manifest["allowlist"].count("https://example.com/"), 1)
 
     def test_add_multiple_hosts(self):
-        from fcp_base.exec_ import _web_allowlist_add
+        from fcp_base.exec_ import web_allowlist_add as _web_allowlist_add
         _web_allowlist_add(self.layout, "https://a.com/x")
         _web_allowlist_add(self.layout, "https://b.com/y")
         manifest = json.loads(self.manifest_path.read_text())
