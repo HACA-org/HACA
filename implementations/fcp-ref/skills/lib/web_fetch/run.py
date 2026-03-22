@@ -47,8 +47,18 @@ def main() -> None:
     except Exception:
         pass
 
-    # operator "allow once" bypass via env var
-    allow_once = os.environ.get("FCP_WEB_FETCH_ALLOW_ONCE", "")
+    # operator "allow once" bypass via env var — normalise the stored value the same
+    # way so that "https://example.com" and "https://example.com/" are treated as equal.
+    allow_once_raw = os.environ.get("FCP_WEB_FETCH_ALLOW_ONCE", "")
+    allow_once = allow_once_raw
+    if allow_once_raw:
+        try:
+            from urllib.parse import urlparse as _up2
+            _p2 = _up2(allow_once_raw)
+            if _p2.path == "":
+                allow_once = allow_once_raw + "/"
+        except Exception:
+            pass
     if not (allow_once and allow_once == url):
         # allowlist empty = block all (secure default)
         if not allowlist:
