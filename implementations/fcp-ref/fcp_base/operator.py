@@ -846,7 +846,6 @@ def _skill_run_direct(layout: Layout, skill_name: str, params: dict[str, Any]) -
         return
     try:
         output = dispatch(layout, skill_name, params, idx)
-        print()
         ui.hr(f"skill: {skill_name}")
         print(output)
         print()
@@ -980,7 +979,6 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
 def print_integrity_chain(layout: Layout) -> None:
     """Display all entries in the integrity chain."""
     from .store import read_jsonl
-    print()
     ui.hr("integrity chain")
     if not layout.integrity_chain.exists() or layout.integrity_chain.stat().st_size == 0:
         ui.print_info("Integrity chain is empty.")
