@@ -1,10 +1,10 @@
 {
   "name": "file_writer",
-  "version": "1.0.0",
-  "description": "Write a file within workspace/. Rejects any path outside workspace/.",
+  "version": "1.1.0",
+  "description": "Write, append, delete, move, or copy files within workspace_focus. All paths are validated against workspace_focus boundary.",
   "timeout_seconds": 10,
   "background": false,
-  "irreversible": false,
+  "irreversible": true,
   "class": "builtin",
   "permissions": [
     "workspace_write"
@@ -12,18 +12,26 @@
   "params": {
     "type": "object",
     "properties": {
+      "op": {
+        "type": "string",
+        "enum": ["write", "append", "delete", "move", "copy"],
+        "description": "Operation: write (default, atomic overwrite), append (add to end), delete (remove file or empty dir), move (rename/move), copy (duplicate file)."
+      },
       "path": {
         "type": "string",
-        "description": "Path relative to workspace/ to write."
+        "description": "Path relative to workspace_focus. Source path for move/copy."
       },
       "content": {
         "type": "string",
-        "description": "Content to write to the file."
+        "description": "Content to write or append. Required for write and append ops."
+      },
+      "dest": {
+        "type": "string",
+        "description": "Destination path relative to workspace_focus. Required for move and copy ops."
       }
     },
     "required": [
-      "path",
-      "content"
+      "path"
     ]
   },
   "execution": "script",
