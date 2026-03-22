@@ -10,11 +10,10 @@
     "workspace_write"
   ],
   "allowlist": [
-    "ls",
-    "cat",
-    "pwd",
     "find",
-    "grep"
+    "pwd",
+    "python3",
+    "uv"
   ],
   "allowlist_composite": [],
   "params": {
