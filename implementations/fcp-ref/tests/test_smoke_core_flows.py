@@ -19,7 +19,7 @@ from fcp_base.boot import run as boot_run, BootResult
 from fcp_base.session import run_session
 from fcp_base.store import Layout, atomic_write, read_json
 from fcp_base.cpe.base import AdapterRef
-from fcp_base.exec_permissions import ExecutionPermissions, PermissionScope
+from fcp_base.exec_.allowlist import ExecutionPermissions, PermissionScope
 
 
 class TestBootSequence:
@@ -257,7 +257,7 @@ class TestCategoryEFeatures:
 
     def test_exec_permissions_module_exists(self):
         """ExecutionPermissions module is importable."""
-        from fcp_base.exec_permissions import ExecutionPermissions, PermissionScope
+        from fcp_base.exec_.allowlist import ExecutionPermissions, PermissionScope
         assert ExecutionPermissions is not None
         assert PermissionScope is not None
 

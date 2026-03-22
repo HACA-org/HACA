@@ -21,7 +21,7 @@ from .acp import ACPEnvelope, crc32, parse_envelope_data
 from .fap import run as fap_run
 from .formats import IntegrityDocument, ImprintRecord, SkillIndex, StructuralBaseline
 from .sil import (
-    _utcnow,
+    utcnow as _utcnow,
     activate_beacon,
     beacon_is_active,
     issue_session_token,
@@ -373,7 +373,7 @@ def _check_critical_conditions(layout: Layout) -> list[dict]:
     Returns list of pending Evolution Proposals.
     """
     from .sil import log_cleared, sha256_file
-    from .exec_ import _last_heartbeat_ts, _sil_threshold
+    from .exec_ import last_heartbeat_ts as _last_heartbeat_ts, sil_threshold as _sil_threshold
 
     entries = read_jsonl(layout.integrity_log)
 

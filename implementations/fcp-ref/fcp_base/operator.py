@@ -652,7 +652,7 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
 
 def _cmd_allowlist_new(layout: Layout, args: list[str]) -> None:
     """Manage shell_run execution allowlist using ExecutionPermissions."""
-    from .exec_permissions import ExecutionPermissions, PermissionScope
+    from .exec_.allowlist import ExecutionPermissions, PermissionScope
 
     perms = ExecutionPermissions.load_from_baseline(layout)
 
