@@ -10,10 +10,12 @@ Validates:
 
 import json
 import tempfile
+import unittest
 from pathlib import Path
 
 import pytest
 from fcp_base.store import Layout, atomic_write
+from fcp_base.vital import _check_workspace_focus
 
 
 def create_test_entity(tmp_path: Path, profile: str = "haca-core") -> Layout:
@@ -257,3 +259,73 @@ class TestWorkspaceFocusProfiles:
             assert True
         except ValueError:
             assert False, "Should identify entity_root as ancestor"
+
+
+# ---------------------------------------------------------------------------
+# Tests for vital._check_workspace_focus
+# ---------------------------------------------------------------------------
+
+class TestVitalCheckWorkspaceFocus(unittest.TestCase):
+
+    def _make_layout(self):
+        from tests.helpers import make_layout
+        return make_layout()
+
+    def _set_focus(self, layout, path: Path) -> None:
+        atomic_write(layout.root / "state" / "workspace_focus.json", {"path": str(path)})
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def setUp(self):
+        self.layout, self.tmp = self._make_layout()
+
+    def test_no_workspace_focus_file(self):
+        # No workspace_focus.json → no criticals
+        result = _check_workspace_focus(self.layout)
+        self.assertEqual(result, [])
+
+    def test_valid_focus_inside_workspace(self):
+        focus = self.layout.workspace_dir
+        self._set_focus(self.layout, focus)
+        result = _check_workspace_focus(self.layout)
+        self.assertEqual(result, [])
+
+    def test_valid_focus_subdir_inside_workspace(self):
+        subdir = self.layout.workspace_dir / "project"
+        subdir.mkdir(parents=True, exist_ok=True)
+        self._set_focus(self.layout, subdir)
+        result = _check_workspace_focus(self.layout)
+        self.assertEqual(result, [])
+
+    def test_focus_outside_workspace_not_ancestor(self):
+        # Sibling directory — outside workspace but not ancestor of entity_root
+        import tempfile, shutil
+        sibling = Path(tempfile.mkdtemp())
+        try:
+            self._set_focus(self.layout, sibling)
+            result = _check_workspace_focus(self.layout)
+            self.assertIn("workspace_focus_invalid", result)
+            self.assertNotIn("workspace_focus_ancestor", result)
+        finally:
+            shutil.rmtree(sibling, ignore_errors=True)
+
+    def test_focus_is_ancestor_of_entity_root(self):
+        # Parent of entity_root — the critical case P3 was about
+        ancestor = self.layout.root.parent
+        self._set_focus(self.layout, ancestor)
+        result = _check_workspace_focus(self.layout)
+        self.assertIn("workspace_focus_ancestor", result)
+        self.assertNotIn("workspace_focus_invalid", result)
+
+    def test_focus_is_entity_root_itself(self):
+        # entity_root is its own ancestor
+        self._set_focus(self.layout, self.layout.root)
+        result = _check_workspace_focus(self.layout)
+        self.assertIn("workspace_focus_ancestor", result)
+
+    def test_empty_path_in_focus_file(self):
+        atomic_write(self.layout.root / "state" / "workspace_focus.json", {"path": ""})
+        result = _check_workspace_focus(self.layout)
+        self.assertEqual(result, [])

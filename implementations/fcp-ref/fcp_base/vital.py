@@ -121,8 +121,21 @@ def _check_workspace_focus(layout: Layout) -> list[str]:
             return []
         focus_path = Path(str(raw_path)).resolve()
         workspace = layout.workspace_dir.resolve()
+        entity_root = layout.root.resolve()
         focus_path.relative_to(workspace)
     except ValueError:
+        # focus_path is outside workspace/ — check if it is an ancestor of entity_root
+        if focus_path is not None and entity_root.is_relative_to(focus_path):
+            detail = {
+                "path": str(focus_path),
+                "entity_root": str(entity_root),
+            }
+            log_critical(layout, "WORKSPACE_FOCUS_ANCESTOR", detail)
+            write_notification(layout, "critical", {
+                "type": "WORKSPACE_FOCUS_ANCESTOR",
+                "detail": detail,
+            })
+            return ["workspace_focus_ancestor"]
         detail = {
             "path": str(focus_path) if focus_path else "",
             "workspace": str(workspace) if workspace else "",
