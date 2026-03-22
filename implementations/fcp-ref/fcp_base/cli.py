@@ -1446,7 +1446,8 @@ def _print_block(label: str, lines: list, color: str = "\x1b[96m") -> None:
 
 
 def _print_boot_header(layout: "Layout", index: dict) -> None:
-    from .session import build_boot_context, build_boot_stats, _tool_declarations
+    from .session import build_boot_context, build_boot_stats
+    from .tools import build_tool_declarations as _tool_declarations
     from .store import read_json
 
     system, chat_history = build_boot_context(layout, index)
