@@ -18,17 +18,54 @@ def main() -> None:
         print(json.dumps({"error": "missing required param: name"}))
         sys.exit(1)
 
+    # Sanitize name: must be a simple identifier with no path components
+    if "/" in name or "\\" in name or ".." in name or name.startswith("."):
+        print(json.dumps({"error": "name must be a simple identifier (no path separators or dots)"}))
+        sys.exit(1)
+
+    stage_root = (entity_root / "workspace" / "stage").resolve()
     stage_dir = entity_root / "workspace" / "stage" / name
+    if not stage_dir.resolve().is_relative_to(stage_root):
+        print(json.dumps({"error": "invalid skill name"}))
+        sys.exit(1)
+
     if stage_dir.exists():
         print(json.dumps({"error": f"stage directory already exists: {stage_dir}"}))
         sys.exit(1)
 
     base = str(params.get("base", "")).strip()
     if base:
-        source = entity_root / "skills" / base
-        if not source.exists():
-            print(json.dumps({"error": f"base skill not found: {base}"}))
+        # base must be a simple name — no path traversal into skills/lib or elsewhere
+        if "/" in base or "\\" in base or ".." in base or base.startswith("."):
+            print(json.dumps({"error": "base skill not found"}))
             sys.exit(1)
+
+        skills_root = (entity_root / "skills").resolve()
+        lib_root = (entity_root / "skills" / "lib").resolve()
+        source = entity_root / "skills" / base
+        resolved_source = source.resolve()
+
+        # Must be inside skills/ but not inside skills/lib/
+        if not resolved_source.is_relative_to(skills_root) or resolved_source.is_relative_to(lib_root):
+            print(json.dumps({"error": "base skill not found"}))
+            sys.exit(1)
+
+        if not source.exists():
+            print(json.dumps({"error": "base skill not found"}))
+            sys.exit(1)
+
+        # Only custom/user class skills may be cloned
+        manifest_path = source / "manifest.json"
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if manifest.get("class") not in ("custom", "user"):
+                    print(json.dumps({"error": "base skill not found"}))
+                    sys.exit(1)
+            except Exception:
+                print(json.dumps({"error": "base skill not found"}))
+                sys.exit(1)
+
         shutil.copytree(source, stage_dir)
         print(json.dumps({"status": "ok", "path": str(stage_dir), "base": base}))
     else:

@@ -925,6 +925,10 @@ def dispatch_tool_use(
         action["type"] = tool
         return _dispatch_mil(layout, action)
 
+    # --- CMI tools ---
+    if tool in ("cmi_send", "cmi_req"):
+        return _dispatch_cmi(layout, tool, inp)
+
     # --- SIL tools ---
     if tool in ("session_close", "evolution_proposal"):
         action = dict(inp)
@@ -951,6 +955,18 @@ def dispatch_tool_use(
         return _dispatch_sil(layout, inp)
 
     return {"error": f"unknown tool: {tool}"}, False
+
+
+def _dispatch_cmi(
+    layout: Layout, tool: str, params: dict[str, Any]
+) -> tuple[dict[str, Any], bool]:
+    """Dispatch CMI tools (cmi_send, cmi_req) to the CMI component."""
+    from .cmi.dispatch import dispatch_send, dispatch_req
+    if tool == "cmi_send":
+        result = dispatch_send(layout, params)
+    else:
+        result = dispatch_req(layout, params)
+    return result, False
 
 
 def _dispatch_mil(
@@ -1530,6 +1546,8 @@ def _build_tools_index(layout: Layout, index: dict[str, Any]) -> str:
     # System tools: name → (description, required_params)
     system_tools: list[tuple[str, str, list[str]]] = [
         ("closure_payload", "record full session outcome before closing", ["consolidation", "working_memory", "session_handoff"]),
+        ("cmi_req", "read state from an active CMI channel", ["op", "chan_id"]),
+        ("cmi_send", "send a message to an active CMI channel", ["chan_id", "type", "content"]),
         ("evolution_proposal", "propose structural change to entity (persona, skills, configs, scheduled tasks)", ["description", "changes"]),
         ("memory_recall", "retrieve context from memory", ["query"]),
         ("memory_write", "persist information across sessions", ["slug", "content"]),
@@ -1580,6 +1598,34 @@ def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, 
     system tools for memory, session control, and skill documentation.
     """
     tools: list[dict[str, Any]] = []
+
+    # --- CMI tools ---
+    tools.append({
+        "name": "cmi_send",
+        "description": "Send a message to an active CMI channel. Routes through the local CMI endpoint declared in the structural baseline.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "chan_id": {"type": "string", "description": "Channel identifier (e.g. chan_<uuid>)."},
+                "type": {"type": "string", "enum": ["general", "peer", "bb"], "description": "Message type: 'general' (broadcast to all), 'peer' (directed, visible to all), 'bb' (Blackboard contribution, durable)."},
+                "content": {"type": "string", "description": "Message content."},
+                "to": {"type": "string", "description": "Target Node Identity for 'peer' messages. Required when type is 'peer'."},
+            },
+            "required": ["chan_id", "type", "content"],
+        },
+    })
+    tools.append({
+        "name": "cmi_req",
+        "description": "Read state from an active CMI channel. 'bb' returns all Blackboard entries; 'status' returns channel status and enrolled participants.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "op": {"type": "string", "enum": ["bb", "status"], "description": "Operation: 'bb' to read the Blackboard, 'status' to get channel status and participants."},
+                "chan_id": {"type": "string", "description": "Channel identifier (e.g. chan_<uuid>)."},
+            },
+            "required": ["op", "chan_id"],
+        },
+    })
 
     # --- memory tools ---
     tools.append({
