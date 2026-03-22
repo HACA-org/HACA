@@ -61,7 +61,6 @@ def run_endure_sync(layout: "Layout") -> None:
     _, status_out, _ = _git("status", "--porcelain")
     has_local_changes = bool(status_out.strip())
 
-    print()
     ui.hr("endure sync")
 
     if remote_exists_code != 0:
@@ -174,7 +173,6 @@ def run_endure_origin(layout: "Layout") -> None:
         ui.print_err("Run 'git init' inside the entity root first.")
         return
 
-    print()
     ui.hr("endure origin")
 
     code, current_url, _ = _git("remote", "get-url", "origin")

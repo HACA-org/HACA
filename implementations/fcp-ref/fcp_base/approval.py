@@ -130,7 +130,6 @@ def _interactive_prompt(
 
     _REV = "\x1b[7m"
     _RST = "\x1b[27m"
-    print()
     ui.hr("OPERATOR ACTION REQUIRED")
     print()
     print(f"{_REV}  [!] {subject} blocked: {detail!r}{_RST}")

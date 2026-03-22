@@ -46,9 +46,13 @@ def print_info(msg: str) -> None: print(info(msg))
 _W = 60
 
 def hr(label: str = "", width: int = _W) -> None:
-    """Print a section divider, optionally with a label."""
+    """Print a section divider, optionally with a label.
+
+    A labelled divider includes a leading blank line so callers do not need
+    to emit one themselves.  An unlabelled divider prints the rule only.
+    """
     if label:
-        pad = width - len(label) - 4
+        pad = max(0, width - len(label) - 4)
         print(f"\n  ── {label} {'─' * pad}")
     else:
         print(f"  {'─' * width}")

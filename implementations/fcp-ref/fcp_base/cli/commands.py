@@ -412,7 +412,6 @@ def run_update() -> None:
         ui.print_err(f"Cannot update: FCP installation at {fcp_root} is not a git repository.")
         sys.exit(1)
 
-    print()
     ui.hr("fcp update")
     ui.print_info(f"Checking for updates in {fcp_root}...")
 
@@ -443,7 +442,6 @@ def run_status(layout: "Layout") -> None:
     """Print entity status overview (no session required)."""
     from ..sil import beacon_is_active
 
-    print()
     ui.hr("fcp status")
 
     # baseline / model
@@ -505,7 +503,6 @@ def run_status(layout: "Layout") -> None:
 
 def run_agenda(layout: "Layout") -> None:
     """List scheduled tasks from agenda.json (no session required)."""
-    print()
     ui.hr("fcp agenda")
 
     if not layout.agenda.exists():
