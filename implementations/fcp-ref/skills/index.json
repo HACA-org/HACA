@@ -2,24 +2,6 @@
   "version": "1.0",
   "skills": [
     {
-      "name": "cmi_req",
-      "desc": "Read state from an active CMI channel. 'bb' returns all Blackboard entries; 'status' returns channel status and enrolled participants. Available during active and closing states. Closed channels return an error.",
-      "manifest": "skills/lib/cmi_req/manifest.json",
-      "class": "builtin"
-    },
-    {
-      "name": "cmi_send",
-      "desc": "Send a message to an active CMI channel. Routes through the local CMI endpoint declared in the structural baseline.",
-      "manifest": "skills/lib/cmi_send/manifest.json",
-      "class": "builtin"
-    },
-    {
-      "name": "commit",
-      "desc": "Commit a path within workspace_focus. Only git interface available to the CPE.",
-      "manifest": "skills/lib/commit/manifest.json",
-      "class": "builtin"
-    },
-    {
       "name": "file_reader",
       "desc": "Read a file within workspace/. Rejects any path outside workspace/.",
       "manifest": "skills/lib/file_reader/manifest.json",

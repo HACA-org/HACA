@@ -62,6 +62,38 @@ class TestStage2GC(unittest.TestCase):
         sleep_mod._stage2_gc(self.layout)
         self.assertTrue(link.is_symlink() and link.exists())
 
+    def test_orphaned_symlinks_removed(self) -> None:
+        """Symlinks not in working_memory are removed."""
+        from fcp_base.mil import write_semantic
+        from fcp_base.store import atomic_write
+        # Create two files and symlinks
+        write_semantic(self.layout, "keep", "kept")
+        write_semantic(self.layout, "remove", "removed")
+        keep_link = self.layout.active_context_dir / "keep.md"
+        remove_link = self.layout.active_context_dir / "remove.md"
+        keep_link.symlink_to(self.layout.semantic_dir / "keep.md")
+        remove_link.symlink_to(self.layout.semantic_dir / "remove.md")
+        # Set working_memory to only keep one
+        atomic_write(self.layout.working_memory, {
+            "entries": [{"priority": 1, "path": "memory/semantic/keep.md"}]
+        })
+        # Clean
+        sleep_mod._stage2_gc(self.layout)
+        # keep should still exist, remove should be gone
+        self.assertTrue(keep_link.is_symlink() and keep_link.exists())
+        self.assertFalse(remove_link.exists())
+
+    def test_empty_working_memory_keeps_symlinks(self) -> None:
+        """If working_memory is empty, don't aggressively remove symlinks."""
+        from fcp_base.mil import write_semantic
+        write_semantic(self.layout, "keep", "content")
+        link = self.layout.active_context_dir / "keep.md"
+        link.symlink_to(self.layout.semantic_dir / "keep.md")
+        # No working_memory or empty entries
+        sleep_mod._stage2_gc(self.layout)
+        # Should preserve symlink when working_memory is empty/missing
+        self.assertTrue(link.is_symlink() and link.exists())
+
 
 class TestSleepComplete(unittest.TestCase):
     def setUp(self) -> None:
@@ -199,6 +231,80 @@ class TestPromoteSeverancePending(unittest.TestCase):
         sleep_mod._promote_severance_pending(self.layout)
         content = self.layout.integrity_log.read_text(encoding="utf-8")
         self.assertIn("SEVERANCE_PENDING", content)
+
+
+class TestSessionCaching(unittest.TestCase):
+    def setUp(self) -> None:
+        self.layout, self.tmp = make_layout()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp)
+
+    def test_cache_session_tail_creates_file(self) -> None:
+        """cache_session_tail() creates .session-cache.json."""
+        from fcp_base import mil
+        cache_file = self.layout.root / "memory" / ".session-cache.json"
+        self.assertFalse(cache_file.exists())
+        mil.cache_session_tail(self.layout)
+        self.assertTrue(cache_file.exists())
+
+    def test_cache_contains_turns(self) -> None:
+        """Cached session contains turns structure."""
+        from fcp_base import mil
+        # Add some session entries
+        append_jsonl(self.layout.session_store, {
+            "actor": "user",
+            "data": "hello",
+        })
+        append_jsonl(self.layout.session_store, {
+            "actor": "assistant",
+            "data": "hi there",
+        })
+        mil.cache_session_tail(self.layout)
+        cache_file = self.layout.root / "memory" / ".session-cache.json"
+        cache = json.loads(cache_file.read_text())
+        self.assertIn("turns", cache)
+        self.assertEqual(len(cache["turns"]), 2)
+        self.assertEqual(cache["turns"][0]["role"], "user")
+        self.assertEqual(cache["turns"][1]["role"], "assistant")
+
+    def test_clear_session_cache(self) -> None:
+        """clear_session_cache() deletes cache file."""
+        from fcp_base import mil
+        mil.cache_session_tail(self.layout)
+        cache_file = self.layout.root / "memory" / ".session-cache.json"
+        self.assertTrue(cache_file.exists())
+        mil.clear_session_cache(self.layout)
+        self.assertFalse(cache_file.exists())
+
+    def test_session_recall_uses_cache(self) -> None:
+        """_session_to_turns() uses cache when available."""
+        from fcp_base import mil
+        from fcp_base.session import _session_to_turns
+        # Add session entries
+        append_jsonl(self.layout.session_store, {"actor": "user", "data": "test"})
+        # Cache it
+        mil.cache_session_tail(self.layout)
+        # Recall should use cache
+        turns = _session_to_turns(self.layout)
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0][0], "user")
+        self.assertEqual(turns[0][1], "test")
+
+    def test_cache_limits_turns(self) -> None:
+        """cache_session_tail() limits cache to max_turns."""
+        from fcp_base import mil
+        # Add more turns than limit
+        for i in range(150):
+            append_jsonl(self.layout.session_store, {
+                "actor": "user" if i % 2 == 0 else "assistant",
+                "data": f"msg {i}",
+            })
+        mil.cache_session_tail(self.layout, max_turns=50)
+        cache_file = self.layout.root / "memory" / ".session-cache.json"
+        cache = json.loads(cache_file.read_text())
+        # Should have at most 50 turns
+        self.assertLessEqual(len(cache["turns"]), 50)
 
 
 if __name__ == "__main__":

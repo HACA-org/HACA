@@ -24,6 +24,8 @@ from typing import Any
 from .acp import make as acp_encode
 from .mil import (
     clean_stale_symlinks,
+    clean_episodic_index,
+    cache_session_tail,
     process_closure,
     append_endure_commit,
     promote_to_semantic,
@@ -72,6 +74,9 @@ def run_sleep_cycle(layout: Layout) -> None:
 
     # Convert any unresolved SEVERANCE_COMMIT entries to SEVERANCE_PENDING
     _promote_severance_pending(layout)
+
+    # Cache session tail for faster boot on next cycle
+    cache_session_tail(layout)
 
     # Write SLEEP_COMPLETE
     _write_sleep_complete(layout)
@@ -227,9 +232,10 @@ def _stage1_consolidation(layout: Layout) -> None:
 # ---------------------------------------------------------------------------
 
 def _stage2_gc(layout: Layout) -> None:
-    """Rotate session.jsonl if over threshold; clean stale symlinks."""
+    """Rotate session.jsonl if over threshold; clean stale symlinks and episodic index."""
     _rotate_session_store(layout)
     clean_stale_symlinks(layout)
+    clean_episodic_index(layout)
 
 
 def _rotate_session_store(layout: Layout) -> None:
@@ -352,45 +358,6 @@ def _stage3_endure(layout: Layout) -> None:
                     continue
                 continue
 
-            # cmi_peer_add: adds a trusted peer to baseline.cmi.trusted_peers
-            if op == "cmi_peer_add":
-                required = ("node_identity", "endpoint", "trust_label", "alias")
-                if not all(change.get(f) for f in required):
-                    continue
-                trust_label = change.get("trust_label", "")
-                if trust_label not in ("FULL", "CONTACT", "INTRODUCED"):
-                    continue
-                node_identity = change.get("node_identity", "")
-                if not node_identity.startswith("sha256:"):
-                    continue
-                peer_entry: dict[str, Any] = {
-                    "node_identity": node_identity,
-                    "endpoint": change.get("endpoint", ""),
-                    "trust_label": trust_label,
-                    "alias": change.get("alias", ""),
-                    "pubkey": change.get("pubkey", ""),
-                }
-                baseline_path = layout.baseline
-                baseline: dict[str, Any] = {}
-                if baseline_path.exists():
-                    try:
-                        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-                    except Exception:
-                        pass
-                cmi_section = baseline.setdefault("cmi", {})
-                peers: list[dict[str, Any]] = cmi_section.setdefault("trusted_peers", [])
-                # replace existing entry with same node_identity if present
-                peers = [p for p in peers if p.get("node_identity") != node_identity]
-                peers.append(peer_entry)
-                cmi_section["trusted_peers"] = peers
-                atomic_write(baseline_path, baseline)
-                files_written[str(baseline_path.relative_to(layout.root))] = sha256_file(baseline_path)
-                write_notification(layout, "cmi_peer_added", {
-                    "node_identity": node_identity,
-                    "alias": peer_entry["alias"],
-                    "trust_label": trust_label,
-                })
-                continue
 
             # cron_add: registers a scheduled task in state/agenda.json
             if op == "cron_add":

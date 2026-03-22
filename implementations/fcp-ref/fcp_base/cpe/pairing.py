@@ -37,9 +37,12 @@ import os
 import secrets
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .base import CPEError, CPEResponse, ToolUseCall
+
+if TYPE_CHECKING:
+    from ..store import Layout
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -62,8 +65,9 @@ class PairingAdapter:
     invoke() writes a .request.json file and blocks until .response.json appears.
     """
 
-    def __init__(self, api_key: str = "", model: str = "external") -> None:
+    def __init__(self, api_key: str = "", model: str = "external", layout: "Layout | None" = None) -> None:
         self._model      = model
+        self._layout     = layout
         self._session_id = secrets.token_hex(4)   # e.g. "a3f1c9b2"
         self._key        = self._gen_key()
         self._pairing_dir = _PAIRING_DIR
@@ -139,6 +143,18 @@ class PairingAdapter:
             json.dumps(prompt, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+        # Fire on_prompt_pending hook to notify external systems (e.g., MCP server)
+        if self._layout:
+            from ..hooks import run_hook
+            run_hook(
+                self._layout,
+                "on_prompt_pending",
+                {
+                    "session_id": self._session_id,
+                    "request_file": str(self._request_path),
+                },
+            )
 
         # Wait for the MCP server to deliver a response
         deadline = time.monotonic() + _INVOKE_TIMEOUT

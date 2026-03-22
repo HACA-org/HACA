@@ -1,0 +1,1278 @@
+"""
+CPE Adapter Unit Tests — Comprehensive test coverage for all 5 adapters.
+
+Tests cover:
+- Tool call parsing (single, multiple, with/without text)
+- Malformed response handling
+- Token counting accuracy
+- Error handling
+- Message format validation
+
+Date: 2026-03-21
+"""
+
+import json
+import os
+import pytest
+from fcp_base.cpe.base import CPEError, CPEResponse, ToolUseCall
+from fcp_base.cpe.anthropic import _parse_response as anthropic_parse
+from fcp_base.cpe.openai import _parse_response as openai_parse
+from fcp_base.cpe.google import _parse_response as google_parse
+from fcp_base.cpe.ollama import _parse_response as ollama_parse, _convert_messages
+from fcp_base.cpe.models import (
+    get_default_model,
+    get_api_version,
+    get_max_tokens,
+    list_models,
+    supports_feature,
+)
+from fcp_base.cpe.benchmark import (
+    calculate_cost,
+    BenchmarkResult,
+    BenchmarkSuite,
+)
+from fcp_base.cpe.cost_tracker import CostEntry, CostTracker
+from fcp_base.cpe.fallback import FallbackChain, build_fallback_chain
+
+
+class TestAnthropicParsing:
+    """Test Anthropic Messages API response parsing."""
+
+    def test_text_only_response(self):
+        """Text response without tool calls."""
+        data = {
+            "content": [
+                {"type": "text", "text": "Hello, how can I help?"}
+            ],
+            "usage": {"input_tokens": 100, "output_tokens": 50},
+            "stop_reason": "end_turn",
+        }
+        result = anthropic_parse(data)
+        assert result.text == "Hello, how can I help?"
+        assert len(result.tool_use_calls) == 0
+        assert result.input_tokens == 100
+        assert result.output_tokens == 50
+
+    def test_single_tool_call(self):
+        """Single tool call with text."""
+        data = {
+            "content": [
+                {"type": "text", "text": "I'll execute that for you."},
+                {
+                    "type": "tool_use",
+                    "id": "call_123",
+                    "name": "fcp_exec",
+                    "input": {"command": "ls -la"}
+                }
+            ],
+            "usage": {"input_tokens": 120, "output_tokens": 75},
+            "stop_reason": "tool_use",
+        }
+        result = anthropic_parse(data)
+        assert result.text == "I'll execute that for you."
+        assert len(result.tool_use_calls) == 1
+        assert result.tool_use_calls[0].id == "call_123"
+        assert result.tool_use_calls[0].tool == "fcp_exec"
+        assert result.tool_use_calls[0].input == {"command": "ls -la"}
+
+    def test_multiple_tool_calls(self):
+        """Multiple tool calls in single response."""
+        data = {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "fcp_exec",
+                    "input": {"command": "pwd"}
+                },
+                {
+                    "type": "tool_use",
+                    "id": "call_2",
+                    "name": "fcp_mil",
+                    "input": {"action": "recall"}
+                },
+            ],
+            "usage": {"input_tokens": 100, "output_tokens": 60},
+            "stop_reason": "tool_use",
+        }
+        result = anthropic_parse(data)
+        assert len(result.tool_use_calls) == 2
+        assert result.tool_use_calls[0].tool == "fcp_exec"
+        assert result.tool_use_calls[1].tool == "fcp_mil"
+        assert result.text == ""
+
+    def test_tool_call_without_text(self):
+        """Tool call without text content."""
+        data = {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_x",
+                    "name": "test_tool",
+                    "input": {"param": "value"}
+                }
+            ],
+            "usage": {"input_tokens": 50, "output_tokens": 25},
+            "stop_reason": "tool_use",
+        }
+        result = anthropic_parse(data)
+        assert result.text == ""
+        assert len(result.tool_use_calls) == 1
+
+    def test_empty_response(self):
+        """Empty content array."""
+        data = {
+            "content": [],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+            "stop_reason": "end_turn",
+        }
+        result = anthropic_parse(data)
+        assert result.text == ""
+        assert len(result.tool_use_calls) == 0
+
+
+class TestOpenAIParsing:
+    """Test OpenAI Chat Completions API response parsing."""
+
+    def test_text_only_response(self):
+        """Text response without tool calls."""
+        data = {
+            "choices": [{
+                "message": {
+                    "content": "Hello, how can I help?",
+                    "tool_calls": None,
+                },
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+        }
+        result = openai_parse(data)
+        assert result.text == "Hello, how can I help?"
+        assert len(result.tool_use_calls) == 0
+
+    def test_single_tool_call(self):
+        """Single tool call."""
+        data = {
+            "choices": [{
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_abc123",
+                            "function": {
+                                "name": "fcp_exec",
+                                "arguments": '{"command": "ls"}'
+                            },
+                            "type": "function",
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "usage": {"prompt_tokens": 120, "completion_tokens": 75},
+        }
+        result = openai_parse(data)
+        assert len(result.tool_use_calls) == 1
+        assert result.tool_use_calls[0].id == "call_abc123"
+        assert result.tool_use_calls[0].tool == "fcp_exec"
+        assert result.tool_use_calls[0].input == {"command": "ls"}
+
+    def test_tool_call_with_dict_arguments(self):
+        """Tool call where arguments are already a dict (not JSON string)."""
+        data = {
+            "choices": [{
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_dict",
+                            "function": {
+                                "name": "test_tool",
+                                "arguments": '{"key": "value", "nested": {"a": 1}}'
+                            },
+                            "type": "function",
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+        }
+        result = openai_parse(data)
+        assert result.tool_use_calls[0].input == {"key": "value", "nested": {"a": 1}}
+
+    def test_malformed_json_arguments(self):
+        """Malformed JSON arguments should fallback to empty dict."""
+        data = {
+            "choices": [{
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_bad",
+                            "function": {
+                                "name": "broken_tool",
+                                "arguments": "not valid json"
+                            },
+                            "type": "function",
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+        }
+        result = openai_parse(data)
+        assert result.tool_use_calls[0].input == {}
+
+    def test_multiple_tool_calls(self):
+        """Multiple parallel tool calls."""
+        data = {
+            "choices": [{
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "function": {
+                                "name": "tool_a",
+                                "arguments": '{}'
+                            },
+                        },
+                        {
+                            "id": "call_2",
+                            "function": {
+                                "name": "tool_b",
+                                "arguments": '{"x": 1}'
+                            },
+                        },
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+        }
+        result = openai_parse(data)
+        assert len(result.tool_use_calls) == 2
+        assert result.tool_use_calls[0].tool == "tool_a"
+        assert result.tool_use_calls[1].tool == "tool_b"
+
+    def test_mixed_content_and_tool_calls(self):
+        """Text content with tool calls."""
+        data = {
+            "choices": [{
+                "message": {
+                    "content": "Let me help with that.",
+                    "tool_calls": [
+                        {
+                            "id": "call_mix",
+                            "function": {
+                                "name": "helper",
+                                "arguments": '{}'
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+        }
+        result = openai_parse(data)
+        assert result.text == "Let me help with that."
+        assert len(result.tool_use_calls) == 1
+
+
+class TestGoogleParsing:
+    """Test Google Gemini API response parsing."""
+
+    def test_text_only_response(self):
+        """Text response without tool calls."""
+        data = {
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": "Hello, how can I help?"}
+                    ]
+                },
+                "finishReason": "STOP",
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "candidatesTokenCount": 50,
+            },
+        }
+        result, _ = google_parse(data)
+        assert result.text == "Hello, how can I help?"
+        assert len(result.tool_use_calls) == 0
+
+    def test_single_tool_call(self):
+        """Single tool call with synthetic ID generation."""
+        data = {
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {
+                            "functionCall": {
+                                "name": "fcp_exec",
+                                "args": {"command": "ls"}
+                            }
+                        }
+                    ]
+                },
+                "finishReason": "TOOL_CALL",
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "candidatesTokenCount": 50,
+            },
+        }
+        result, _ = google_parse(data)
+        assert len(result.tool_use_calls) == 1
+        assert result.tool_use_calls[0].id.startswith("call_")  # Synthetic ID
+        assert result.tool_use_calls[0].tool == "fcp_exec"
+        assert result.tool_use_calls[0].input == {"command": "ls"}
+
+    def test_multiple_tool_calls_get_sequential_ids(self):
+        """Multiple tool calls get sequential synthetic IDs."""
+        data = {
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {
+                            "functionCall": {
+                                "name": "tool_a",
+                                "args": {}
+                            }
+                        },
+                        {
+                            "functionCall": {
+                                "name": "tool_b",
+                                "args": {"x": 1}
+                            }
+                        },
+                    ]
+                },
+                "finishReason": "TOOL_CALL",
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "candidatesTokenCount": 50,
+            },
+        }
+        result, _ = google_parse(data)
+        assert len(result.tool_use_calls) == 2
+        assert result.tool_use_calls[0].id.startswith("call_")
+        assert result.tool_use_calls[1].id.startswith("call_")
+
+    def test_mixed_content_and_tool_calls(self):
+        """Text with tool calls."""
+        data = {
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": "Processing your request..."},
+                        {
+                            "functionCall": {
+                                "name": "processor",
+                                "args": {"input": "data"}
+                            }
+                        },
+                    ]
+                },
+                "finishReason": "TOOL_CALL",
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "candidatesTokenCount": 50,
+            },
+        }
+        result, _ = google_parse(data)
+        assert result.text == "Processing your request..."
+        assert len(result.tool_use_calls) == 1
+        assert result.tool_use_calls[0].tool == "processor"
+
+    def test_empty_response(self):
+        """Empty response."""
+        data = {
+            "candidates": [{
+                "content": {"parts": []},
+                "finishReason": "STOP",
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "candidatesTokenCount": 5,
+            },
+        }
+        result, _ = google_parse(data)
+        assert result.text == ""
+        assert len(result.tool_use_calls) == 0
+
+
+class TestEdgeCases:
+    """Edge case tests across adapters."""
+
+    def test_missing_usage_data(self):
+        """Missing usage metadata should default to 0."""
+        anthropic_data = {
+            "content": [{"type": "text", "text": "Hello"}],
+            # Missing usage field
+            "stop_reason": "end_turn",
+        }
+        result = anthropic_parse(anthropic_data)
+        assert result.input_tokens == 0
+        assert result.output_tokens == 0
+
+    def test_missing_content_array(self):
+        """Missing content array should be handled gracefully."""
+        anthropic_data = {
+            # Missing content field
+            "usage": {"input_tokens": 50, "output_tokens": 25},
+            "stop_reason": "end_turn",
+        }
+        result = anthropic_parse(anthropic_data)
+        assert result.text == ""
+        assert len(result.tool_use_calls) == 0
+
+    def test_null_text_content(self):
+        """Null text content should be handled."""
+        openai_data = {
+            "choices": [{
+                "message": {
+                    "content": None,
+                    "tool_calls": [],
+                },
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 50, "completion_tokens": 25},
+        }
+        result = openai_parse(openai_data)
+        assert result.text == ""
+
+
+class TestFallbackChain:
+    """Test fallback chain resilience."""
+
+    def test_fallback_chain_init(self):
+        """Initialize fallback chain."""
+        from fcp_base.cpe.anthropic import AnthropicAdapter
+
+        adapter = AnthropicAdapter()
+        chain = FallbackChain([("anthropic", adapter)])
+        assert len(chain.adapters) == 1
+        assert chain.adapters[0][0] == "anthropic"
+
+    def test_fallback_chain_no_adapters(self):
+        """Fallback chain requires at least one adapter."""
+        with pytest.raises(ValueError):
+            FallbackChain([])
+
+    def test_fallback_chain_uses_first_on_success(self):
+        """Chain uses first adapter if successful."""
+        # Create mock adapter that always succeeds
+        class MockAdapter:
+            def invoke(self, system, messages, tools):
+                return CPEResponse(
+                    text="response",
+                    tool_use_calls=[],
+                    input_tokens=10,
+                    output_tokens=20,
+                    stop_reason="end_turn",
+                )
+
+        adapter1 = MockAdapter()
+        adapter2 = MockAdapter()
+        chain = FallbackChain([("adapter1", adapter1), ("adapter2", adapter2)])
+
+        response, name = chain.invoke("system", [], [])
+        assert name == "adapter1"  # First adapter used
+        assert response.text == "response"
+
+    def test_fallback_chain_falls_back_on_failure(self):
+        """Chain falls back to second adapter if first fails."""
+        class FailAdapter:
+            def invoke(self, system, messages, tools):
+                raise Exception("API down")
+
+        class SuccessAdapter:
+            def invoke(self, system, messages, tools):
+                return CPEResponse(
+                    text="fallback response",
+                    tool_use_calls=[],
+                    input_tokens=10,
+                    output_tokens=20,
+                    stop_reason="end_turn",
+                )
+
+        chain = FallbackChain([("fail", FailAdapter()), ("success", SuccessAdapter())])
+        response, name = chain.invoke("system", [], [])
+
+        assert name == "success"
+        assert response.text == "fallback response"
+
+    def test_fallback_chain_tracks_events(self):
+        """Chain tracks fallback events."""
+        class FailAdapter:
+            def invoke(self, system, messages, tools):
+                raise Exception("Failed")
+
+        class SuccessAdapter:
+            def invoke(self, system, messages, tools):
+                return CPEResponse(
+                    text="ok",
+                    tool_use_calls=[],
+                    input_tokens=10,
+                    output_tokens=20,
+                    stop_reason="end_turn",
+                )
+
+        chain = FallbackChain([("fail", FailAdapter()), ("success", SuccessAdapter())])
+        chain.invoke("system", [], [])
+
+        summary = chain.get_fallback_summary()
+        assert summary["total_fallbacks"] == 1
+        assert summary["primary_adapter"] == "fail"
+
+    def test_fallback_chain_all_fail(self):
+        """Chain raises error if all adapters fail."""
+        class FailAdapter:
+            def invoke(self, system, messages, tools):
+                raise Exception("Failed")
+
+        chain = FallbackChain([("fail1", FailAdapter()), ("fail2", FailAdapter())])
+
+        with pytest.raises(CPEError) as exc_info:
+            chain.invoke("system", [], [])
+
+        assert "all" in str(exc_info.value).lower()
+
+    def test_build_fallback_chain(self):
+        """Build chain from helper function."""
+        from fcp_base.cpe.anthropic import AnthropicAdapter
+
+        adapter = AnthropicAdapter()
+        chain = build_fallback_chain(
+            ("anthropic", adapter),
+        )
+        assert len(chain.adapters) == 1
+
+    def test_fallback_chain_notification_callback(self):
+        """Chain calls notification callback on fallback."""
+        class FailAdapter:
+            def invoke(self, system, messages, tools):
+                raise Exception("Failed")
+
+        class SuccessAdapter:
+            def invoke(self, system, messages, tools):
+                return CPEResponse(
+                    text="ok",
+                    tool_use_calls=[],
+                    input_tokens=10,
+                    output_tokens=20,
+                    stop_reason="end_turn",
+                )
+
+        # Track callback invocations
+        notifications = []
+
+        def notify(primary, fallback_to, error):
+            notifications.append({
+                "primary": primary,
+                "fallback_to": fallback_to,
+                "error": error,
+            })
+
+        chain = FallbackChain(
+            [("fail", FailAdapter()), ("success", SuccessAdapter())],
+            notify_callback=notify,
+        )
+
+        response, name = chain.invoke("system", [], [])
+
+        # Verify notification was called
+        assert len(notifications) == 1
+        assert notifications[0]["primary"] == "fail"
+        assert notifications[0]["fallback_to"] == "success"
+
+    def test_fallback_chain_no_notification_on_primary_success(self):
+        """No notification if primary adapter succeeds."""
+        class SuccessAdapter:
+            def invoke(self, system, messages, tools):
+                return CPEResponse(
+                    text="ok",
+                    tool_use_calls=[],
+                    input_tokens=10,
+                    output_tokens=20,
+                    stop_reason="end_turn",
+                )
+
+        notifications = []
+
+        def notify(primary, fallback_to, error):
+            notifications.append({"primary": primary, "fallback_to": fallback_to})
+
+        chain = FallbackChain(
+            [("success", SuccessAdapter())],
+            notify_callback=notify,
+        )
+
+        chain.invoke("system", [], [])
+
+        # No notification since primary succeeded
+        assert len(notifications) == 0
+
+
+class TestCostTracker:
+    """Test cost tracking and persistence."""
+
+    def test_cost_entry_to_from_dict(self):
+        """CostEntry serialization/deserialization."""
+        entry = CostEntry(
+            timestamp="2026-03-21T12:00:00Z",
+            adapter="openai",
+            model="gpt-4o",
+            input_tokens=100,
+            output_tokens=50,
+            cost_usd=0.001,
+            latency_ms=123.45,
+        )
+        data = entry.to_dict()
+        restored = CostEntry.from_dict(data)
+        assert restored.adapter == "openai"
+        assert restored.input_tokens == 100
+
+    def test_tracker_record_and_summary(self, tmp_path):
+        """Record entries and get summary."""
+        tracker = CostTracker(log_file=tmp_path / "costs.jsonl")
+
+        # Record multiple invocations
+        tracker.record("openai", "gpt-4o", 100, 50, 50.0)
+        tracker.record("openai", "gpt-4o", 120, 60, 55.0)
+        tracker.record("ollama", "llama3.2", 100, 50, 10.0)
+
+        # Check summary
+        summary = tracker.get_summary()
+        assert summary["invocation_count"] == 3
+        assert summary["total_input_tokens"] == 320
+        assert summary["total_output_tokens"] == 160
+
+    def test_tracker_adapter_filter(self, tmp_path):
+        """Filter summary by adapter."""
+        tracker = CostTracker(log_file=tmp_path / "costs.jsonl")
+
+        tracker.record("openai", "gpt-4o", 100, 50, 50.0)
+        tracker.record("ollama", "llama3.2", 100, 50, 10.0)
+
+        openai_summary = tracker.get_adapter_summary("openai")
+        assert openai_summary["invocation_count"] == 1
+        assert openai_summary["total_input_tokens"] == 100
+
+        ollama_summary = tracker.get_adapter_summary("ollama")
+        assert ollama_summary["invocation_count"] == 1
+        assert ollama_summary["total_cost_usd"] == 0.0  # Local = free
+
+    def test_tracker_cost_calculation(self, tmp_path):
+        """Cost calculation in tracker."""
+        tracker = CostTracker(log_file=tmp_path / "costs.jsonl")
+
+        # OpenAI: $0.005 per 1M input, $0.015 per 1M output
+        tracker.record("openai", "gpt-4o", 1_000_000, 1_000_000, 100.0)
+
+        summary = tracker.get_summary()
+        expected_cost = 0.005 + 0.015
+        assert summary["total_cost_usd"] == pytest.approx(expected_cost, abs=0.001)
+
+    def test_tracker_persistence(self, tmp_path):
+        """Cost data persists across tracker instances."""
+        log_file = tmp_path / "costs.jsonl"
+
+        # First tracker: record entries
+        tracker1 = CostTracker(log_file=log_file)
+        tracker1.record("openai", "gpt-4o", 100, 50, 50.0)
+        tracker1.record("openai", "gpt-4o", 100, 50, 50.0)
+
+        # Second tracker: load and verify
+        tracker2 = CostTracker(log_file=log_file)
+        summary = tracker2.get_summary()
+        assert summary["invocation_count"] == 2
+
+    def test_tracker_all_adapters_summary(self, tmp_path):
+        """Get summary for all adapters."""
+        tracker = CostTracker(log_file=tmp_path / "costs.jsonl")
+
+        tracker.record("openai", "gpt-4o", 100, 50, 50.0)
+        tracker.record("ollama", "llama3.2", 100, 50, 10.0)
+        tracker.record("anthropic", "claude-opus-4-6", 100, 50, 200.0)
+
+        all_summary = tracker.get_all_adapters_summary()
+        assert len(all_summary) == 3
+        assert "openai" in all_summary
+        assert "ollama" in all_summary
+        assert "anthropic" in all_summary
+
+
+class TestBenchmarking:
+    """Test performance benchmarking utilities."""
+
+    def test_calculate_cost_anthropic(self):
+        """Calculate cost for Anthropic model."""
+        # claude-opus-4-6: $0.015 per 1M input, $0.075 per 1M output
+        cost = calculate_cost("anthropic", "claude-opus-4-6", 1_000_000, 1_000_000)
+        assert cost == pytest.approx(0.015 + 0.075, abs=0.001)
+
+    def test_calculate_cost_openai(self):
+        """Calculate cost for OpenAI model."""
+        # gpt-4o: $0.005 per 1M input, $0.015 per 1M output
+        cost = calculate_cost("openai", "gpt-4o", 1_000_000, 1_000_000)
+        assert cost == pytest.approx(0.005 + 0.015, abs=0.001)
+
+    def test_calculate_cost_ollama(self):
+        """Calculate cost for Ollama (local, free)."""
+        cost = calculate_cost("ollama", "llama3.2", 1_000_000, 1_000_000)
+        assert cost == 0.0
+
+    def test_calculate_cost_google(self):
+        """Calculate cost for Google model."""
+        # gemini-2.0-flash: $0.075 per 1M input, $0.3 per 1M output
+        cost = calculate_cost("google", "gemini-2.0-flash", 1_000_000, 1_000_000)
+        assert cost == pytest.approx(0.075 + 0.3, abs=0.01)
+
+    def test_calculate_cost_zero_tokens(self):
+        """Cost with zero tokens is zero."""
+        cost = calculate_cost("openai", "gpt-4o", 0, 0)
+        assert cost == 0.0
+
+    def test_benchmark_result_str(self):
+        """BenchmarkResult stringification."""
+        result = BenchmarkResult(
+            adapter="openai",
+            model="gpt-4o",
+            input_tokens=100,
+            output_tokens=50,
+            latency_ms=123.45,
+            cost_usd=0.001234,
+            total_tokens=150,
+        )
+        s = str(result)
+        assert "openai" in s
+        assert "gpt-4o" in s
+        assert "100" in s
+        assert "50" in s
+
+    def test_benchmark_suite_str(self):
+        """BenchmarkSuite stringification."""
+        suite = BenchmarkSuite(
+            adapter="openai",
+            model="gpt-4o",
+            runs=5,
+            total_input_tokens=500,
+            total_output_tokens=250,
+            avg_latency_ms=100.0,
+            min_latency_ms=95.0,
+            max_latency_ms=110.0,
+            total_cost_usd=0.005,
+            avg_cost_per_call_usd=0.001,
+        )
+        s = str(suite)
+        assert "openai" in s
+        assert "5" in s  # runs
+        assert "500" in s  # total input
+
+
+class TestModelRegistry:
+    """Test CPE model registry and configuration."""
+
+    def test_get_default_model_anthropic(self):
+        """Default model for Anthropic."""
+        model = get_default_model("anthropic")
+        assert model == "claude-opus-4-6"
+
+    def test_get_default_model_openai(self):
+        """Default model for OpenAI."""
+        model = get_default_model("openai")
+        assert model == "gpt-4o"
+
+    def test_get_default_model_google(self):
+        """Default model for Google."""
+        model = get_default_model("google")
+        assert model == "gemini-2.0-flash"
+
+    def test_get_default_model_ollama(self):
+        """Default model for Ollama."""
+        model = get_default_model("ollama")
+        assert model == "llama3.2"
+
+    def test_get_api_version_anthropic(self):
+        """API version for Anthropic."""
+        version = get_api_version("anthropic")
+        assert version == "2024-06-15"
+
+    def test_get_max_tokens(self):
+        """Max tokens per adapter."""
+        assert get_max_tokens("anthropic") == 8192
+        assert get_max_tokens("openai") == 8192
+        assert get_max_tokens("google") == 8192
+        assert get_max_tokens("ollama") == 8192
+
+    def test_list_models_anthropic(self):
+        """List Anthropic models."""
+        models = list_models("anthropic")
+        assert len(models) > 0
+        assert "claude-opus-4-6" in models
+
+    def test_supports_feature_openai_caching(self):
+        """OpenAI supports prompt caching."""
+        assert supports_feature("openai", "prompt_caching") is True
+
+    def test_supports_feature_ollama_streaming(self):
+        """Ollama supports streaming."""
+        assert supports_feature("ollama", "streaming") is True
+
+    def test_supports_feature_google_thinking(self):
+        """Google supports thinking."""
+        assert supports_feature("google", "thinking") is True
+
+    def test_env_override_model(self):
+        """Environment variable can override default model."""
+        os.environ["OPENAI_MODEL"] = "gpt-4o-mini"
+        model = get_default_model("openai")
+        assert model == "gpt-4o-mini"
+        # Clean up
+        del os.environ["OPENAI_MODEL"]
+
+    def test_unknown_adapter_returns_empty(self):
+        """Unknown adapter returns empty string."""
+        model = get_default_model("unknown_adapter")
+        assert model == ""
+
+
+class TestOpenAIPromptCaching:
+    """Test OpenAI prompt caching logic."""
+
+    def test_first_invoke_includes_system_with_cache_control(self):
+        """First invoke should include system message with cache_control."""
+        from fcp_base.cpe.openai import _build_messages_with_caching
+
+        system = "You are a helpful assistant."
+        messages = [{"role": "user", "content": "Hello"}]
+
+        result = _build_messages_with_caching(
+            system=system,
+            messages=messages,
+            base_url="https://api.openai.com/v1",
+            system_cached=False,
+            cached_system="",
+        )
+
+        assert len(result) == 2
+        assert result[0]["role"] == "system"
+        assert result[0]["content"] == system
+        assert result[0]["cache_control"] == {"type": "ephemeral"}
+        assert result[1] == messages[0]
+
+    def test_subsequent_invoke_omits_system_if_unchanged(self):
+        """Subsequent invoke should omit system message if unchanged."""
+        from fcp_base.cpe.openai import _build_messages_with_caching
+
+        system = "You are a helpful assistant."
+        messages = [{"role": "user", "content": "What is 2+2?"}]
+
+        result = _build_messages_with_caching(
+            system=system,
+            messages=messages,
+            base_url="https://api.openai.com/v1",
+            system_cached=True,
+            cached_system=system,  # same as current system
+        )
+
+        # System message should be omitted (cached)
+        assert len(result) == 1
+        assert result[0] == messages[0]
+
+    def test_system_change_resends_with_cache_control(self):
+        """If system message changes, resend it with cache_control."""
+        from fcp_base.cpe.openai import _build_messages_with_caching
+
+        old_system = "You are a helpful assistant."
+        new_system = "You are a strict code reviewer."
+        messages = [{"role": "user", "content": "Review this code."}]
+
+        result = _build_messages_with_caching(
+            system=new_system,
+            messages=messages,
+            base_url="https://api.openai.com/v1",
+            system_cached=True,
+            cached_system=old_system,  # different from new_system
+        )
+
+        assert len(result) == 2
+        assert result[0]["role"] == "system"
+        assert result[0]["content"] == new_system
+        assert result[0]["cache_control"] == {"type": "ephemeral"}
+        assert result[1] == messages[0]
+
+    def test_compatible_endpoint_always_includes_system(self):
+        """Compatible endpoints should always include system (no caching)."""
+        from fcp_base.cpe.openai import _build_messages_with_caching
+
+        system = "You are helpful."
+        messages = [{"role": "user", "content": "Hi"}]
+
+        # Even with system_cached=True, compatible endpoint includes system
+        result = _build_messages_with_caching(
+            system=system,
+            messages=messages,
+            base_url="http://localhost:8000/v1",  # compatible endpoint
+            system_cached=True,
+            cached_system=system,
+        )
+
+        assert len(result) == 2
+        assert result[0]["role"] == "system"
+        assert result[0]["content"] == system
+        assert "cache_control" not in result[0]
+
+
+class TestOllamaStreaming:
+    """Test Ollama streaming mode."""
+
+    def test_streaming_accumulates_content(self):
+        """Streaming chunks accumulate content across multiple chunks."""
+        from fcp_base.cpe.ollama import _parse_streaming_response
+
+        chunks = [
+            {
+                "message": {"content": "Hello, "},
+                "done": False,
+            },
+            {
+                "message": {"content": "how can I help?"},
+                "done": False,
+            },
+            {
+                "message": {"content": ""},
+                "done": True,
+                "prompt_eval_count": 100,
+                "eval_count": 50,
+                "done_reason": "stop",
+            },
+        ]
+
+        result = _parse_streaming_response(chunks)
+        assert result.text == "Hello, how can I help?"
+        assert result.input_tokens == 100
+        assert result.output_tokens == 50
+        assert result.stop_reason == "stop"
+
+    def test_streaming_with_tool_calls(self):
+        """Streaming can extract tool calls from chunks."""
+        from fcp_base.cpe.ollama import _parse_streaming_response
+
+        chunks = [
+            {
+                "message": {"content": "I'll help with that."},
+                "done": False,
+            },
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "fcp_exec",
+                                "arguments": {"command": "ls"}
+                            }
+                        }
+                    ]
+                },
+                "done": False,
+            },
+            {
+                "message": {"content": ""},
+                "done": True,
+                "prompt_eval_count": 120,
+                "eval_count": 75,
+                "done_reason": "tool_calls",
+            },
+        ]
+
+        result = _parse_streaming_response(chunks)
+        assert result.text == "I'll help with that."
+        assert len(result.tool_use_calls) == 1
+        assert result.tool_use_calls[0].id.startswith("call_")
+        assert result.tool_use_calls[0].tool == "fcp_exec"
+
+    def test_streaming_multiple_tool_calls_sequential_ids(self):
+        """Streaming extracts multiple tool calls with sequential IDs."""
+        from fcp_base.cpe.ollama import _parse_streaming_response
+
+        chunks = [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "tool_a",
+                                "arguments": {}
+                            }
+                        }
+                    ]
+                },
+                "done": False,
+            },
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "tool_b",
+                                "arguments": {"x": 1}
+                            }
+                        }
+                    ]
+                },
+                "done": False,
+            },
+            {
+                "message": {"content": ""},
+                "done": True,
+                "prompt_eval_count": 100,
+                "eval_count": 50,
+                "done_reason": "tool_calls",
+            },
+        ]
+
+        result = _parse_streaming_response(chunks)
+        assert len(result.tool_use_calls) == 2
+        assert result.tool_use_calls[0].id.startswith("call_")
+        assert result.tool_use_calls[1].id.startswith("call_")
+
+
+class TestOllamaParsing:
+    """Test Ollama API response parsing."""
+
+    def test_text_only_response(self):
+        """Text response without tool calls."""
+        data = {
+            "message": {
+                "content": "Hello, how can I help?",
+                "tool_calls": None,
+            },
+            "prompt_eval_count": 100,
+            "eval_count": 50,
+            "done_reason": "stop",
+        }
+        result = ollama_parse(data)
+        assert result.text == "Hello, how can I help?"
+        assert len(result.tool_use_calls) == 0
+        assert result.input_tokens == 100
+        assert result.output_tokens == 50
+
+    def test_single_tool_call(self):
+        """Single tool call with synthetic ID."""
+        data = {
+            "message": {
+                "content": "I'll execute that for you.",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "fcp_exec",
+                            "arguments": {"command": "ls -la"}
+                        }
+                    }
+                ],
+            },
+            "prompt_eval_count": 120,
+            "eval_count": 75,
+            "done_reason": "tool_calls",
+        }
+        result = ollama_parse(data)
+        assert result.text == "I'll execute that for you."
+        assert len(result.tool_use_calls) == 1
+        assert result.tool_use_calls[0].id.startswith("call_")  # Synthetic ID
+        assert result.tool_use_calls[0].tool == "fcp_exec"
+        assert result.tool_use_calls[0].input == {"command": "ls -la"}
+
+    def test_tool_call_with_json_string_arguments(self):
+        """Tool call where arguments are a JSON string (not dict)."""
+        data = {
+            "message": {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "test_tool",
+                            "arguments": '{"key": "value", "nested": {"a": 1}}'
+                        }
+                    }
+                ],
+            },
+            "prompt_eval_count": 100,
+            "eval_count": 50,
+            "done_reason": "tool_calls",
+        }
+        result = ollama_parse(data)
+        assert result.tool_use_calls[0].input == {"key": "value", "nested": {"a": 1}}
+
+    def test_multiple_tool_calls_get_sequential_ids(self):
+        """Multiple tool calls get sequential synthetic IDs."""
+        data = {
+            "message": {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "tool_a",
+                            "arguments": {}
+                        }
+                    },
+                    {
+                        "function": {
+                            "name": "tool_b",
+                            "arguments": {"x": 1}
+                        }
+                    },
+                ],
+            },
+            "prompt_eval_count": 100,
+            "eval_count": 50,
+            "done_reason": "tool_calls",
+        }
+        result = ollama_parse(data)
+        assert len(result.tool_use_calls) == 2
+        assert result.tool_use_calls[0].id.startswith("call_")
+        assert result.tool_use_calls[1].id.startswith("call_")
+        assert result.tool_use_calls[0].tool == "tool_a"
+        assert result.tool_use_calls[1].tool == "tool_b"
+
+    def test_empty_response(self):
+        """Empty response."""
+        data = {
+            "message": {"content": "", "tool_calls": None},
+            "prompt_eval_count": 10,
+            "eval_count": 5,
+            "done_reason": "stop",
+        }
+        result = ollama_parse(data)
+        assert result.text == ""
+        assert len(result.tool_use_calls) == 0
+
+
+class TestOllamaConvertMessages:
+    """Test _convert_messages() multi-turn tool use conversion."""
+
+    def test_plain_messages_passthrough(self):
+        """Regular user/assistant turns pass through unchanged."""
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there"},
+            {"role": "user", "content": "Bye"},
+        ]
+        result = _convert_messages(messages)
+        assert result == messages
+
+    def test_tool_result_after_empty_assistant(self):
+        """Tool results after empty assistant turn → proper tool_calls + role:tool."""
+        messages = [
+            {"role": "user", "content": "do it"},
+            {"role": "assistant", "content": ""},
+            {"role": "user", "content": '[memory_recall] {"status": "ok"}'},
+        ]
+        result = _convert_messages(messages)
+        # Assistant turn gets tool_calls added
+        assert result[1]["role"] == "assistant"
+        assert "tool_calls" in result[1]
+        assert result[1]["tool_calls"][0]["function"]["name"] == "memory_recall"
+        assert result[1]["tool_calls"][0]["id"] == "call_0"
+        # role:tool message with matching ID
+        assert result[2]["role"] == "tool"
+        assert result[2]["tool_call_id"] == "call_0"
+        assert len(result) == 3
+
+    def test_tool_result_after_assistant_with_text(self):
+        """Tool results after assistant with text (text+tools case) → proper format."""
+        messages = [
+            {"role": "user", "content": "do it"},
+            {"role": "assistant", "content": "Sure, running now"},
+            {"role": "user", "content": '[memory_write] {"results": [{"status": "ok"}]}'},
+        ]
+        result = _convert_messages(messages)
+        # Assistant turn gets tool_calls added (content preserved)
+        assert result[1]["content"] == "Sure, running now"
+        assert "tool_calls" in result[1]
+        assert result[1]["tool_calls"][0]["function"]["name"] == "memory_write"
+        # role:tool message
+        assert result[2]["role"] == "tool"
+        assert result[2]["tool_call_id"] == "call_0"
+
+    def test_multiple_tool_results(self):
+        """Multiple tool results in one turn → multiple tool_calls + role:tool messages."""
+        messages = [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": ""},
+            {"role": "user", "content": '[memory_recall] {"r": 1}\n[file_reader] {"r": 2}'},
+        ]
+        result = _convert_messages(messages)
+        # Two tool_calls on assistant
+        assert len(result[1]["tool_calls"]) == 2
+        assert result[1]["tool_calls"][0]["function"]["name"] == "memory_recall"
+        assert result[1]["tool_calls"][1]["function"]["name"] == "file_reader"
+        assert result[1]["tool_calls"][0]["id"] == "call_0"
+        assert result[1]["tool_calls"][1]["id"] == "call_1"
+        # Two role:tool messages
+        assert result[2]["role"] == "tool"
+        assert result[2]["tool_call_id"] == "call_0"
+        assert result[3]["role"] == "tool"
+        assert result[3]["tool_call_id"] == "call_1"
+        assert len(result) == 4
+
+    def test_non_tool_user_message_not_converted(self):
+        """User message not starting with '[' is not treated as tool result."""
+        messages = [
+            {"role": "assistant", "content": ""},
+            {"role": "user", "content": "normal user message"},
+        ]
+        result = _convert_messages(messages)
+        assert result[1]["role"] == "user"
+        assert "tool_call_id" not in result[1]
+        assert "tool_calls" not in result[0]
+
+    def test_text_plus_tools_sentinel_pattern(self):
+        """Text+tools sentinel pattern: {assistant: text}, {assistant: ""}, {user: tool results}.
+
+        session.py now always appends an empty sentinel when tool_calls are present.
+        For text+tools responses, the sentinel follows the text turn.
+        Ollama must merge tool_calls into the text turn and discard the sentinel.
+        """
+        messages = [
+            {"role": "user", "content": "do it"},
+            {"role": "assistant", "content": "Sure, I'll run that now"},
+            {"role": "assistant", "content": ""},  # sentinel from session.py
+            {"role": "user", "content": '[shell_run] {"status": "ok", "stdout": "done"}'},
+        ]
+        result = _convert_messages(messages)
+        # Must NOT have two consecutive assistant turns
+        assert result[0]["role"] == "user"
+        assert result[1]["role"] == "assistant"
+        assert result[2]["role"] == "tool"
+        assert len(result) == 3
+        # text preserved on the assistant turn that gets tool_calls
+        assert result[1]["content"] == "Sure, I'll run that now"
+        assert "tool_calls" in result[1]
+        assert result[1]["tool_calls"][0]["function"]["name"] == "shell_run"
+        assert result[2]["tool_call_id"] == "call_0"
+
+    def test_text_plus_tools_sentinel_multiple(self):
+        """Sentinel pattern with multiple tool calls merged into text turn."""
+        messages = [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "Running both tools"},
+            {"role": "assistant", "content": ""},  # sentinel
+            {"role": "user", "content": '[tool_a] {"r": 1}\n[tool_b] {"r": 2}'},
+        ]
+        result = _convert_messages(messages)
+        assert len(result) == 4  # user + assistant(merged) + tool + tool
+        assert result[1]["content"] == "Running both tools"
+        assert len(result[1]["tool_calls"]) == 2
+        assert result[1]["tool_calls"][0]["function"]["name"] == "tool_a"
+        assert result[1]["tool_calls"][1]["function"]["name"] == "tool_b"
+        assert result[2]["role"] == "tool"
+        assert result[3]["role"] == "tool"

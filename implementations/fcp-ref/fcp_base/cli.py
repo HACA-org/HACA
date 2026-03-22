@@ -2,16 +2,15 @@
 CLI entry point — FCP §12.1.
 
 Usage (always run from inside the entity root):
-  ./fcp                          — boot and run a session
-  ./fcp init                     — initialise entity root in cwd
-  ./fcp doctor [--fix]           — check/repair without booting
-  ./fcp decommission --archive | --destroy
+  fcp                          — boot and run a session
+  fcp init                     — initialise entity root in cwd
+  fcp doctor [--fix]           — check/repair without booting
+  fcp decommission --archive | --destroy
 """
 
 from __future__ import annotations
 
 import datetime as _dt
-import itertools
 import json
 import os
 import shutil
@@ -23,9 +22,7 @@ from pathlib import Path
 from .store import (
     API_KEY_ENV,
     Layout,
-    append_jsonl,
     atomic_write,
-    load_agenda,
     load_env_file,
     read_json,
     save_api_key,
@@ -36,7 +33,7 @@ from . import ui
 def _require_entity_root(entity_root: Path) -> None:
     if not (entity_root / ".fcp-entity").exists():
         ui.print_err(f"Not an FCP entity root: {entity_root}")
-        ui.print_err("Run './fcp init' to initialise one, or cd into an existing entity.")
+        ui.print_err("Run 'fcp init' to initialise one, or cd into an existing entity.")
         sys.exit(1)
 
 
@@ -132,7 +129,7 @@ def _main() -> None:
             _run_endure_chain(Layout(entity_root))
         else:
             ui.print_err(f"Unknown endure subcommand: {sub}")
-            print("  usage: ./fcp endure sync | origin | chain")
+            print("  usage: fcp endure sync | origin | chain")
             sys.exit(1)
         return
 
@@ -153,21 +150,22 @@ def _main() -> None:
 
 def _print_help() -> None:
     print("""
-  ./fcp                         — boot entity and start session
-  ./fcp init                    — initialize a new entity
-  ./fcp model                   — interactive model picker
-  ./fcp doctor [--fix]          — check integrity; --fix to repair
-  ./fcp endure sync             — sync entity root with git remote
-  ./fcp endure origin           — set or update git remote origin
-  ./fcp endure chain            — display integrity chain
-  ./fcp decommission --archive  — archive entity (reversible)
-  ./fcp decommission --destroy  — destroy entity permanently
-  ./fcp update                  — update FCP from the main repository
-  ./fcp --auto <cron_id>        — run scheduled task autonomously
-  ./fcp --verbose               — boot with verbose mode enabled
-  ./fcp --debugger[=all|chat|boot]
-                                — boot with debugger mode enabled
-  ./fcp help | --help | -h      — this message
+  fcp                              — boot entity and start session
+  fcp init                         — initialize a new entity
+  fcp model                        — interactive model picker
+  fcp mcp                          — Manager MCP server
+  fcp endure sync                  — sync entity root with git remote
+  fcp endure origin                — set or update git remote origin
+  fcp endure chain                 — display integrity chain
+  fcp decommission --archive       — archive entity (reversible)
+  fcp decommission --destroy       — destroy entity permanently
+  fcp doctor [--fix]               — check integrity; --fix to repair
+  fcp --auto <cron_id>             — run scheduled task autonomously in auto:session
+  fcp --verbose                    — boot entity with verbose mode enabled
+  fcp --debugger[=all|chat|boot]   — boot entity with debugger mode enabled
+  fcp update                       — update FCP from the main repository
+  
+  fcp help                         — this message
 """)
 
 
@@ -179,8 +177,19 @@ def _run_update() -> None:
     # Resolve the physical path in case this was run from a symlink (e.g., ~/.local/bin/fcp)
     # cli.py is at: ~/.fcp/implementations/fcp-ref/fcp_base/cli.py
     # So the FCP root is 3 parents up.
-    fcp_root = Path(__file__).resolve().parents[3]
-    
+    cli_file = Path(__file__).resolve()
+    fcp_root = cli_file.parents[3]
+
+    # Guard: reject if this is running from within an entity root
+    # (check if any ancestor between cli_file and fcp_root contains .fcp-entity)
+    for ancestor in cli_file.parents:
+        if (ancestor / ".fcp-entity").exists():
+            ui.print_err("fcp update must be run from the global fcp installation.")
+            ui.print_err("Use the 'fcp' command in your PATH, not a local copy.")
+            sys.exit(1)
+        if ancestor == fcp_root:
+            break
+
     if not (fcp_root / ".git").exists():
         ui.print_err(f"Cannot update: FCP installation at {fcp_root} is not a git repository.")
         sys.exit(1)
@@ -214,7 +223,7 @@ def _run_update() -> None:
 
 def _run_normal(layout: "Layout") -> None:
     from .boot import run as boot_run, BootError
-    from .cpe.base import make_adapter
+    from .cpe.base import load_cpe_adapter_from_baseline
     from .fap import FAPError
     from .operator import (
         handle_platform_command,
@@ -236,13 +245,7 @@ def _run_normal(layout: "Layout") -> None:
 
 
     try:
-        baseline = read_json(layout.baseline)
-        cpe_cfg = baseline.get("cpe", {})
-        adapter = make_adapter(
-            backend=cpe_cfg.get("backend", "ollama"),
-            model=cpe_cfg.get("model", ""),
-            api_key="",
-        )
+        adapter = load_cpe_adapter_from_baseline(layout)
     except Exception as exc:
         print(f"[CPE ERROR] {exc}")
         sys.exit(1)
@@ -302,9 +305,13 @@ def _run_auto(layout: "Layout", cron_id: str) -> None:
     from .boot import run as boot_run, BootError
     from .cpe.base import make_adapter
     from .fap import FAPError
+    from .session import set_session_mode, SessionMode
     from .sleep import run_sleep_cycle
     from .store import read_json
     from .sil import write_notification
+
+    # Set session mode to AUTO (no operator interaction)
+    set_session_mode(SessionMode.AUTO)
 
     # Load agenda and find task
     if not layout.agenda.exists():
@@ -346,13 +353,8 @@ def _run_auto(layout: "Layout", cron_id: str) -> None:
 
 
     try:
-        baseline = read_json(layout.baseline)
-        cpe_cfg = baseline.get("cpe", {})
-        adapter = make_adapter(
-            backend=cpe_cfg.get("backend", "ollama"),
-            model=cpe_cfg.get("model", ""),
-            api_key="",
-        )
+        from .cpe.base import load_cpe_adapter_from_baseline
+        adapter = load_cpe_adapter_from_baseline(layout)
     except Exception as exc:
         print(f"[CPE ERROR] {exc}")
         sys.exit(1)
@@ -388,10 +390,13 @@ def _run_auto(layout: "Layout", cron_id: str) -> None:
 def _run_auto_worker(layout: "Layout", task: dict, wake_up_message: str) -> None:
     """Run a worker_skill task directly without a CPE session."""
     import json
+    from .session import set_session_mode, SessionMode
     from .store import atomic_write, read_json
     from .sil import write_notification
     from .exec_ import dispatch
 
+    # Set session mode to AUTO (no operator interaction)
+    set_session_mode(SessionMode.AUTO)
 
     index: dict = {}
     if layout.skills_index.exists():
@@ -400,11 +405,36 @@ def _run_auto_worker(layout: "Layout", task: dict, wake_up_message: str) -> None
     cron_id = task.get("id", "")
     description = task.get("description", cron_id)
 
+    # context = task instructions from agenda + workspace_focus
+    context_parts = [
+        "[task instructions]",
+        task.get("task") or "(no instructions provided)",
+        "",
+        "[environment]",
+    ]
+    workspace_focus_file = layout.root / "state" / "workspace_focus.json"
+    if workspace_focus_file.exists():
+        try:
+            import json as _json
+            wf = _json.loads(workspace_focus_file.read_text(encoding="utf-8"))
+            context_parts.append(f"workspace_focus: {wf.get('path', '(unset)')}")
+        except Exception:
+            context_parts.append("workspace_focus: (unavailable)")
+    else:
+        context_parts.append("workspace_focus: (not set)")
+    context = "\n".join(context_parts)
+
+    persona = (
+        task.get("persona")
+        or "You are an autonomous FCP worker executing a scheduled task. "
+           "Act on the stimulus, follow the task instructions, and return a structured result."
+    )
+
     try:
         result = dispatch(layout, "worker_skill", {
             "task": wake_up_message,
-            "context": task.get("task", ""),
-            "persona": "FCP autonomous worker",
+            "context": context,
+            "persona": persona,
         }, index)
     except Exception as exc:
         result = f"error: {exc}"
@@ -724,13 +754,8 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
         print(f"[BOOT FAILED] {exc}")
         sys.exit(1)
 
-    baseline = read_json(layout.baseline)
-    cpe_cfg = baseline.get("cpe", {})
-    adapter = make_adapter(
-        backend=cpe_cfg.get("backend", "ollama"),
-        model=cpe_cfg.get("model", ""),
-        api_key="",
-    )
+    from .cpe.base import load_cpe_adapter_from_baseline
+    adapter = load_cpe_adapter_from_baseline(layout)
     index: dict = {}
     if layout.skills_index.exists():
         index = read_json(layout.skills_index)
@@ -753,6 +778,32 @@ def _run_decommission(layout: "Layout", args: list[str]) -> None:
 # Model — select provider/model and update API key outside of a session
 # ---------------------------------------------------------------------------
 
+def _get_entity_profile(layout: "Layout") -> str:
+    """Read entity profile from .fcp-entity marker. Defaults to 'haca-core'."""
+    entity_marker_path = layout.root / ".fcp-entity"
+    if entity_marker_path.exists():
+        try:
+            marker = json.loads(entity_marker_path.read_text(encoding="utf-8"))
+            return marker.get("profile", "haca-core")
+        except Exception:
+            pass
+    return "haca-core"
+
+
+def _get_allowed_backends(profile: str) -> list[str]:
+    """Filter backends based on entity profile.
+
+    - haca-core: excludes 'pairing' (has direct entity access)
+    - haca-evolve: includes 'pairing' (uses it as opaque CPE backend)
+    """
+    from .cpe.base import BACKENDS
+
+    if profile == "haca-evolve":
+        return BACKENDS
+    else:  # haca-core
+        return [b for b in BACKENDS if b != "pairing"]
+
+
 def _run_model(layout: "Layout") -> None:
     from .cpe.base import BACKENDS, KNOWN_MODELS, fetch_ollama_models
     from .store import read_json, atomic_write
@@ -760,18 +811,22 @@ def _run_model(layout: "Layout") -> None:
     try:
         baseline = read_json(layout.baseline)
     except Exception:
-        print("[ERROR] Could not read baseline.json — run ./fcp init first.")
+        print("[ERROR] Could not read baseline.json — run fcp init first.")
         sys.exit(1)
 
     cpe_cfg = baseline.get("cpe", {})
     current_backend = cpe_cfg.get("backend", "ollama")
     current_model = cpe_cfg.get("model", "")
 
+    # Get allowed backends based on entity profile
+    profile = _get_entity_profile(layout)
+    allowed_backends = _get_allowed_backends(profile)
+
     # Build flat list of "backend:model" labels
     items: list[str] = []
     pairs: list[tuple[str, str]] = []  # (backend, model) parallel to items
 
-    for backend in BACKENDS:
+    for backend in allowed_backends:
         models = fetch_ollama_models() if backend == "ollama" else KNOWN_MODELS.get(backend, [])
         for m in models:
             active = backend == current_backend and m == current_model
@@ -843,6 +898,7 @@ def _write_entity_gitignore(entity_root: Path) -> None:
     """
     content = """\
 # FCP entity root — generated by fcp init
+
 # Volatile runtime artefacts — do not commit
 io/inbox/
 io/spool/
@@ -853,7 +909,14 @@ state/integrity.log
 state/distress.beacon
 state/first-stimuli.json
 state/pending-closure.json
-workspace/stage/
+
+# Ignore the dynamic entity workspace completely to prevent nested repository collisions
+workspace/
+
+# (Optional) If you need the workspace folder to exist upon cloning the entity, 
+# but want to ignore its contents, use this pattern instead:
+# workspace/*
+# !workspace/.gitkeep
 
 # Python
 __pycache__/
@@ -948,6 +1011,9 @@ def _run_init(fcp_ref_root: Path) -> None:
                         if sub.name != "baseline.json":
                             if sub.is_dir(): shutil.rmtree(sub)
                             else: sub.unlink()
+            # Recreate expected memory subdirectories so boot/MIL don't fail.
+            for subdir in ["memory/episodic", "memory/semantic", "memory/active_context"]:
+                (entity_root / subdir).mkdir(parents=True, exist_ok=True)
             print()
             ui.print_ok("Dynamic state cleared. Entity is ready for FAP.")
             print(f"      Run: cd {entity_root} && ./fcp")
@@ -1191,8 +1257,11 @@ def _run_init(fcp_ref_root: Path) -> None:
     # ── Step 4: CPE backend and model ────────────────────────────────────────
     ui.hr("4. CPE backend and model")
     print()
-    from .cpe.base import BACKENDS, KNOWN_MODELS, fetch_ollama_models
-    backend = ui.pick_one("Backend", BACKENDS, indent="  ")
+    from .cpe.base import KNOWN_MODELS, fetch_ollama_models
+
+    # Get allowed backends based on profile
+    allowed_backends = _get_allowed_backends(profile)
+    backend = ui.pick_one("Backend", allowed_backends, indent="  ")
 
     api_key_saved: str | None = None
     if backend == "ollama":

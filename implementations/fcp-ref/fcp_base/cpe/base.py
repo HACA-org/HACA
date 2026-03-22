@@ -10,7 +10,10 @@ owns context assembly and chat history accumulation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from ..store import Layout
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +93,38 @@ def _trunc(s: str, n: int = 200) -> str:
     return "".join(itertools.islice(s, n))
 
 
+def validate_invoke_inputs(
+    system: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+) -> None:
+    """Validate invoke() input parameters.
+
+    Raises ValueError if inputs are invalid.
+    Early validation prevents wasting tokens on malformed requests.
+    """
+    if not isinstance(system, str) or not system.strip():
+        raise ValueError("system must be a non-empty string")
+
+    if not isinstance(messages, list):
+        raise ValueError("messages must be a list")
+
+    for i, msg in enumerate(messages):
+        if not isinstance(msg, dict):
+            raise ValueError(f"messages[{i}] must be a dict, got {type(msg).__name__}")
+        if "role" not in msg or "content" not in msg:
+            raise ValueError(f"messages[{i}] must have 'role' and 'content' keys")
+
+    if tools is not None:
+        if not isinstance(tools, list):
+            raise ValueError("tools must be a list or None")
+        for i, tool in enumerate(tools):
+            if not isinstance(tool, dict):
+                raise ValueError(f"tools[{i}] must be a dict, got {type(tool).__name__}")
+            if "name" not in tool:
+                raise ValueError(f"tools[{i}] must have 'name' key")
+
+
 # ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------
@@ -139,11 +174,12 @@ BACKENDS: list[str] = ["ollama", "anthropic", "openai", "google", "pairing"]
 # Factory
 # ---------------------------------------------------------------------------
 
-def make_adapter(backend: str, api_key: str, model: str) -> CPEAdapter:
+def make_adapter(backend: str, api_key: str, model: str, layout: "Layout | None" = None) -> CPEAdapter:
     """Instantiate the correct adapter for *backend*.
 
     backend must match a value from StructuralBaseline.cpe.backend.
     Raises ValueError for unknown backends.
+    layout (optional) is passed to adapters that need it (e.g., PairingAdapter for hooks).
     """
     if backend == "anthropic":
         from .anthropic import AnthropicAdapter
@@ -159,7 +195,7 @@ def make_adapter(backend: str, api_key: str, model: str) -> CPEAdapter:
         return OllamaAdapter(api_key="", model=model)
     if backend == "pairing":
         from .pairing import PairingAdapter
-        return PairingAdapter(model=model or "external")
+        return PairingAdapter(model=model or "external", layout=layout)
     raise ValueError(f"Unknown CPE backend: {backend!r}")
 
 
@@ -199,3 +235,27 @@ def fetch_ollama_models() -> list[str]:
         return [m["name"] for m in data.get("models", [])]
     except Exception:
         return []
+
+
+def load_cpe_adapter_from_baseline(layout: "Layout") -> CPEAdapter:
+    """Load CPE adapter from baseline.cpe configuration.
+
+    Reads backend, model, and api_key from baseline.json and instantiates
+    the appropriate adapter. Falls back to Ollama if backend is missing.
+
+    Raises ValueError if backend is unknown.
+    """
+    from ..store import read_json
+
+    baseline = {}
+    try:
+        baseline = read_json(layout.baseline)
+    except Exception:
+        pass
+
+    cpe_cfg = baseline.get("cpe", {})
+    backend = cpe_cfg.get("backend", "ollama")
+    model = cpe_cfg.get("model", "")
+    api_key = cpe_cfg.get("api_key", "")
+
+    return make_adapter(backend=backend, api_key=api_key, model=model, layout=layout)

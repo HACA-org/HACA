@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# on_prompt_pending hook for Claude Code integration
+#
+# Notifies Claude Code that a prompt is pending for the MCP server.
+# Uses marker files in .fcp-entity/notifications/mcp/ that Claude Code can watch.
+#
+# Strategy: Marker files are more reliable than TTY injection in containerized/WSL
+# environments. Claude Code (or an external tool) can monitor this directory
+# and trigger fcp_poll when a .pending file appears.
+#
+# Environment variables provided:
+#   FCP_EVENT         — "on_prompt_pending"
+#   FCP_ENTITY_ROOT   — absolute path to entity root
+#   FCP_SESSION_TOKEN — session ID (from active token)
+#   FCP_EVENT_DATA    — JSON: {session_id, request_file}
+#
+# TODO: Implement IDE-specific notification (API, webhook, etc.)
+#       This hook currently only creates marker files.
+#       Future extensions:
+#       - Call Antigravity Terminal API (VS Code-like sendText())
+#       - HTTP webhook to localhost for IDE notification
+#       - Named pipe listener for cross-process signals
+
+set -e
+
+# Parse event data
+EVENT_DATA="$FCP_EVENT_DATA"
+SESSION_ID=$(echo "$EVENT_DATA" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('session_id', ''))" 2>/dev/null || echo "")
+REQUEST_FILE=$(echo "$EVENT_DATA" | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('request_file', ''))" 2>/dev/null || echo "")
+
+if [ -z "$SESSION_ID" ] || [ -z "$REQUEST_FILE" ]; then
+    echo "ERROR: Missing session_id or request_file in event data" >&2
+    exit 1
+fi
+
+# Notification marker file — Claude Code can watch this directory
+NOTIFY_DIR="${FCP_ENTITY_ROOT}/.fcp-entity/notifications/mcp"
+mkdir -p "$NOTIFY_DIR"
+
+NOTIFY_FILE="${NOTIFY_DIR}/${SESSION_ID}.pending"
+
+# Write notification file with timestamp and request file path
+cat > "${NOTIFY_FILE}.tmp" << EOF
+{
+  "event": "on_prompt_pending",
+  "session_id": "$SESSION_ID",
+  "request_file": "$REQUEST_FILE",
+  "notified_at": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+}
+EOF
+
+# Atomic write
+mv "${NOTIFY_FILE}.tmp" "$NOTIFY_FILE"
+
+# Log the notification
+LOG_DIR="${FCP_ENTITY_ROOT}/.fcp-entity/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="${LOG_DIR}/mcp_notifications.log"
+echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] MCP prompt pending: session=$SESSION_ID file=$REQUEST_FILE" >> "$LOG_FILE" 2>/dev/null || true
+
+# Create named pipe for cross-process signaling (if not exists)
+# This allows Claude Code to wake up without polling directories
+SIGNAL_FIFO="${FCP_ENTITY_ROOT}/.fcp-entity/signals/mcp_wake"
+mkdir -p "$(dirname "$SIGNAL_FIFO")"
+mkfifo "$SIGNAL_FIFO" 2>/dev/null || true
+
+# Signal Claude Code listener via named pipe (non-blocking)
+# The listener (running `/loop` in Claude Code) reads from this pipe
+if [ -p "$SIGNAL_FIFO" ]; then
+    (echo "$SESSION_ID" > "$SIGNAL_FIFO" 2>/dev/null || true) &
+fi
+
+# Fallback: Keep marker file for debugging/polling
+# If Claude Code listener is not running, it can still poll this directory
+
+exit 0

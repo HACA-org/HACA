@@ -74,6 +74,19 @@ from urllib.request import urlopen, Request
 
 
 # ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+# HTTP request timeout for all CMI network operations (peer discovery, enrollment, messaging)
+# Prevents indefinite hangs if peer is slow, offline, or network is degraded.
+# Values: ready=5s (peer discovery), enroll=10s (handshake), message=5s (messaging)
+# These can be tuned per baseline config (future enhancement)
+CMI_TIMEOUT_READY = 5    # seconds, peer discovery
+CMI_TIMEOUT_ENROLL = 10  # seconds, enrollment handshake
+CMI_TIMEOUT_MESSAGE = 5  # seconds, general messaging
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -450,7 +463,7 @@ class ChannelProcess:
                     host_endpoint + f"/channel/{self.chan_id}/ready",
                     data=body, headers={"Content-Type": "application/json"}, method="POST",
                 )
-                with urlopen(req, timeout=5) as resp:
+                with urlopen(req, timeout=CMI_TIMEOUT_READY) as resp:
                     result = json.loads(resp.read().decode())
                 token = result.get("enrollment_token", "")
                 if token:
@@ -489,7 +502,7 @@ class ChannelProcess:
                 host_endpoint + f"/channel/{self.chan_id}/enroll",
                 data=body, headers={"Content-Type": "application/json"}, method="POST",
             )
-            with urlopen(req, timeout=10) as resp:
+            with urlopen(req, timeout=CMI_TIMEOUT_ENROLL) as resp:
                 result = json.loads(resp.read().decode())
             if result.get("enrolled"):
                 _log(f"[CMI] peer: enrolled on {self.chan_id} role:{result.get('role')}")
@@ -810,7 +823,7 @@ class ChannelProcess:
         body = json.dumps(signed).encode()
         try:
             req = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-            with urlopen(req, timeout=5) as resp:
+            with urlopen(req, timeout=CMI_TIMEOUT_MESSAGE) as resp:
                 return resp.status == 200
         except Exception as exc:
             _log(f"[CMI] post failed to {url}: {exc}")
@@ -934,10 +947,10 @@ class ChannelProcess:
         return {}
 
     def _find_trusted_peer(self, node_identity: str) -> dict[str, Any] | None:
-        peers = self._cmi_cfg.get("trusted_peers", [])
-        for p in peers:
-            if p.get("node_identity") == node_identity:
-                return p
+        contacts = self._cmi_cfg.get("contacts", [])
+        for c in contacts:
+            if c.get("node_id") == node_identity:
+                return c
         return None
 
     def _find_enrolled_peer(self, node_identity: str) -> dict[str, Any] | None:

@@ -33,6 +33,56 @@ from typing import Any
 from .acp import make as acp_encode
 from .store import Layout, append_jsonl, atomic_write, read_json, read_jsonl
 
+# Episodic index file: maps slug → [paths] for O(1) memory_recall() lookups
+EPISODIC_INDEX_FILE = ".episodic-index.json"
+
+# Session cache file: caches last N turns from session.jsonl for faster boots
+SESSION_CACHE_FILE = ".session-cache.json"
+
+
+# ---------------------------------------------------------------------------
+# Index management helpers
+# ---------------------------------------------------------------------------
+
+def _read_episodic_index(layout: Layout) -> dict[str, list[str]]:
+    """Load episodic index; return empty dict if missing or corrupted."""
+    index_file = layout.episodic_dir / EPISODIC_INDEX_FILE
+    if not index_file.exists():
+        return {}
+    try:
+        return read_json(index_file)
+    except Exception:
+        return {}
+
+
+def _write_episodic_index(layout: Layout, index: dict[str, list[str]]) -> None:
+    """Save episodic index to disk."""
+    layout.episodic_dir.mkdir(parents=True, exist_ok=True)
+    index_file = layout.episodic_dir / EPISODIC_INDEX_FILE
+    atomic_write(index_file, index)
+
+
+def _rebuild_episodic_index(layout: Layout) -> dict[str, list[str]]:
+    """Rebuild episodic index from filesystem (recovery operation).
+
+    Called when index is corrupted or missing; scans episodic_dir and rebuilds
+    slug→[paths] mapping. Used during boot or maintenance.
+    """
+    index: dict[str, list[str]] = {}
+    if not layout.episodic_dir.exists():
+        return index
+    for f in sorted(layout.episodic_dir.glob("*-*.md")):
+        # Extract slug from <timestamp>-<slug>.md
+        match = re.search(r"-([^-]+)\.md$", f.name)
+        if match:
+            slug = match.group(1)
+            rel = str(f.relative_to(layout.root))
+            if slug not in index:
+                index[slug] = []
+            index[slug].append(rel)
+    _write_episodic_index(layout, index)
+    return index
+
 
 # ---------------------------------------------------------------------------
 # Mid-session writes
@@ -47,6 +97,7 @@ def write_episodic(
     a dict {"conflict": slug, "existing_content": <str>} instead of writing.
     If overwrite is True, deletes all existing files for this slug before writing.
 
+    Maintains episodic index for O(1) slug lookups.
     Returns the Path written on success.
     """
     # Sanitize slug: keep only alphanumerics, hyphens, underscores, and dots.
@@ -61,11 +112,36 @@ def write_episodic(
     if existing and not overwrite:
         current = existing[0].read_text(encoding="utf-8")
         return {"conflict": slug, "existing_content": current}
+
+    # Load index and remove old entries for this slug
+    index = _read_episodic_index(layout)
+    if overwrite and slug in index:
+        # Delete all old files listed in index
+        for rel in index.get(slug, []):
+            f = layout.root / rel
+            if f.exists():
+                f.unlink()
+        # Clear index entry for this slug
+        index[slug] = []
+
+    # Also delete any existing files found by glob (in case index is out of sync)
     for f in existing:
-        f.unlink()
+        if f.exists():
+            f.unlink()
+
     ts = int(time.time() * 1000)
     dest = layout.episodic_dir / f"{ts}-{slug}.md"
+    dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(content, encoding="utf-8")
+
+    # Update index
+    rel = str(dest.relative_to(layout.root))
+    if slug not in index:
+        index[slug] = []
+    if rel not in index[slug]:
+        index[slug].append(rel)
+    _write_episodic_index(layout, index)
+
     return dest
 
 
@@ -76,6 +152,7 @@ def write_semantic(layout: Layout, key: str, content: str) -> Path:
     Operator-approved semantic content without a prior episodic file.
     """
     dest = layout.semantic_dir / f"{key}.md"
+    dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(content, encoding="utf-8")
     return dest
 
@@ -83,22 +160,30 @@ def write_semantic(layout: Layout, key: str, content: str) -> Path:
 def promote_to_semantic(layout: Layout, slug: str) -> bool:
     """Integrate an episodic slug into memory/semantic/<slug>.md (Stage 3).
 
-    Finds the most recent episodic file matching *slug*, writes its content
-    to semantic/.  Called by the SIL during Stage 3 execution of an
-    authorized memory promotion proposal.
+    Uses episodic index for O(1) lookup; if index is missing, falls back to
+    filesystem scan and rebuilds index.  Called by the SIL during Stage 3
+    execution of an authorized memory promotion proposal.
 
     Returns True if the slug was found and promoted, False if not found.
     """
-    matches = sorted(
-        layout.episodic_dir.glob(f"*-{slug}.md"),
-        key=lambda p: p.name,
-        reverse=True,
-    )
-    if not matches:
+    # Try index first
+    index = _read_episodic_index(layout)
+    if slug not in index or not index[slug]:
+        # Index miss — rebuild and retry
+        index = _rebuild_episodic_index(layout)
+        if slug not in index or not index[slug]:
+            return False
+
+    # Get most recent file for this slug
+    paths = sorted(index[slug], reverse=True)
+    source = layout.root / paths[0]
+
+    if not source.exists():
         return False
-    source = matches[0]
+
     content = source.read_text(encoding="utf-8")
     dest = layout.semantic_dir / f"{slug}.md"
+    dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".md.tmp")
     tmp.write_text(content, encoding="utf-8")
     os.replace(tmp, dest)
@@ -113,7 +198,7 @@ def memory_recall(layout: Layout, query: str, path: str) -> dict[str, Any]:
     """Process a memory_recall action from the CPE.
 
     Creates/replaces a symlink in active_context/ named after the basename
-    of *path*.  Writes a MEMORY_RESULT ACP envelope to io/inbox/.
+    of *path*.  Uses episodic index for O(1) slug resolution.
     Returns the result dict (also written synchronously to inbox).
     """
     paths: list[str] = []
@@ -121,19 +206,25 @@ def memory_recall(layout: Layout, query: str, path: str) -> dict[str, Any]:
 
     if path:
         target = layout.root / path
-        # If the path doesn't exist directly, try to resolve it as a slug:
-        # look for the most recent episodic file matching *-<path>.md
+        # If the path doesn't exist directly, try to resolve it as a slug using index
         if not target.exists() or target == layout.root:
             slug = Path(path).name
             slug = re.sub(r"[^\w\-.]", "-", slug)
-            matches = sorted(
-                layout.episodic_dir.glob(f"*-{slug}.md"),
-                key=lambda p: p.name,
-                reverse=True,
-            )
-            if matches:
-                target = matches[0]
-                path = str(target.relative_to(layout.root))
+            index = _read_episodic_index(layout)
+
+            # Try index lookup first
+            if slug in index and index[slug]:
+                # Get most recent file
+                most_recent = sorted(index[slug], reverse=True)[0]
+                target = layout.root / most_recent
+                path = most_recent
+            else:
+                # Index miss — rebuild and retry
+                index = _rebuild_episodic_index(layout)
+                if slug in index and index[slug]:
+                    most_recent = sorted(index[slug], reverse=True)[0]
+                    target = layout.root / most_recent
+                    path = most_recent
 
         if target.exists() and target != layout.root:
             status = "found"
@@ -278,12 +369,62 @@ def seed_active_context(layout: Layout) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def clean_stale_symlinks(layout: Layout) -> None:
-    """Remove broken symlinks from memory/active_context/."""
+    """Remove broken symlinks from memory/active_context/ (Stage 2).
+
+    Cleans both:
+    1. Broken symlinks (targets no longer exist)
+    2. Orphaned symlinks (not in working_memory, not recently accessed)
+
+    This prevents unbounded accumulation of stale context symlinks.
+    """
     if not layout.active_context_dir.exists():
         return
+
+    # Get list of paths in working_memory (these should be kept)
+    allowed_paths: set[str] = set()
+    if layout.working_memory.exists():
+        try:
+            wm = read_json(layout.working_memory)
+            for entry in wm.get("entries", []):
+                path = entry.get("path", "")
+                if path:
+                    # Store just the basename for matching with symlink names
+                    allowed_paths.add(Path(path).name)
+        except Exception:
+            pass
+
+    # Clean symlinks
     for link in layout.active_context_dir.iterdir():
+        # Always remove broken symlinks
         if link.is_symlink() and not link.exists():
             link.unlink()
+        # Remove symlinks not in working_memory (unless they're recent session artifacts)
+        elif link.is_symlink():
+            # Keep symlink if its name appears in working_memory paths
+            if allowed_paths and link.name not in allowed_paths:
+                # Symlink not in working_memory; remove it
+                # This prevents accumulation while respecting current context
+                link.unlink()
+
+
+def clean_episodic_index(layout: Layout) -> None:
+    """Remove orphaned entries from episodic index (Stage 2).
+
+    Scans index and removes slug entries where all files are missing from disk.
+    Rebuilds index if corruption detected.
+    """
+    index = _read_episodic_index(layout)
+    if not index:
+        return
+
+    cleaned: dict[str, list[str]] = {}
+    for slug, paths in index.items():
+        valid = [p for p in paths if (layout.root / p).exists()]
+        if valid:
+            cleaned[slug] = valid
+
+    if cleaned != index:
+        _write_episodic_index(layout, cleaned)
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +545,44 @@ def append_endure_commit(layout: Layout, seq: int, files: dict[str, str]) -> Non
         data={"seq": seq, "files": files},
     )
     append_jsonl(layout.session_store, envelope)
+
+
+# ---------------------------------------------------------------------------
+# Session cache — speed up boot by caching last N turns
+# ---------------------------------------------------------------------------
+
+def cache_session_tail(layout: Layout, max_turns: int = 100) -> None:
+    """Cache last N turns from session.jsonl for faster boot (Stage 3 end).
+
+    Called after sleep Stage 3 to cache the session tail, avoiding full
+    session.jsonl scan on next boot. If session is empty, cache is cleared.
+    """
+    from .session import _session_to_turns
+
+    cache_file = layout.root / "memory" / SESSION_CACHE_FILE
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        pairs = _session_to_turns(layout)
+        # Keep only last max_turns to bound cache size
+        if len(pairs) > max_turns:
+            pairs = pairs[-max_turns:]
+
+        # Convert to list of dicts for JSON serialization
+        turns = [{"role": role, "content": content} for role, content in pairs]
+        cache_data = {"turns": turns, "cached_at": int(time.time())}
+        atomic_write(cache_file, cache_data)
+    except Exception:
+        # If caching fails, remove cache to force full scan on next boot
+        if cache_file.exists():
+            cache_file.unlink()
+
+
+def clear_session_cache(layout: Layout) -> None:
+    """Clear session cache to force full session scan on next boot."""
+    cache_file = layout.root / "memory" / SESSION_CACHE_FILE
+    if cache_file.exists():
+        cache_file.unlink()
 
 
 # ---------------------------------------------------------------------------

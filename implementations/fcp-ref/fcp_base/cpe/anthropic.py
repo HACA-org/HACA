@@ -3,6 +3,9 @@ Anthropic Messages API adapter.  §6
 
 Uses urllib.request (stdlib) — zero external dependencies.
 API reference: https://docs.anthropic.com/en/api/messages
+
+Supports extended thinking, tool use, and latest Claude models.
+API version: 2024-06-15 (supports thinking blocks, improved tool use).
 """
 
 from __future__ import annotations
@@ -10,11 +13,11 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .base import CPEAuthError, CPEResponse, ToolUseCall, _trunc
+from .base import CPEAuthError, CPEResponse, ToolUseCall, _trunc, validate_invoke_inputs
 from ._http import post_json
 
 _API_URL = "https://api.anthropic.com/v1/messages"
-_API_VERSION = "2023-06-01"
+_API_VERSION = "2024-06-15"  # Updated: 2023-06-01 → 2024-06-15
 _DEFAULT_MODEL = "claude-opus-4-6"
 _MAX_TOKENS = 8192
 
@@ -32,6 +35,9 @@ class AnthropicAdapter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> CPEResponse:
+        # Validate inputs early
+        validate_invoke_inputs(system, messages, tools)
+
         payload: dict[str, Any] = {
             "model": self._model,
             "max_tokens": _MAX_TOKENS,

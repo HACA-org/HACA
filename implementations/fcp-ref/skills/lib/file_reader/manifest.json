@@ -1,7 +1,7 @@
 {
   "name": "file_reader",
-  "version": "1.0.0",
-  "description": "Read a file within workspace/. Rejects any path outside workspace/.",
+  "version": "1.1.0",
+  "description": "Read, list, or search files within workspace_focus. Supports line range (offset/limit), directory listing, and regex pattern search (grep).",
   "timeout_seconds": 10,
   "background": false,
   "irreversible": false,
@@ -14,15 +14,19 @@
     "properties": {
       "path": {
         "type": "string",
-        "description": "Path relative to workspace/ to read."
+        "description": "Path relative to workspace_focus. For pattern search, may be a file or directory (recursive)."
       },
       "offset": {
         "type": "integer",
-        "description": "First line to read (1-indexed). Defaults to 1."
+        "description": "First line to read (1-indexed). Only for file reads."
       },
       "limit": {
         "type": "integer",
-        "description": "Maximum number of lines to return."
+        "description": "Maximum number of lines to return. Only for file reads."
+      },
+      "pattern": {
+        "type": "string",
+        "description": "Regex pattern to search for. When set, returns matching lines with file path and line number instead of file content."
       }
     },
     "required": [

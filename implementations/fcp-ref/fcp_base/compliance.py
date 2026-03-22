@@ -191,7 +191,7 @@ def check_chain(layout: Layout) -> list[Finding]:
 
 BUILTIN_SKILLS = [
     "skill_create", "skill_audit", "file_reader",
-    "file_writer", "worker_skill", "commit", "shell_run", "web_fetch",
+    "file_writer", "worker_skill", "shell_run", "web_fetch",
 ]
 
 REQUIRED_MANIFEST_FIELDS = [
@@ -390,19 +390,6 @@ def check_severance(layout: Layout) -> list[Finding]:
 def check_cmi(layout: Layout) -> list[Finding]:
     findings: list[Finding] = []
 
-    if not layout.skills_index.exists():
-        return []
-
-    try:
-        index = read_json(layout.skills_index)
-    except Exception:
-        return []
-
-    cmi_skills = {"cmi_send", "cmi_req"}
-    indexed = {s.get("name") for s in index.get("skills", [])}
-    if not cmi_skills.intersection(indexed):
-        return []  # CMI skills not installed — nothing to check
-
     try:
         baseline = read_json(layout.baseline)
     except Exception:
@@ -410,6 +397,10 @@ def check_cmi(layout: Layout) -> list[Finding]:
         return findings
 
     cmi_cfg = baseline.get("cmi", {})
+    if not cmi_cfg.get("enabled", False):
+        findings.append(_ok("§6.4", "CMI not enabled — skipping endpoint check"))
+        return findings
+
     if cmi_cfg.get("host"):
         findings.append(_ok("§6.4", "CMI host endpoint configured"))
     else:

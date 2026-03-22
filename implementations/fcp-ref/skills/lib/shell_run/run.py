@@ -36,6 +36,25 @@ def main() -> None:
     focus = json.loads(focus_file.read_text(encoding="utf-8"))
     focus_path = Path(str(focus.get("path", ""))).resolve()
 
+    # --- Stage 0: operator "allow once" bypass via env var ---
+    import os as _os
+    allow_once = _os.environ.get("FCP_SHELL_RUN_ALLOW_ONCE", "")
+    if allow_once and allow_once == command:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            cwd=str(focus_path),
+        )
+        print(json.dumps({
+            "status": "ok" if result.returncode == 0 else "error",
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        }))
+        return
+
     # load allowlists from manifest
     manifest_path = entity_root / "skills" / "lib" / "shell_run" / "manifest.json"
     allowlist: list[str] = []
@@ -78,7 +97,7 @@ def main() -> None:
     base_cmd = tokens[0] if tokens else ""
     if base_cmd not in allowlist:
         print(json.dumps({"error": f"command not in allowlist: {base_cmd!r}"}))
-        sys.exit(1)
+        sys.exit(0)
 
     # reject absolute paths and traversal in arguments
     args = tokens[1:]
@@ -86,6 +105,13 @@ def main() -> None:
         if token.startswith("/") or ".." in token.split("/"):
             print(json.dumps({"error": f"path argument not permitted: {token!r}"}))
             sys.exit(1)
+
+    if base_cmd == "git":
+        from . import git_guard
+        blocked = git_guard.check(entity_root, focus_path)
+        if blocked:
+            print(json.dumps(blocked))
+            sys.exit(0)
 
     result = subprocess.run(
         tokens,

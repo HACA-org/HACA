@@ -17,18 +17,267 @@ from __future__ import annotations
 import json
 import os
 import time
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from .acp import drain_inbox, make as acp_encode
-from .cpe.base import AdapterRef, CPEAdapter, CPEResponse
-from .mil import memory_recall, process_closure, result_recall, summarize_session, write_episodic
+from .cpe.base import AdapterRef, CPEAdapter, CPEResponse, CPEError, CPEAuthError, CPERateLimitError
+from .mil import memory_recall, process_closure, result_recall, summarize_session, write_episodic, SESSION_CACHE_FILE
 from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger, is_compact_pending as _is_compact_pending, set_compact_pending as _set_compact_pending, is_endure_approved as _is_endure_approved, set_endure_approved as _set_endure_approved
-from .sil import sha256_str as _sha256_str, write_evolution_auth as _write_evolution_auth
+from .sil import sha256_str as _sha256_str, write_evolution_auth as _write_evolution_auth, write_notification as _write_notification
 from .stimuli import inject_evolution_result as _write_evolution_stimuli
 from .store import Layout, append_jsonl, atomic_write, load_baseline, read_json, read_jsonl
 from . import ui
 from . import vital as _vital
+
+
+# ---------------------------------------------------------------------------
+# Session Mode Context
+# ---------------------------------------------------------------------------
+
+class SessionMode(Enum):
+    """Session execution mode."""
+    MAIN = "main"  # Operator directly (UI/TUI, Telegram, etc)
+    AUTO = "auto"  # Autonomous (cron, CMI delegate, etc)
+
+
+_session_mode: SessionMode = SessionMode.MAIN
+
+
+def set_session_mode(mode: SessionMode) -> None:
+    """Set the current session mode (MAIN or AUTO)."""
+    global _session_mode
+    _session_mode = mode
+
+
+def get_session_mode() -> SessionMode:
+    """Get the current session mode."""
+    return _session_mode
+
+
+def is_auto_session() -> bool:
+    """Check if currently in autonomous session (auto:session)."""
+    return _session_mode == SessionMode.AUTO
+
+
+def is_main_session() -> bool:
+    """Check if currently in operator-driven session (main:session)."""
+    return _session_mode == SessionMode.MAIN
+
+
+# ---------------------------------------------------------------------------
+# Chat History Management — Bounded Growth
+# ---------------------------------------------------------------------------
+
+def _estimate_message_tokens(msg: dict[str, Any]) -> int:
+    """Estimate token count for a single message.
+
+    Uses character-based heuristic: ~4 chars per token (rough average).
+    """
+    content = msg.get("content", "")
+    return max(1, len(content) // 4)
+
+
+def _trim_chat_history(
+    chat_history: list[dict[str, Any]],
+    max_messages: int | None = None,
+    target_tokens: int | None = None,
+) -> None:
+    """Trim chat history by removing oldest non-critical messages.
+
+    Keeps initial boot context (first message) and recent messages.
+    Removes from oldest to newest until constraints are met.
+
+    Args:
+        chat_history: In-place list to trim
+        max_messages: Max number of messages to keep (None = no limit)
+        target_tokens: Target token count (drop oldest until under this)
+    """
+    if not chat_history:
+        return
+
+    # Keep first message (boot context)
+    if len(chat_history) <= 1:
+        return
+
+    if max_messages and len(chat_history) > max_messages:
+        # Drop oldest non-first messages
+        excess = len(chat_history) - max_messages
+        for _ in range(excess):
+            if len(chat_history) > 1:
+                chat_history.pop(1)  # Remove 2nd message (first is boot context)
+
+    if target_tokens:
+        # Calculate current token count
+        current_tokens = sum(_estimate_message_tokens(msg) for msg in chat_history)
+
+        # Drop oldest messages until under target
+        while current_tokens > target_tokens and len(chat_history) > 1:
+            removed = chat_history.pop(1)  # Remove 2nd message (first is boot context)
+            current_tokens -= _estimate_message_tokens(removed)
+
+
+# ---------------------------------------------------------------------------
+# Stimulus Collection and Input Handling
+# ---------------------------------------------------------------------------
+
+def _process_stimulus_and_input(
+    layout: Layout,
+    chat_history: list[dict[str, Any]],
+    adapter_ref: AdapterRef,
+) -> tuple[bool, bool, str]:
+    """Collect stimuli from inbox and user input, return (stimulus_ready, session_closed, close_reason).
+
+    Processes:
+    1. Inbox drainage and consolidation
+    2. User input handling (operator commands, text input)
+    3. Command dispatch (/verbose, /exit, /new, /compact)
+
+    Returns:
+    - stimulus_ready: True if chat_history was updated with new content
+    - session_closed: True if /exit or error occurred
+    - close_reason: Reason for session close (if session_closed)
+    """
+    close_reason = ""
+    stimulus_ready = False
+
+    # Drain io/inbox/ → consolidate to session.jsonl
+    inbox_envs = _drain_and_consolidate(layout)
+    for env in inbox_envs:
+        indicator = _cmi_indicator(env)
+        if indicator:
+            print(f"{_DIM}{indicator}{_RESET}")
+        text = _envelope_to_text(env)
+        if text:
+            chat_history.append({"role": "user", "content": text})
+            stimulus_ready = True
+
+    # If no stimulus from inbox, wait for operator input before invoking CPE
+    if not stimulus_ready:
+        try:
+            user_input = _readline_with_history("> ")
+        except KeyboardInterrupt:
+            print()
+            return True, True, "operator_interrupt"
+        except EOFError:
+            return True, True, "operator_eof"
+
+        stripped = user_input.strip()
+        if not stripped:
+            return False, False, ""
+
+        # Platform commands — handle without invoking CPE
+        if stripped.startswith("/"):
+            from .operator import handle_platform_command
+            handled = handle_platform_command(layout, stripped, adapter_ref=adapter_ref)
+            if handled:
+                cmd, _args = _parse_command(stripped)
+                if cmd in ("/verbose", "/debugger"):
+                    pass  # debug output appears on next CPE cycle
+                if _is_endure_approved():
+                    _set_endure_approved(False)
+                    return True, True, "endure_approved"
+                if cmd in ("/exit", "/bye", "/close"):
+                    return True, True, "operator_exit"
+                if cmd in ("/new", "/clear", "/reset"):
+                    return True, True, "operator_reset"
+                # Check if /compact was requested
+                if _is_compact_pending():
+                    _set_compact_pending(False)
+                    compact_msg = (
+                        "[COMPACT_REQUEST] The operator has requested session compaction. "
+                        "Generate a closure_payload now via fcp_mil to preserve your working context. "
+                        "The session will continue after compaction — use session_handoff.next_steps "
+                        "to describe where to resume."
+                    )
+                    _append_msg(layout, "fcp", compact_msg)
+                    chat_history.append({"role": "user", "content": compact_msg})
+                    return True, False, "compact_requested"
+                return False, False, ""
+            if not handled:
+                from .operator import _cmd_output
+                cmd, _args = _parse_command(stripped)
+                with _cmd_output():
+                    if cmd:
+                        print(f"unknown command: {cmd}")
+                    else:
+                        print("invalid command (must start with /)")
+                return False, False, ""
+
+        _append_msg(layout, "operator", user_input)
+        chat_history.append({"role": "user", "content": stripped})
+        stimulus_ready = True
+
+    return stimulus_ready, False, ""
+
+
+# ---------------------------------------------------------------------------
+# Command Parsing Helper
+# ---------------------------------------------------------------------------
+
+def _parse_command(line: str) -> tuple[str, list[str]]:
+    """Parse a command line into command name and arguments.
+
+    Returns (command, args) tuple. Command is lowercased.
+    Returns ('', []) if line is empty or doesn't start with '/'.
+
+    Example:
+    >>> _parse_command('/verbose --debug')
+    ('/verbose', ['--debug'])
+    >>> _parse_command('/')
+    ('', [])
+    >>> _parse_command('hello')
+    ('', [])
+    """
+    stripped = line.strip()
+    if not stripped.startswith('/'):
+        return ('', [])
+
+    parts = stripped.split()
+    if not parts:
+        return ('', [])
+
+    command = parts[0].lower()
+    args = parts[1:] if len(parts) > 1 else []
+    return (command, args)
+
+
+# ---------------------------------------------------------------------------
+# Loop Detection — Deterministic Fingerprinting
+# ---------------------------------------------------------------------------
+
+def _make_cycle_fingerprint(
+    tool_calls: list[Any],
+    tool_results: list[str],
+) -> frozenset[tuple[str, str, str]]:
+    """Create deterministic fingerprint of cycle (tool calls + results).
+
+    Returns frozenset of (tool_name, input_hash, result_hash) tuples.
+    Frozenset ensures order-independence and proper set comparison.
+
+    Raises ValueError if tool_calls and tool_results counts don't match.
+    """
+    import hashlib
+
+    if len(tool_calls) != len(tool_results):
+        raise ValueError(
+            f"Tool call/result count mismatch: {len(tool_calls)} calls, "
+            f"{len(tool_results)} results"
+        )
+
+    fingerprints = []
+    for call, result in zip(tool_calls, tool_results):
+        # Hash input to avoid JSON stringification issues
+        input_str = json.dumps(call.input, sort_keys=True, ensure_ascii=False)
+        input_hash = hashlib.sha256(input_str.encode()).hexdigest()[:8]
+
+        # Hash result similarly
+        result_hash = hashlib.sha256(result.encode()).hexdigest()[:8]
+
+        fingerprints.append((call.tool, input_hash, result_hash))
+
+    return frozenset(fingerprints)
 
 
 # ---------------------------------------------------------------------------
@@ -44,11 +293,31 @@ def run_session(
     greeting: bool = False,
     tools: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Run the cognitive session loop until session close.
+    """Run the cognitive session loop until session close (FCP §6).
 
-    inject:   optional list of ACP envelopes to prepend as first stimuli.
-    greeting: if True, inject a SESSION_START stimulus so the CPE wakes and greets.
-    Returns the close reason string.
+    Executes the main session cycle:
+    1. Build boot context (system prompt + history)
+    2. Consume and inject first stimulus (FAP onboarding, post-evolution notices)
+    3. Optionally inject additional stimuli
+    4. Enter agentic loop: invoke CPE → dispatch tool calls → append results
+    5. Continue until CPE requests close or operator exits
+    6. Persist session store and compact if needed
+
+    Args:
+        layout: Entity store layout for session persistence.
+        adapter: CPE adapter (Ollama, Claude, etc.) or reference for lazy initialization.
+        index: Skill index for tool discovery and execution.
+        inject: Optional list of ACP envelopes to prepend as initial stimuli (after first_stimuli).
+        greeting: If True, inject SESSION_START stimulus to wake CPE for greeting.
+        tools: Optional pre-built tool declarations. If None, auto-discovered from index.
+
+    Returns:
+        str: Close reason code (e.g., "session_close", "operator_exit", "max_turns").
+
+    Raises:
+        CPEError: If CPE invocation fails (model unavailable, API error).
+        ExecError: If tool execution fails or security check blocks an operation.
+        BootError: If critical conditions (session token, session store) are unmet.
     """
     if tools is None:
         tools = _tool_declarations(layout, index)
@@ -91,6 +360,12 @@ def run_session(
     _loop_window: list[Any] = []
     _LOOP_THRESHOLD = 3
 
+    # CPE error handling — exponential backoff for transient failures
+    _cpe_consecutive_errors = 0
+    _cpe_last_error_time = 0.0
+    _CPE_MAX_CONSECUTIVE_ERRORS = 5
+    _CPE_INITIAL_BACKOFF_SECS = 1.0
+
     # Vital Check state — triggers on cycle_threshold or interval_seconds
     _baseline = None
     _vital_state = None
@@ -103,95 +378,95 @@ def run_session(
         if layout.session_token.exists():
             _session_id = str(read_json(layout.session_token).get("session_id", ""))
         _vital_state = _vital.VitalCheckState(session_id=_session_id)
-    except Exception:
-        pass  # no baseline — vital check disabled
+    except FileNotFoundError:
+        _vlog("fcp", "baseline file not found — vital check disabled")
+    except json.JSONDecodeError as e:
+        _vlog("fcp", f"baseline file corrupted ({e}) — vital check disabled")
+    except Exception as e:
+        _vlog("fcp", f"baseline load error ({e}) — vital check disabled")
 
     while True:
-        # drain io/inbox/ → consolidate to session.jsonl
-        inbox_envs = _drain_and_consolidate(layout)
-        for env in inbox_envs:
-            indicator = _cmi_indicator(env)
-            if indicator:
-                print(f"{_DIM}{indicator}{_RESET}")
-            text = _envelope_to_text(env)
-            if text:
-                chat_history.append({"role": "user", "content": text})
-                stimulus_ready = True
-
-        # if no stimulus, wait for operator input before invoking CPE
+        # If pre-loaded stimulus (first_stimuli, greeting, inject), skip input collection
         if not stimulus_ready:
-            try:
-                user_input = _readline_with_history("> ")
-            except KeyboardInterrupt:
-                print()
-                close_reason = "operator_interrupt"
-                break
-            except EOFError:
-                close_reason = "operator_eof"
-                break
-            stripped = user_input.strip()
-            if not stripped:
-                continue
-            # platform commands — handle without invoking CPE
-            if stripped.startswith("/"):
-                from .operator import handle_platform_command
-                handled = handle_platform_command(layout, stripped, adapter_ref=adapter_ref)
-                if handled:
-                    if stripped.lower().split()[0] in ("/verbose", "/debugger"):
-                        pass  # debug output appears on next CPE cycle
-                    if _is_endure_approved():
-                        _set_endure_approved(False)
-                        close_reason = "endure_approved"
-                        break
-                    if stripped.lower().split()[0] in ("/exit", "/bye", "/close"):
-                        close_reason = "operator_exit"
-                        break
-                    if stripped.lower().split()[0] in ("/new", "/clear", "/reset"):
-                        close_reason = "operator_reset"
-                        break
-                    # check if /compact was just requested
-                    if _is_compact_pending():
-                        _set_compact_pending(False)
-                        compact_in_progress = True
-                        compact_msg = (
-                            "[COMPACT_REQUEST] The operator has requested session compaction. "
-                            "Generate a closure_payload now via fcp_mil to preserve your working context. "
-                            "The session will continue after compaction — use session_handoff.next_steps "
-                            "to describe where to resume."
-                        )
-                        _append_msg(layout, "fcp", compact_msg)
-                        chat_history.append({"role": "user", "content": compact_msg})
-                        stimulus_ready = True
-                    continue  # back to top — wait for next input, no CPE call
-                if not handled:
-                    from .operator import _cmd_output
-                    with _cmd_output():
-                        print(f"unknown command: {stripped.split()[0]}")
-                    continue
-            _vlog("operator", f"input: {stripped!r}")
-            _append_msg(layout, "operator", user_input)
-            chat_history.append({"role": "user", "content": stripped})
+            stimulus_ready, should_close, close_reason = _process_stimulus_and_input(
+                layout, chat_history, adapter_ref
+            )
+            if should_close:
+                if close_reason == "compact_requested":
+                    # Compact was requested; set flag and inject message
+                    compact_in_progress = True
+                    stimulus_ready = True
+                else:
+                    # Session should close
+                    break
+
+        if not stimulus_ready:
+            continue
 
         stimulus_ready = False
         cycle += 1
-        _vlog("fcp", f"── Cognitive Cycle {cycle} ──────────────────────────")
-        _vlog_request(system, chat_history, tools)
+        cycle_start_time = time.time()
+        _vlog_request(system, chat_history, tools, cycle)
 
         # invoke CPE (adapter_ref.current may be swapped mid-session via /model)
         try:
             response = adapter_ref.current.invoke(system, chat_history, tools)
-        except Exception as exc:
-            from .cpe.base import CPEError
-            err_msg = str(exc)
-            print(f"\n{_DIM}  [fcp] CPE error: {err_msg}{_RESET}")
-            _append_msg(layout, "fcp", f"CPE error: {err_msg}")
+            # Reset consecutive error counter on success
+            _cpe_consecutive_errors = 0
+            _cpe_last_error_time = 0.0
+        except CPEAuthError as exc:
+            # Authentication errors are not retryable — exit immediately
+            err_msg = f"CPE authentication failed: {str(exc)}"
+            print(f"\n{_DIM}  [fcp] {err_msg}{_RESET}")
+            _append_msg(layout, "fcp", err_msg)
+            _vlog("fcp", f"auth error: {err_msg}")
+            close_reason = "cpe_auth_error"
+            break
+        except CPERateLimitError as exc:
+            # Rate limit is transient — apply exponential backoff
+            _cpe_consecutive_errors = _cpe_consecutive_errors + 1
+            backoff_secs = _CPE_INITIAL_BACKOFF_SECS * (2 ** (_cpe_consecutive_errors - 1))
+            err_msg = f"CPE rate limited (attempt {_cpe_consecutive_errors}): {str(exc)}"
+            print(f"\n{_DIM}  [fcp] {err_msg} (backoff {backoff_secs:.1f}s){_RESET}")
+            _append_msg(layout, "fcp", f"{err_msg} — retrying in {backoff_secs:.0f}s")
+            _vlog("fcp", f"rate limit backoff: {backoff_secs}s")
+            if _cpe_consecutive_errors >= _CPE_MAX_CONSECUTIVE_ERRORS:
+                close_reason = "cpe_rate_limit_exceeded"
+                break
+            time.sleep(backoff_secs)
             stimulus_ready = False
             continue
-        _vlog_response(response)
-        tokens_used += response.input_tokens + response.output_tokens
+        except CPEError as exc:
+            # Other CPE errors (network, model errors) are retryable
+            _cpe_consecutive_errors = _cpe_consecutive_errors + 1
+            backoff_secs = _CPE_INITIAL_BACKOFF_SECS * (2 ** (_cpe_consecutive_errors - 1))
+            err_msg = f"CPE error (attempt {_cpe_consecutive_errors}): {str(exc)}"
+            print(f"\n{_DIM}  [fcp] {err_msg} (backoff {backoff_secs:.1f}s){_RESET}")
+            _append_msg(layout, "fcp", f"{err_msg} — retrying in {backoff_secs:.0f}s")
+            _vlog("fcp", f"cpe error backoff: {backoff_secs}s")
+            if _cpe_consecutive_errors >= _CPE_MAX_CONSECUTIVE_ERRORS:
+                close_reason = "cpe_error_max_retries"
+                break
+            time.sleep(backoff_secs)
+            stimulus_ready = False
+            continue
+        except Exception as exc:
+            # Unexpected error (shouldn't happen with proper exception hierarchy)
+            _cpe_consecutive_errors = _cpe_consecutive_errors + 1
+            err_msg = f"CPE unexpected error (attempt {_cpe_consecutive_errors}): {str(exc)}"
+            print(f"\n{_DIM}  [fcp] {err_msg}{_RESET}")
+            _append_msg(layout, "fcp", err_msg)
+            _vlog("fcp", f"unexpected error: {err_msg}")
+            if _cpe_consecutive_errors >= _CPE_MAX_CONSECUTIVE_ERRORS:
+                close_reason = "cpe_error_max_retries"
+                break
+            stimulus_ready = False
+            continue
+        cycle_elapsed = time.time() - cycle_start_time
+        tokens_used = tokens_used + response.input_tokens + response.output_tokens
 
-        # add CPE response to chat history
-        if response.tool_use_calls:
+        # add CPE response to chat history and display status
+        if response.tool_use_calls and not _is_verbose():
             tools_repr = ", ".join(c.tool for c in response.tool_use_calls)
             print(f"\n{_DIM}  [fcp] working... cycle {cycle} — {tools_repr}{_RESET}")
         if response.text:
@@ -199,8 +474,12 @@ def run_session(
             _model_label = getattr(adapter_ref.current, "_model", "")
             _print_cpe_block(response.text, _model_label, response.input_tokens, response.output_tokens, _ctx_window)
             chat_history.append({"role": "assistant", "content": response.text})
-        if response.tool_use_calls and not response.text:
-            # assistant turn with tool use only — needs empty content tracked
+        if response.tool_use_calls:
+            # Always append an empty assistant sentinel when there are tool calls.
+            # Adapters detect tool-result turns by checking that the preceding assistant
+            # turn has empty content. Without this sentinel, text+tool_calls responses
+            # leave a non-empty assistant turn, causing tool results to be treated as
+            # plain text in subsequent cycles ("soluço" / hiccup bug).
             chat_history.append({"role": "assistant", "content": ""})
 
         # process tool_use calls — fcp_mil before fcp_exec before fcp_sil (per spec)
@@ -211,13 +490,36 @@ def run_session(
 
         session_closed = False
         tool_results: list[str] = []
-        for call in tool_calls:
-            _vlog("fcp", f"dispatch → {call.tool}")
-            _vlog_json(f"fcp→{call.tool}", call.input)
+        tool_log_lines: list[dict[str, Any]] = []
+
+        for i, call in enumerate(tool_calls):
+            tool_start = time.time()
             result, closed = dispatch_tool_use(layout, call, index)
-            _vlog_json(f"{call.tool}→fcp", result)
+            tool_elapsed = time.time() - tool_start
+
+            # Accumulate tool execution info (printed later in cycle summary)
+            is_last = i == len(tool_calls) - 1
+            input_size = _format_bytes(len(json.dumps(call.input, ensure_ascii=False)))
+            result_size = _format_bytes(len(json.dumps(result, ensure_ascii=False)))
+            status = "OK" if isinstance(result, dict) and result.get("error") is None else "FAIL"
+            timing_ms = tool_elapsed * 1000
+
+            tool_log_lines.append({
+                "tool": call.tool,
+                "is_last": is_last,
+                "input": call.input,
+                "output": result,
+                "input_size": input_size,
+                "result_size": result_size,
+                "status": status,
+                "timing_ms": timing_ms,
+            })
+
             _return_tool_result(layout, call.id, call.tool, result)
-            tool_results.append(f"[{call.tool}] {json.dumps(result, ensure_ascii=False)}")
+            # Serialize result once and reuse for chat history
+            # This avoids triple JSON serialization (verbose logging, chat history, loop detection)
+            result_str = json.dumps(result, ensure_ascii=False)
+            tool_results.append(f"[{call.tool}] {result_str}")
             if call.tool == "cmi_send":
                 _cmi_send_indicator(call.input, result)
             if closed:
@@ -226,6 +528,9 @@ def run_session(
             if _is_endure_approved():
                 close_reason = "endure_approved"
                 session_closed = True
+
+        # Print cycle summary: [DISPATCH] + [← CPE] in correct order
+        _vlog_cycle_summary(response, cycle_elapsed, tool_log_lines)
 
         if session_closed:
             break
@@ -238,24 +543,30 @@ def run_session(
 
         # --- loop detection: same set of (tool, input, result) tuples repeated >= threshold ---
         if tool_calls:
-            cycle_fingerprint = tuple(sorted(
-                (c.tool, json.dumps(c.input, sort_keys=True), tr)
-                for c, tr in zip(tool_calls, tool_results)
-            ))
-            _loop_window.append(cycle_fingerprint)
-            if len(_loop_window) > _LOOP_THRESHOLD:
-                _loop_window.pop(0)
-            if len(_loop_window) == _LOOP_THRESHOLD and len(set(_loop_window)) == 1:
+            try:
+                # Create deterministic fingerprint (handles JSON stringification issues)
+                cycle_fingerprint = _make_cycle_fingerprint(tool_calls, tool_results)
+                _loop_window.append(cycle_fingerprint)
+                if len(_loop_window) > _LOOP_THRESHOLD:
+                    _loop_window.pop(0)
+
+                # Detect loop: same fingerprint repeated THRESHOLD times
+                if len(_loop_window) == _LOOP_THRESHOLD and len(set(_loop_window)) == 1:
+                    _loop_window.clear()
+                    tools_repr = ", ".join(c.tool for c in tool_calls)
+                    intervention = (
+                        f"[FCP] Loop detected: the same tool call(s) ({tools_repr}) returned "
+                        f"identical results {_LOOP_THRESHOLD} times in a row. "
+                        "Stop and report the situation to the Operator. Do not retry."
+                    )
+                    _vlog("fcp", f"loop detected: {tools_repr}")
+                    _append_msg(layout, "fcp", intervention)
+                    chat_history.append({"role": "user", "content": intervention})
+                    stimulus_ready = True
+            except ValueError as e:
+                # Tool call/result count mismatch (shouldn't happen, but log if it does)
+                _vlog("fcp", f"loop detection skipped: {e}")
                 _loop_window.clear()
-                tools_repr = ", ".join(c.tool for c in tool_calls)
-                intervention = (
-                    f"[FCP] Loop detected: the same tool call(s) ({tools_repr}) returned "
-                    f"identical results {_LOOP_THRESHOLD} times in a row. "
-                    "Stop and report the situation to the Operator. Do not retry."
-                )
-                _append_msg(layout, "fcp", intervention)
-                chat_history.append({"role": "user", "content": intervention})
-                stimulus_ready = True
         else:
             _loop_window.clear()
 
@@ -274,7 +585,7 @@ def run_session(
             chat_history[:] = _rebuild_compact_history(layout, index, system)
             summarize_session(layout)
             _vlog("fcp", f"compact: done — history={len(chat_history)} msgs")
-            print("  [session compacted]")
+            print(f"\n{_DIM}  [fcp] session compacted{_RESET}")
 
     _vlog("fcp", f"session closed — reason: {close_reason}")
     return close_reason
@@ -367,8 +678,12 @@ def build_boot_context(
             if f.suffix == ".json":
                 try:
                     presession_lines.append(f.read_text(encoding="utf-8").strip())
-                except Exception:
-                    pass
+                except UnicodeDecodeError as e:
+                    _vlog("fcp", f"presession file {f.name} has encoding error: {e}")
+                except OSError as e:
+                    _vlog("fcp", f"presession file {f.name} cannot be read: {e}")
+                except Exception as e:
+                    _vlog("fcp", f"presession file {f.name} error: {e}")
 
     # --- initial chat history: instruction block + session tail ---
     chat_history: list[dict[str, Any]] = [
@@ -389,7 +704,28 @@ def build_boot_context(
 
 
 def _session_to_turns(layout: Layout) -> list[tuple[str, str]]:
-    """Convert session.jsonl into (role, text) pairs for chat history."""
+    """Convert session.jsonl into (role, text) pairs for chat history.
+
+    Uses cached session tail from .session-cache.json (after sleep) for
+    faster boots. Cache is refreshed on every sleep cycle.
+    """
+    # Try to load cached session tail (populated after each sleep)
+    cache_file = layout.root / "memory" / SESSION_CACHE_FILE
+    if cache_file.exists():
+        try:
+            cache = read_json(cache_file)
+            cached_turns = cache.get("turns", [])
+            # Convert back to list of tuples
+            pairs = [(turn["role"], turn["content"]) for turn in cached_turns]
+            return pairs
+        except json.JSONDecodeError as e:
+            _vlog("fcp", f"session cache corrupted ({e}) — performing full scan")
+        except (KeyError, TypeError) as e:
+            _vlog("fcp", f"session cache schema error ({e}) — performing full scan")
+        except Exception as e:
+            _vlog("fcp", f"session cache error ({e}) — performing full scan")
+
+    # Full scan if no cache (cold boot)
     pairs: list[tuple[str, str]] = []
 
     for env in read_jsonl(layout.session_store):
@@ -399,7 +735,11 @@ def _session_to_turns(layout: Layout) -> list[tuple[str, str]]:
         if isinstance(raw_data, str):
             try:
                 data = json.loads(raw_data)
-            except Exception:
+            except json.JSONDecodeError:
+                # Not JSON — treat as raw string data
+                data = raw_data
+            except Exception as e:
+                _vlog("fcp", f"envelope data parse error ({e}) — using raw data")
                 data = raw_data
         else:
             data = raw_data
@@ -495,7 +835,11 @@ def _parse_env_data(env: dict[str, Any]) -> Any:
     if isinstance(raw_data, str):
         try:
             return json.loads(raw_data)
-        except Exception:
+        except json.JSONDecodeError:
+            # Not JSON — return as raw string
+            return raw_data
+        except Exception as e:
+            _vlog("fcp", f"envelope data parse error in _parse_env_data ({e})")
             return raw_data
     return raw_data
 
@@ -569,14 +913,21 @@ def dispatch_tool_use(
     if "action" in inp and isinstance(inp["action"], str) and len(inp) == 1:
         try:
             inp = json.loads(inp["action"])
-        except Exception:
+        except json.JSONDecodeError:
+            # Not JSON — use raw action string as-is
             pass
+        except Exception as e:
+            _vlog("fcp", f"tool input action parse error ({e}) — using raw action")
 
     # --- MIL tools ---
     if tool in ("memory_recall", "memory_write", "result_recall", "closure_payload"):
         action = dict(inp)
         action["type"] = tool
         return _dispatch_mil(layout, action)
+
+    # --- CMI tools ---
+    if tool in ("cmi_send", "cmi_req"):
+        return _dispatch_cmi(layout, tool, inp)
 
     # --- SIL tools ---
     if tool in ("session_close", "evolution_proposal"):
@@ -606,9 +957,33 @@ def dispatch_tool_use(
     return {"error": f"unknown tool: {tool}"}, False
 
 
+def _dispatch_cmi(
+    layout: Layout, tool: str, params: dict[str, Any]
+) -> tuple[dict[str, Any], bool]:
+    """Dispatch CMI tools (cmi_send, cmi_req) to the CMI component."""
+    from .cmi.dispatch import dispatch_send, dispatch_req
+    if tool == "cmi_send":
+        result = dispatch_send(layout, params)
+    else:
+        result = dispatch_req(layout, params)
+    return result, False
+
+
 def _dispatch_mil(
     layout: Layout, inp: dict[str, Any]
 ) -> tuple[dict[str, Any], bool]:
+    """Dispatch Memory Interface Layer (MIL) actions.
+
+    Handles memory operations: recall (episodic/semantic), write, and closure.
+
+    Args:
+        layout: Entity store layout for memory access.
+        inp: Single action dict or list of actions with type field.
+
+    Returns:
+        Tuple of (results_dict, session_closed) where results_dict contains
+        outcome of each action (ok, conflict, error).
+    """
     actions: list[Any] = inp if isinstance(inp, list) else [inp]
     results: list[dict[str, Any]] = []
     for action in actions:
@@ -654,6 +1029,19 @@ def _dispatch_exec(
     inp: dict[str, Any],
     index: dict[str, Any],
 ) -> tuple[dict[str, Any], bool]:
+    """Dispatch Execution Interface (skill requests).
+
+    Handles skill execution via exec_ module with error recovery.
+
+    Args:
+        layout: Entity store layout for skill execution context.
+        inp: Single action dict or list of actions with type="skill_request".
+        index: Skill index for skill discovery and invocation.
+
+    Returns:
+        Tuple of (results_dict, session_closed) where results_dict contains
+        skill output or error details.
+    """
     from .exec_ import dispatch, ExecError, SkillRejected
     actions: list[Any] = inp if isinstance(inp, list) else [inp]
     results: list[dict[str, Any]] = []
@@ -666,7 +1054,11 @@ def _dispatch_exec(
             if isinstance(params, str):
                 try:
                     params = json.loads(params)
-                except Exception:
+                except json.JSONDecodeError:
+                    _vlog("fcp", f"skill params not valid JSON, using empty dict")
+                    params = {}
+                except Exception as e:
+                    _vlog("fcp", f"skill params parse error ({e}), using empty dict")
                     params = {}
             if not isinstance(params, dict):
                 params = {}
@@ -688,6 +1080,18 @@ def _dispatch_exec(
 def _dispatch_sil(
     layout: Layout, inp: dict[str, Any]
 ) -> tuple[dict[str, Any], bool]:
+    """Dispatch System Interface Layer (SIL) actions.
+
+    Handles system-level operations: evolution proposals, runtime directives.
+
+    Args:
+        layout: Entity store layout for system state access.
+        inp: Single action dict or list of actions with type="evolution_proposal".
+
+    Returns:
+        Tuple of (results_dict, session_closed) where session_closed indicates
+        if CPE triggered session close via evolution.
+    """
     actions: list[Any] = inp if isinstance(inp, list) else [inp]
     results: list[dict[str, Any]] = []
     session_closed = False
@@ -705,7 +1109,11 @@ def _dispatch_sil(
                     profile == "haca-evolve"
                     and baseline.get("evolve", {}).get("scope", {}).get("autonomous_evolution", False)
                 )
-            except Exception:
+            except FileNotFoundError:
+                _vlog("fcp", "baseline not found — autonomous evolution disabled")
+                autonomous = False
+            except Exception as e:
+                _vlog("fcp", f"baseline load error ({e}) — autonomous evolution disabled")
                 autonomous = False
             if autonomous:
                 auth_digest = _sha256_str(content)
@@ -787,8 +1195,12 @@ def _rebuild_compact_history(
                 compact_parts.append("Pending tasks:\n" + "\n".join(f"- {t}" for t in handoff["pending_tasks"]))
             if handoff.get("next_steps"):
                 compact_parts.append(f"Next steps: {handoff['next_steps']}")
-        except Exception:
-            pass
+        except json.JSONDecodeError as e:
+            _vlog("fcp", f"session handoff corrupted ({e}) — skipping")
+        except (KeyError, TypeError) as e:
+            _vlog("fcp", f"session handoff schema error ({e}) — skipping")
+        except Exception as e:
+            _vlog("fcp", f"session handoff load error ({e}) — skipping")
     new_history.append({"role": "user", "content": "\n\n".join(compact_parts)})
     new_history.append({"role": "assistant", "content": ""})
 
@@ -857,9 +1269,12 @@ def build_boot_stats(
                 raw = rec.get("data", "{}")
                 d = json.loads(raw) if isinstance(raw, str) else raw
                 if isinstance(d, dict) and d.get("type") == "SLEEP_COMPLETE":
-                    sessions += 1
-            except Exception:
+                    sessions = sessions + 1
+            except json.JSONDecodeError:
+                # Malformed line in log — skip
                 pass
+            except Exception as e:
+                _vlog("fcp", f"integrity log parse error ({e}) — skipping line")
 
     # cycles — count ENDURE_COMMIT entries in integrity_chain.jsonl
     cycles = 0
@@ -868,9 +1283,12 @@ def build_boot_stats(
             try:
                 rec = json.loads(line)
                 if rec.get("type") == "ENDURE_COMMIT":
-                    cycles += 1
-            except Exception:
+                    cycles = cycles + 1
+            except json.JSONDecodeError:
+                # Malformed line in chain — skip
                 pass
+            except Exception as e:
+                _vlog("fcp", f"integrity chain parse error ({e}) — skipping line")
 
     # memories — episodic + semantic files
     memories = 0
@@ -888,12 +1306,15 @@ def build_boot_stats(
                 raw = rec.get("data", "{}")
                 d = json.loads(raw) if isinstance(raw, str) else raw
                 if isinstance(d, dict) and d.get("type") == "EVOLUTION_AUTH":
-                    evolutions_total += 1
-                    evolutions_auth += 1
+                    evolutions_total = evolutions_total + 1
+                    evolutions_auth = evolutions_auth + 1
                 elif isinstance(d, dict) and d.get("type") == "ENDURE_COMMIT":
-                    evolutions_total += 1
-            except Exception:
+                    evolutions_total = evolutions_total + 1
+            except json.JSONDecodeError:
+                # Malformed line in log — skip
                 pass
+            except Exception as e:
+                _vlog("fcp", f"evolution stats parse error ({e}) — skipping line")
 
     # skills and tools
     n_skills = len(index.get("skills", []))
@@ -959,6 +1380,28 @@ def _vprint(text: str) -> None:
     print(f"{_DIM}{text}{_RESET}")
 
 
+def _format_bytes(num_bytes: int) -> str:
+    """Format bytes in human-readable form (234B, 1.2KB, 2.3MB)."""
+    if num_bytes < 1024:
+        return f"{num_bytes}B"
+    elif num_bytes < 1024 * 1024:
+        return f"{num_bytes / 1024:.1f}KB"
+    else:
+        return f"{num_bytes / (1024 * 1024):.1f}MB"
+
+
+def _compact_json(data: Any, max_len: int = 150) -> str:
+    """Format data as compact JSON, truncating if too long.
+
+    Useful for inline logging in verbose mode.
+    Truncates long strings and shows ... if output exceeds max_len.
+    """
+    j = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+    if len(j) > max_len:
+        return j[:max_len] + "...}"
+    return j
+
+
 def _vlog(actor: str, msg: str) -> None:
     if not _is_verbose():
         return
@@ -976,20 +1419,19 @@ def _vlog_request(
     system: str,
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
+    cycle: int,
 ) -> None:
+    """Log cycle header (before CPE invoke)."""
     dbg = _get_debugger()
     if not _is_verbose() and dbg is None:
         return
 
     if _is_verbose():
-        # compact summary — counts only
-        _vprint("[fcp→cpe] request")
-        _vprint(f"  system       : {len(system)} chars")
-        _vprint(f"  history msgs : {len(messages)}")
-        _vprint(f"  tools        : {[t['name'] for t in tools]}")
+        sys_size = _format_bytes(len(system))
+        _vprint(f"[CYCLE {cycle}] [→ CPE] {sys_size} system + {len(messages)} msgs + {len(tools)} tools")
         return
 
-    # debugger mode
+    # debugger mode — keep original detailed format
     _vprint("[debugger] fcp→cpe request")
     if dbg in ("boot", "all"):
         _vprint(f"  [system] {len(system)} chars:")
@@ -1011,17 +1453,65 @@ def _vlog_request(
     _vprint(f"  tools: {[t['name'] for t in tools]}")
 
 
-def _vlog_response(response: CPEResponse) -> None:
-    if not _is_verbose() and _get_debugger() is None:
-        return
-    _vprint("[cpe→fcp] response")
-    _vprint(f"  stop_reason  : {response.stop_reason}")
-    _vprint(f"  tokens       : {response.input_tokens} in / {response.output_tokens} out")
-    if response.text:
-        preview = response.text[:200].replace("\n", " ")
-        _vprint(f"  text         : {preview!r}")
-    for call in response.tool_use_calls:
-        _vprint(f"  tool_use     : {call.tool} (id={call.id})")
+def _vlog_cycle_summary(
+    response: CPEResponse,
+    elapsed_secs: float,
+    tool_log_lines: list[dict[str, Any]],
+) -> None:
+    """Print cycle summary: [DISPATCH] tree + [← CPE] line (always visible).
+
+    Tree is always shown. With verbose: includes input/output JSON payloads.
+    Without verbose: compact format with sizes and timing only.
+
+    tool_log_lines: list of dicts with tool, input, output, input_size, result_size, status, timing_ms, is_last
+    """
+    dbg = _get_debugger()
+    verbose = _is_verbose()
+
+    # Dispatch block — ALWAYS show (if tools were called)
+    if tool_log_lines:
+        print(f"{_DIM}  ├─ [DISPATCH]{_RESET}")
+        for tool_info in tool_log_lines:
+            tool = tool_info["tool"]
+            is_last = tool_info["is_last"]
+            input_size = tool_info["input_size"]
+            result_size = tool_info["result_size"]
+            status = tool_info["status"]
+            timing_ms = tool_info["timing_ms"]
+            timing_str = f", {timing_ms:.0f}ms" if timing_ms > 10 else ""
+
+            prefix = "  │  └─" if is_last else "  │  ├─"
+
+            if verbose:
+                # Verbose mode: show tool name + input/output JSONs
+                print(f"{_DIM}{prefix} {tool}{_RESET}")
+                input_json = _compact_json(tool_info["input"])
+                output_json = _compact_json(tool_info["output"])
+                print(f"{_DIM}{prefix[:-2]}│  ├─ input: {input_json}{_RESET}")
+                print(f"{_DIM}{prefix[:-2]}│  └─ output: {output_json}{_RESET}")
+            else:
+                # Compact mode: tool name + sizes
+                print(f"{_DIM}{prefix} {tool} ... input ({input_size}) → {status} ({result_size}{timing_str}){_RESET}")
+
+    # CPE response line — ALWAYS show
+    print(f"{_DIM}  └─ [← CPE] ⏱ {elapsed_secs:.1f}s | {response.stop_reason}{_RESET}")
+    if verbose and response.text:
+        preview = response.text[:50].replace("\n", " ")
+        print(f"{_DIM}     └─ text: {preview!r} ({len(response.text)} chars){_RESET}")
+
+    # Add blank line for visual separation between tree and next input prompt
+    print()
+
+    # Debugger mode — show original detailed format
+    if dbg and not verbose:
+        print(f"{_DIM}[cpe→fcp] response{_RESET}")
+        print(f"{_DIM}  stop_reason  : {response.stop_reason}{_RESET}")
+        print(f"{_DIM}  tokens       : {response.input_tokens} in / {response.output_tokens} out{_RESET}")
+        if response.text:
+            preview = response.text[:200].replace("\n", " ")
+            print(f"{_DIM}  text         : {preview!r}{_RESET}")
+        for call in response.tool_use_calls:
+            print(f"{_DIM}  tool_use     : {call.tool} (id={call.id}){_RESET}")
 
 
 def _readline_with_history(prompt: str) -> str:
@@ -1056,7 +1546,9 @@ def _build_tools_index(layout: Layout, index: dict[str, Any]) -> str:
     # System tools: name → (description, required_params)
     system_tools: list[tuple[str, str, list[str]]] = [
         ("closure_payload", "record full session outcome before closing", ["consolidation", "working_memory", "session_handoff"]),
-        ("evolution_proposal", "propose structural change to entity (persona, skills, configs)", ["description", "changes"]),
+        ("cmi_req", "read state from an active CMI channel", ["op", "chan_id"]),
+        ("cmi_send", "send a message to an active CMI channel", ["chan_id", "type", "content"]),
+        ("evolution_proposal", "propose structural change to entity (persona, skills, configs, scheduled tasks)", ["description", "changes"]),
         ("memory_recall", "retrieve context from memory", ["query"]),
         ("memory_write", "persist information across sessions", ["slug", "content"]),
         ("result_recall", "retrieve truncated tool result by timestamp", ["ts"]),
@@ -1106,6 +1598,34 @@ def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, 
     system tools for memory, session control, and skill documentation.
     """
     tools: list[dict[str, Any]] = []
+
+    # --- CMI tools ---
+    tools.append({
+        "name": "cmi_send",
+        "description": "Send a message to an active CMI channel. Routes through the local CMI endpoint declared in the structural baseline.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "chan_id": {"type": "string", "description": "Channel identifier (e.g. chan_<uuid>)."},
+                "type": {"type": "string", "enum": ["general", "peer", "bb"], "description": "Message type: 'general' (broadcast to all), 'peer' (directed, visible to all), 'bb' (Blackboard contribution, durable)."},
+                "content": {"type": "string", "description": "Message content."},
+                "to": {"type": "string", "description": "Target Node Identity for 'peer' messages. Required when type is 'peer'."},
+            },
+            "required": ["chan_id", "type", "content"],
+        },
+    })
+    tools.append({
+        "name": "cmi_req",
+        "description": "Read state from an active CMI channel. 'bb' returns all Blackboard entries; 'status' returns channel status and enrolled participants.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "op": {"type": "string", "enum": ["bb", "status"], "description": "Operation: 'bb' to read the Blackboard, 'status' to get channel status and participants."},
+                "chan_id": {"type": "string", "description": "Channel identifier (e.g. chan_<uuid>)."},
+            },
+            "required": ["op", "chan_id"],
+        },
+    })
 
     # --- memory tools ---
     tools.append({
@@ -1186,6 +1706,7 @@ def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, 
             "Propose a structural change to the Entity Store. "
             "To install a custom skill: use skill_install op with the skill name (must be staged in workspace/stage/<name>/ and validated with skill_audit first). "
             "For other structural changes (persona files, configs): use json_merge, file_write, or file_delete ops. "
+            "To propose a scheduled task: use cron_add op. "
             "Requires explicit Operator approval before taking effect."
         ),
         "input_schema": {
@@ -1200,13 +1721,17 @@ def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, 
                         "properties": {
                             "op": {
                                 "type": "string",
-                                "enum": ["json_merge", "file_write", "file_delete", "skill_install"],
-                                "description": "Operation: json_merge (partial update to a JSON file), file_write (create/replace a file), file_delete (remove a file), skill_install (promote a staged skill from workspace/stage/<name>/ to skills/<name>/ — use this to install custom skills, never file_write).",
+                                "enum": ["json_merge", "file_write", "file_delete", "skill_install", "cron_add"],
+                                "description": "Operation: json_merge (partial update to a JSON file), file_write (create/replace a file), file_delete (remove a file), skill_install (promote a staged skill from workspace/stage/<name>/ to skills/<name>/ — use this to install custom skills, never file_write), cron_add (propose a new scheduled task).",
                             },
-                            "target": {"type": "string", "description": "Path relative to entity root. Required for json_merge, file_write, file_delete. Not used for skill_install."},
+                            "target": {"type": "string", "description": "Path relative to entity root. Required for json_merge, file_write, file_delete. Not used for skill_install or cron_add."},
                             "name": {"type": "string", "description": "For skill_install: the skill name as it appears in workspace/stage/<name>/."},
                             "patch": {"type": "object", "description": "For json_merge: the fields to merge into the target JSON."},
                             "content": {"type": "string", "description": "For file_write: the full file content to write."},
+                            "task": {"type": "string", "description": "For cron_add: clear, verifiable instruction the entity will execute when the schedule fires."},
+                            "schedule": {"type": "string", "description": "For cron_add: cron expression (e.g. '0 9 * * 1-5')."},
+                            "executor": {"type": "string", "enum": ["worker", "cpe"], "description": "For cron_add: 'worker' for read-only analysis tasks, 'cpe' for tasks that may write memory or call tools."},
+                            "tools": {"type": "string", "description": "For cron_add: comma-separated list of skills/tools the task may use (leave empty if none)."},
                         },
                         "required": ["op"],
                     },

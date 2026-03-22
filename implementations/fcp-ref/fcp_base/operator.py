@@ -3,7 +3,7 @@ Operator Interface — FCP §12.
 
 §12.2  Interactive loop (input → inject as MSG → session cycle)
 §12.3.1 Platform commands (/status, /doctor, /model, /endure, /inbox, /work, /skill, /verbose, /debugger)
-§12.3.2 Skill aliases (/commit, ...)
+§12.3.2 Skill aliases
 §12.4  Notifications
 """
 
@@ -109,26 +109,106 @@ def present_evolution_proposals(layout: Layout) -> list[dict[str, Any]]:
                 pass
 
     authorized: list[dict[str, Any]] = []
-    for p in proposals:
+    total = len(proposals)
+    for idx, p in enumerate(proposals):
         inner = p["data"]
         content = inner.get("content", "")
-        print(f"\n[EVOLUTION PROPOSAL]\n{content}\n")
-        answer = "y" if ui.confirm("Approve?", default=False) else "n"
-        if answer == "y":
-            auth_digest = _sha256_str(content)
-            authorized.append({
-                "seq": inner.get("ts", int(time.time() * 1000)),
-                "content": content,
-                "auth_digest": auth_digest,
-                "slugs": inner.get("slugs", []),
-            })
-            _write_evolution_auth(layout, content, auth_digest)
-            from .stimuli import inject_evolution_result
-            inject_evolution_result(layout, content, approved=True)
+
+        try:
+            parsed = json.loads(content)
+        except Exception:
+            parsed = {}
+
+        changes: list[dict[str, Any]] = [
+            c for c in parsed.get("changes", []) if isinstance(c, dict)
+        ]
+        cron_changes = [c for c in changes if c.get("op") == "cron_add"]
+        other_changes = [c for c in changes if c.get("op") != "cron_add"]
+        description = str(parsed.get("description", ""))
+        counter = f"[{idx + 1}/{total}] " if total > 1 else ""
+
+        if cron_changes and not other_changes:
+            # ── Pure cron proposal ──────────────────────────────────────────
+            cron_approved: list[dict[str, Any]] = []
+            cron_rejected = False
+            for cidx, change in enumerate(cron_changes):
+                ctotal = len(cron_changes)
+                clabel = f"cron_add {cidx + 1}/{ctotal}" if ctotal > 1 else "cron_add"
+                ui.hr(f"{counter}Evolution Proposal — {clabel}")
+                print(f"  {ui.DIM}description{ui.RESET}  {description}")
+                print(f"  {ui.DIM}task{ui.RESET}         {change.get('task', '')}")
+                _sched = change.get('schedule', '')
+                print(f"  {ui.DIM}schedule{ui.RESET}     {_describe_cron(_sched)}  {ui.DIM}({_sched}){ui.RESET}")
+                print(f"  {ui.DIM}executor{ui.RESET}     {change.get('executor', 'cpe')}")
+                tools_val = change.get('tools', '') or '(none)'
+                print(f"  {ui.DIM}tools{ui.RESET}        {tools_val}")
+                print()
+                if ui.confirm("Approve?", default=False):
+                    cron_approved.append(change)
+                else:
+                    cron_rejected = True
+
+            if cron_approved:
+                for change in cron_approved:
+                    _cron_add_from_proposal(layout, change, description)
+                auth_digest = _sha256_str(content)
+                authorized.append({
+                    "seq": inner.get("ts", int(time.time() * 1000)),
+                    "content": content,
+                    "auth_digest": auth_digest,
+                    "slugs": inner.get("slugs", []),
+                })
+                _write_evolution_auth(layout, content, auth_digest)
+                from .stimuli import inject_evolution_result
+                inject_evolution_result(layout, content, approved=True)
+            if cron_rejected:
+                _write_evolution_rejected(layout, content)
+                if not cron_approved:
+                    from .stimuli import inject_evolution_result
+                    inject_evolution_result(layout, content, approved=False)
+
         else:
-            _write_evolution_rejected(layout, content)
-            from .stimuli import inject_evolution_result
-            inject_evolution_result(layout, content, approved=False)
+            # ── Structural proposal ─────────────────────────────────────────
+            ops = [c.get("op", "?") for c in other_changes] if other_changes else ["?"]
+            ops_label = ", ".join(sorted(set(ops)))
+            ui.hr(f"{counter}Evolution Proposal — {ops_label}")
+            print(f"  {ui.DIM}description{ui.RESET}  {description}")
+            if other_changes:
+                print()
+                for c in other_changes:
+                    op = c.get("op", "?")
+                    if op == "skill_install":
+                        print(f"  {ui.DIM}+{ui.RESET} skill_install   {c.get('name', '')}")
+                    elif op in ("json_merge", "file_write", "file_delete"):
+                        target = c.get("target", "")
+                        if op == "json_merge":
+                            patch = c.get("patch", {})
+                            keys = ", ".join(patch.keys()) if isinstance(patch, dict) else "…"
+                            print(f"  {ui.DIM}+{ui.RESET} json_merge      {target}  ({keys})")
+                        elif op == "file_write":
+                            content_preview = str(c.get("content", ""))[:60].replace("\n", "↵")
+                            print(f"  {ui.DIM}+{ui.RESET} file_write      {target}  {ui.DIM}{content_preview}…{ui.RESET}")
+                        elif op == "file_delete":
+                            print(f"  {ui.DIM}+{ui.RESET} file_delete     {target}")
+                    else:
+                        print(f"  {ui.DIM}+{ui.RESET} {op}")
+            print()
+            if ui.confirm("Approve?", default=False):
+                auth_digest = _sha256_str(content)
+                authorized.append({
+                    "seq": inner.get("ts", int(time.time() * 1000)),
+                    "content": content,
+                    "auth_digest": auth_digest,
+                    "slugs": inner.get("slugs", []),
+                })
+                _write_evolution_auth(layout, content, auth_digest)
+                from .stimuli import inject_evolution_result
+                inject_evolution_result(layout, content, approved=True)
+            else:
+                _write_evolution_rejected(layout, content)
+                from .stimuli import inject_evolution_result
+                inject_evolution_result(layout, content, approved=False)
+
         pfile = p["file"]
         if isinstance(pfile, Path):
             pfile.unlink(missing_ok=True)
@@ -181,7 +261,19 @@ def _cmd_output():
 
 
 def handle_platform_command(layout: Layout, line: str, adapter_ref: Any = None) -> bool:
-    """Handle a /command line. Returns True if handled, False if unknown."""
+    """Handle a platform command line (FCP §12 — Operator Interface).
+
+    Parses and dispatches slash-prefixed commands (/status, /skill, /cmi, etc.)
+    entered by the operator during interactive sessions.
+
+    Args:
+        layout: Entity store layout for state access.
+        line: Raw command line string (e.g., "/cmi chan list").
+        adapter_ref: Optional CPE adapter reference for model-dependent commands.
+
+    Returns:
+        bool: True if command was recognized and handled, False if unknown command.
+    """
     parts = line.strip().split()
     if not parts:
         return False
@@ -227,7 +319,10 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
     if cmd in ("/skill", "/skills"):
         _cmd_skill(layout, args)
         return True
-    if cmd in ("/shell", "/allowlist"):
+    if cmd == "/allowlist":
+        _cmd_allowlist_new(layout, args)
+        return True
+    if cmd == "/shell":
         # legacy: treat as /skill allowlist [args]
         _cmd_skill(layout, ["allowlist"] + args)
         return True
@@ -285,7 +380,7 @@ def _cmd_status(layout: Layout) -> None:
 
 
 def run_doctor(layout: Layout, fix: bool, clear_sentinels: bool = False) -> None:
-    """Core doctor logic — shared by /doctor (in-session) and ./fcp doctor (CLI).
+    """Core doctor logic — shared by /doctor (in-session) and fcp doctor (CLI).
 
     Args:
         fix: repair volatile dirs and recalculate integrity hashes.
@@ -313,7 +408,7 @@ def run_doctor(layout: Layout, fix: bool, clear_sentinels: bool = False) -> None
     print_report(findings)
     failed = [f for f in findings if not f.passed]
     if failed:
-        hint = "./fcp doctor --fix" if clear_sentinels else "/doctor --fix"
+        hint = "fcp doctor --fix" if clear_sentinels else "/doctor --fix"
         print(f"\n  {len(failed)} issue(s) found. Run {hint} to repair.")
 
 
@@ -451,22 +546,36 @@ def _inbox_clear(layout: Layout) -> None:
 
 def _cmd_work(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /work set <subdir> | clone <repo> | status | clear")
+        print("  usage: /work set <subdir> | clone <repo> | status | unset")
         return
     sub = args[0].lower()
     if sub == "set" and len(args) > 1:
+        from pathlib import Path as PathlibPath
         subdir = args[1]
+        entity_root = layout.root
+        workspace_dir = layout.workspace_dir
+
+        # Determine target path:
+        # - Relative path (or ".") → resolve against entity_root/workspace/
+        # - Absolute path → use as-is (but validate it's not an ancestor of entity_root)
+        if subdir in (".", ""):
+            target = workspace_dir.resolve()
+        elif PathlibPath(subdir).is_absolute():
+            target = PathlibPath(subdir).resolve()
+        else:
+            # Relative path → resolve against workspace_dir
+            target = (workspace_dir / subdir).resolve()
+
+        # Security: target cannot be an ancestor of entity_root (including entity_root itself)
         try:
-            profile = read_json(layout.baseline).get("profile", "haca-core")
-        except Exception:
-            profile = "haca-core"
-        boundary = layout.root if profile == "haca-evolve" else layout.workspace_dir
-        target = (boundary / subdir).resolve() if subdir not in (".", "") else boundary.resolve()
-        try:
-            target.relative_to(boundary)
-        except ValueError:
-            print(f"  path outside {'entity root' if profile == 'haca-evolve' else 'workspace'}: {subdir}")
+            entity_root.relative_to(target)
+            # If we get here, target is an ancestor of entity_root → REJECT
+            print(f"  path is an ancestor of entity root: {target}")
             return
+        except ValueError:
+            # Good: target is NOT an ancestor of entity_root
+            pass
+
         if not target.exists():
             target.mkdir(parents=True)
             print(f"  created: {target}")
@@ -483,15 +592,38 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
         print(f"  workspace focus set: {target}")
     elif sub == "clone" and len(args) > 1:
         import subprocess
+        # Clone into current workspace_focus (must be set first)
+        if not layout.workspace_focus.exists():
+            print("  workspace_focus not set, use '/work set <path>' first")
+            return
+        try:
+            focus_data = read_json(layout.workspace_focus)
+            focus_path = focus_data.get("path", "")
+            if not focus_path:
+                print("  workspace_focus not set, use '/work set <path>' first")
+                return
+            focus_dir = Path(focus_path)
+        except Exception:
+            print("  workspace_focus not set, use '/work set <path>' first")
+            return
+
         repo = args[1]
         name = repo.rstrip("/").split("/")[-1].removesuffix(".git")
-        dest = layout.workspace_dir / name
+        dest = focus_dir / name
+
+        # Validate: dest must not be an ancestor of entity_root
+        try:
+            layout.root.relative_to(dest)
+            print(f"  path is an ancestor of entity root: {dest}")
+            return
+        except ValueError:
+            pass  # Good: dest is NOT an ancestor of entity_root
+
         r = subprocess.run(["git", "clone", repo, str(dest)], capture_output=True, text=True)
         if r.returncode != 0:
             print(f"  clone failed: {r.stderr.strip()}")
             return
-        atomic_write(layout.workspace_focus, {"path": str(dest)})
-        print(f"  cloned and focus set: {dest}")
+        print(f"  cloned: {dest}")
     elif sub == "status":
         wf = ""
         if layout.workspace_focus.exists():
@@ -517,6 +649,53 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
 
 
 # --- Skills & execution ---
+
+def _cmd_allowlist_new(layout: Layout, args: list[str]) -> None:
+    """Manage shell_run execution allowlist using ExecutionPermissions."""
+    from .exec_permissions import ExecutionPermissions, PermissionScope
+
+    perms = ExecutionPermissions.load_from_baseline(layout)
+
+    if not args or args[0] == "list":
+        entries = perms.list_entries(PermissionScope.SHELL_RUN.value)
+        if not entries:
+            print("  allowlist (shell_run): (empty)")
+            return
+        print("  allowlist (shell_run):")
+        for i, entry in enumerate(entries):
+            reason_str = f" [{entry.reason}]" if entry.reason else ""
+            print(f"    [{i}] {entry.command}{reason_str}")
+        return
+
+    sub = args[0].lower()
+
+    if sub in ("add", "allow"):
+        # /allowlist add <command> [reason]
+        if len(args) < 2:
+            print("  usage: /allowlist add <command> [reason]")
+            return
+        command = args[1]
+        reason = args[2] if len(args) > 2 else ""
+        perms.add_entry(command, PermissionScope.SHELL_RUN.value, reason)
+        perms.save_to_baseline(layout)
+        print(f"  added: {command!r}")
+        return
+
+    if sub in ("rm", "remove"):
+        # /allowlist rm <command>
+        if len(args) < 2:
+            print("  usage: /allowlist rm <command>")
+            return
+        command = args[1]
+        if perms.remove_entry(command, PermissionScope.SHELL_RUN.value):
+            perms.save_to_baseline(layout)
+            print(f"  removed: {command!r}")
+        else:
+            print(f"  not found: {command!r}")
+        return
+
+    print("  usage: /allowlist | list | add <command> [reason] | rm <command>")
+
 
 def _cmd_allowlist(layout: Layout, args: list[str]) -> None:
     """Manage shell_run allowlist_composite entries."""
@@ -621,7 +800,7 @@ def _skill_remove(layout: Layout, skill_name: str) -> None:
     if not layout.skills_index.exists():
         ui.print_err("skills/index.json not found")
         return
-    idx = read_json(layout.skills_index) or {}
+    idx = read_json(layout.skills_index)
     skills = idx.get("skills", [])
     entry = next((s for s in skills if s["name"] == skill_name), None)
     if entry is None:
@@ -648,7 +827,7 @@ def _skill_run_direct(layout: Layout, skill_name: str, params: dict[str, Any]) -
     if not layout.skills_index.exists():
         ui.print_err("skills/index.json not found")
         return
-    idx = read_json(layout.skills_index) or {}
+    idx = read_json(layout.skills_index)
     skill_names = [s["name"] for s in idx.get("skills", [])]
     if skill_name not in skill_names:
         ui.print_err(f"skill not found: {skill_name!r}")
@@ -668,7 +847,7 @@ def _skill_run_direct(layout: Layout, skill_name: str, params: dict[str, Any]) -
 
 def _cmd_skill(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /skill list | add | run <name> [k=v ...] | rm <name> | audit <name> | allowlist ...")
+        print("  usage: /skill list | add | run <name> [k=v ...] | rm <name> | audit <name>")
         return
     sub = args[0].lower()
     if sub == "list":
@@ -692,10 +871,8 @@ def _cmd_skill(layout: Layout, args: list[str]) -> None:
         _skill_remove(layout, args[1])
     elif sub == "audit" and len(args) > 1:
         print(f"  audit {args[1]}: use /skill audit via EXEC dispatch during session")
-    elif sub == "allowlist":
-        _cmd_allowlist(layout, args[1:])
     else:
-        print("  usage: /skill list | add | run <name> [k=v ...] | rm <name> | audit <name> | allowlist ...")
+        print("  usage: /skill list | add | run <name> [k=v ...] | rm <name> | audit <name>")
 
 
 # --- Model & endure ---
@@ -724,7 +901,7 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
         return
     from .cpe.base import make_adapter
     from .store import API_KEY_ENV, save_api_key, load_env_file
-    
+
     api_key = ""
     if backend not in ("ollama", "pairing"):
         env_var = API_KEY_ENV.get(backend, "")
@@ -736,7 +913,9 @@ def _cmd_model(layout: Layout, args: list[str], adapter_ref: Any = None) -> None
                 save_api_key(layout.root.name, env_var, api_key)
 
     try:
-        new_adapter = make_adapter(backend=backend, model=new_model, api_key=api_key)
+        # Use direct make_adapter here (not load_cpe_adapter_from_baseline) because
+        # we're switching mid-session to a new backend/model, not loading from baseline
+        new_adapter = make_adapter(backend=backend, model=new_model, api_key=api_key, layout=layout)
     except Exception as exc:
         print(f"  failed to create adapter: {exc}")
         return
@@ -939,7 +1118,8 @@ def _cron_list(layout: Layout) -> None:
         executor = t.get("executor", "?")
         schedule = t.get("schedule", "?")
         last_run = t.get("last_run") or "never"
-        print(f"  [{status}] {tid}  {executor}  {schedule}  last:{last_run}")
+        sched_human = _describe_cron(schedule)
+        print(f"  [{status}] {tid}  {executor}  {sched_human}  {ui.DIM}({schedule}){ui.RESET}  last:{last_run}")
         print(f"         {desc}")
 
 
@@ -956,6 +1136,116 @@ def _build_wake_up_message(task: str, executor: str, tools: str = "") -> str:
     if tools:
         msg += f"\n[Tools] {tools}"
     return msg
+
+
+def _describe_cron(expr: str) -> str:
+    """Convert a cron expression to a human-readable description.
+
+    Handles common patterns; falls back to the raw expression for exotic cases.
+    Format: 'minute field hour field day field month field weekday field'
+    """
+    parts = expr.strip().split()
+    if len(parts) != 5:
+        return expr
+
+    minute, hour, dom, month, dow = parts
+
+    # -- time description --
+    if minute == "*" and hour == "*":
+        time_str = "every minute"
+    elif minute.isdigit() and hour.isdigit():
+        time_str = f"{int(hour):02d}:{int(minute):02d}"
+    elif minute == "*" and hour.isdigit():
+        time_str = f"every minute of {int(hour):02d}h"
+    elif minute.isdigit() and hour == "*":
+        time_str = f"at minute {minute} of every hour"
+    elif minute.startswith("*/") and hour == "*":
+        time_str = f"every {minute[2:]} minutes"
+    else:
+        time_str = f"{hour}:{minute}"
+
+    # -- weekday description --
+    _dow_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    if dow == "*":
+        dow_str = ""
+    elif dow == "1-5":
+        dow_str = "on weekdays"
+    elif dow == "0,6" or dow == "6,0":
+        dow_str = "on weekends"
+    elif dow.isdigit() and 0 <= int(dow) <= 6:
+        dow_str = f"on {_dow_names[int(dow)]}s"
+    elif all(p.isdigit() for p in dow.split(",")):
+        names = [_dow_names[int(d)] for d in dow.split(",") if 0 <= int(d) <= 6]
+        dow_str = "on " + ", ".join(names)
+    else:
+        dow_str = f"on ({dow})"
+
+    # -- day-of-month description --
+    if dom == "*":
+        dom_str = ""
+    elif dom.isdigit():
+        dom_str = f"on the {dom}th"
+    else:
+        dom_str = f"on day {dom}"
+
+    # -- month description --
+    _month_names = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    if month == "*":
+        month_str = ""
+    elif month.isdigit() and 1 <= int(month) <= 12:
+        month_str = f"in {_month_names[int(month)]}"
+    else:
+        month_str = f"in month {month}"
+
+    # -- assemble --
+    parts_out = [time_str]
+    if dow_str:
+        parts_out.append(dow_str)
+    elif dom_str:
+        parts_out.append(dom_str)
+    if month_str:
+        parts_out.append(month_str)
+
+    return " ".join(parts_out)
+
+
+def _cron_add_from_proposal(layout: Layout, change: dict, description: str) -> None:
+    """Create and register a cron task from a CPE-proposed cron_add change."""
+    import datetime as _dt
+    import uuid as _uuid
+
+    executor = change.get("executor", "cpe").lower()
+    if executor not in ("worker", "cpe"):
+        executor = "cpe"
+    task_text = change.get("task", "")
+    schedule = change.get("schedule", "")
+    tools = change.get("tools", "")
+    if not task_text or not schedule:
+        ui.print_err("cron_add proposal missing task or schedule — skipped.")
+        return
+
+    wake_up_message = _build_wake_up_message(task_text, executor, tools)
+    now = _dt.datetime.utcnow().isoformat() + "Z"
+    task_entry = {
+        "id": f"cron_{_uuid.uuid4().hex[:12]}",
+        "status": "approved",
+        "executor": executor,
+        "description": description,
+        "tools": tools,
+        "task": task_text,
+        "schedule": schedule,
+        "wake_up_message": wake_up_message,
+        "proposed_at": now,
+        "approved_at": now,
+        "last_run": None,
+    }
+    agenda = load_agenda(layout)
+    agenda.setdefault("tasks", []).append(task_entry)
+    layout.agenda.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(layout.agenda, agenda)
+    _cron_register_host(task_entry, layout)
+    ui.print_ok(f"cron task created: {task_entry['id']} ({schedule})")
 
 
 def _cron_add_interactive(layout: Layout) -> None:
@@ -1127,7 +1417,7 @@ def _cmd_cmi(layout: Layout, args: list[str]) -> None:
 
 
 def _cmi_usage() -> None:
-    print("  usage: /cmi start | stop | status | token | invite | contacts [list|add|remove] | chan [list|open|close] | bb <id>")
+    print("  usage: /cmi start | stop | status | token | invite | contacts [list|add|remove] | chan [list|init|open|close] | bb <id>")
 
 
 def _cmi_start(layout: Layout) -> None:
@@ -1258,27 +1548,6 @@ def _cmi_status(layout: Layout) -> None:
         print("  channels      : none")
 
 
-def _cmi_peers(layout: Layout) -> None:
-    """List trusted peers from baseline.cmi.trusted_peers."""
-    baseline = {}
-    if layout.baseline.exists():
-        try:
-            baseline = read_json(layout.baseline)
-        except Exception:
-            pass
-    peers = baseline.get("cmi", {}).get("trusted_peers", [])
-    if not peers:
-        print("  no trusted peers configured")
-        print("  (add peers via evolution_proposal with op cmi_peer_add)")
-        return
-    for p in peers:
-        alias = p.get("alias", "?")
-        ni = p.get("node_identity", "?")
-        label = p.get("trust_label", "?")
-        endpoint = p.get("endpoint", "?")
-        print(f"  {alias}  [{label}]  {ni[:20]}...  {endpoint}")
-
-
 def _cmi_export(layout: Layout) -> None:
     """Export this entity's invite token for sharing with a peer Operator."""
     from .cmi.identity import export_invite_token
@@ -1315,15 +1584,12 @@ def _cmi_contacts_list(layout: Layout) -> None:
         except Exception:
             pass
     contacts = baseline.get("cmi", {}).get("contacts", [])
-    # also support legacy trusted_peers key
-    if not contacts:
-        contacts = baseline.get("cmi", {}).get("trusted_peers", [])
     if not contacts:
         print("  no contacts — use /cmi contacts add to add one")
         return
     for c in contacts:
-        label = c.get("label", c.get("alias", "?"))
-        node_id = c.get("node_id", c.get("node_identity", "?"))
+        label = c.get("label", "?")
+        node_id = c.get("node_id", "?")
         endpoint = c.get("endpoint", "?")
         added = c.get("added_at", "")
         print(f"  {label}  {node_id[:20]}...  {endpoint}  added:{added}")
@@ -1413,18 +1679,19 @@ def _cmi_contacts_remove(layout: Layout, node_id: str) -> None:
 
 def _cmi_channel(layout: Layout, args: list[str]) -> None:
     if not args:
-        print("  usage: /cmi chan list | init [<id>] | close <id>")
+        print("  usage: /cmi chan list | init | open <id> | close <id>")
         return
     sub = args[0].lower()
     if sub == "list":
         _cmi_channel_list(layout)
-    elif sub in ("init", "open"):
-        chan_id = args[1] if len(args) > 1 else None
-        _cmi_channel_open(layout, chan_id)
+    elif sub == "init":
+        _cmi_channel_open(layout, None)
+    elif sub == "open" and len(args) > 1:
+        _cmi_channel_open(layout, args[1])
     elif sub == "close" and len(args) > 1:
         _cmi_channel_close(layout, args[1])
     else:
-        print("  usage: /cmi chan list | init [<id>] | close <id>")
+        print("  usage: /cmi chan list | init | open <id> | close <id>")
 
 
 def _cmi_channel_list(layout: Layout) -> None:
@@ -1437,7 +1704,7 @@ def _cmi_channel_list(layout: Layout) -> None:
             pass
     channels = baseline.get("cmi", {}).get("channels", [])
     if not channels:
-        print("  no channels configured — use /cmi chan init to create one")
+        print("  no channels configured — use /cmi chan init to create one")  # init = create + launch
         return
     for ch in channels:
         cid = ch.get("id", "?")
@@ -1535,6 +1802,14 @@ def _cmi_channel_open(layout: Layout, chan_id: str | None) -> None:
         print(f"  channel status is '{ch.get('status')}' — cannot open")
         return
 
+    # Profile gating: haca-core cannot be HOST or PEER of public channels
+    profile = baseline.get("profile", "haca-core")
+    if profile == "haca-core":
+        contacts = baseline.get("cmi", {}).get("contacts", [])
+        if not contacts:
+            print("  haca-core profile cannot create/join channels without pre-registered contacts")
+            return
+
     role = ch.get("role", "peer")
 
     # Check session token — CMI requires active session
@@ -1582,8 +1857,13 @@ def _cmi_channel_open(layout: Layout, chan_id: str | None) -> None:
 
 
 def _cmi_channel_close(layout: Layout, chan_id: str) -> None:
-    """Signal close to an active CMI channel via HTTP POST."""
+    """Signal close to an active CMI channel via HTTP POST.
+
+    Sends close signal with 5-second timeout (CMI_TIMEOUT_MESSAGE from channel_process).
+    Gracefully handles network errors (peer offline or slow).
+    """
     import urllib.request, urllib.error
+    from .cmi.channel_process import CMI_TIMEOUT_MESSAGE
 
     # Read close_token from Entity Store — only the local Operator can do this
     close_token = ""
@@ -1614,7 +1894,7 @@ def _cmi_channel_close(layout: Layout, chan_id: str) -> None:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=5):
+        with urllib.request.urlopen(req, timeout=CMI_TIMEOUT_MESSAGE):
             pass
         print(f"  close signal sent: {chan_id}")
     except urllib.error.URLError as exc:
@@ -1695,8 +1975,10 @@ def _cmd_help() -> None:
 
   Workspace:
     /work status                          — show active workspace focus
-    /work set <subdir>                    — set workspace focus
-    /work clone <repo>                    — clone repo and set as workspace focus
+    /work set <path>                      — set workspace focus
+                                            • relative path: resolve against entity_root/workspace/ ('.' → workspace/)
+                                            • absolute path: allow outside entity_root/, no ancestor dir ('/full/path' → project/)
+    /work clone <repo>                    — clone repo into current workspace_focus (must be set first) 
     /work unset                           — unset workspace focus
 
   Skills:
@@ -1705,9 +1987,11 @@ def _cmd_help() -> None:
     /skill run <name> [k=v]               — run a skill directly with optional params
     /skill rm <name>                      — remove a custom skill and delete its directory
     /skill audit <name>                   — audit a skill
-    /skill allowlist                      — list shell_run allowlists
-    /skill allowlist add <cmd> [label]    — add composite command to allowlist
-    /skill allowlist rm <idx|label>       — remove composite command from allowlist
+
+  Execution:
+    /allowlist                            — list shell_run allowlist
+    /allowlist add <command> [reason]     — add command to allowlist
+    /allowlist rm <command>               — remove command from allowlist
 
   Evolution:
     /endure list                          — list pending Evolution Proposals
@@ -1732,7 +2016,7 @@ def _cmd_help() -> None:
     /cmi contacts rm <id>                 — remove a contact by node_id or label
     /cmi chan list                        — list declared channels from baseline
     /cmi chan init                        — create and launch a new channel (interactive)
-    /cmi chan init <id>                   — launch CMI process for an existing channel
+    /cmi chan open <id>                   — launch a created channel (transition created → active)
     /cmi chan close <id>                  — signal close to an active channel
     /cmi bb <id>                          — display Blackboard contents for a channel
 
