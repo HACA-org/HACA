@@ -58,6 +58,11 @@ def main() -> None:
     context = str(context).strip()
     persona = str(persona).strip()
 
+    # Resolve persona name to file if it matches a pre-defined persona
+    persona_file = Path(__file__).parent / "persona" / f"{persona}.md"
+    if persona_file.exists():
+        persona = persona_file.read_text(encoding="utf-8").strip()
+
     # Immutable system constraints — always appended regardless of caller-supplied persona.
     CONSTRAINTS = (
         "\n\n[WORKER CONSTRAINTS]\n"
