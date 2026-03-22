@@ -40,7 +40,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from . import ui
-from .session import is_auto_session
+from .session_mode import is_auto_session
 
 if TYPE_CHECKING:
     from .store import Layout

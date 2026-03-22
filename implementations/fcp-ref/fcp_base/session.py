@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import os
 import time
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -25,45 +24,12 @@ from .acp import drain_inbox, make as acp_encode
 from .cpe.base import AdapterRef, CPEAdapter, CPEResponse, CPEError, CPEAuthError, CPERateLimitError
 from .mil import memory_recall, process_closure, result_recall, summarize_session, write_episodic, SESSION_CACHE_FILE
 from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger, is_compact_pending as _is_compact_pending, set_compact_pending as _set_compact_pending, is_endure_approved as _is_endure_approved, set_endure_approved as _set_endure_approved
+from .session_mode import SessionMode, set_session_mode, get_session_mode, is_auto_session, is_main_session
 from .sil import sha256_str as _sha256_str, write_evolution_auth as _write_evolution_auth, write_notification as _write_notification
 from .stimuli import inject_evolution_result as _write_evolution_stimuli
 from .store import Layout, append_jsonl, atomic_write, load_baseline, read_json, read_jsonl
 from . import ui
 from . import vital as _vital
-
-
-# ---------------------------------------------------------------------------
-# Session Mode Context
-# ---------------------------------------------------------------------------
-
-class SessionMode(Enum):
-    """Session execution mode."""
-    MAIN = "main"  # Operator directly (UI/TUI, Telegram, etc)
-    AUTO = "auto"  # Autonomous (cron, CMI delegate, etc)
-
-
-_session_mode: SessionMode = SessionMode.MAIN
-
-
-def set_session_mode(mode: SessionMode) -> None:
-    """Set the current session mode (MAIN or AUTO)."""
-    global _session_mode
-    _session_mode = mode
-
-
-def get_session_mode() -> SessionMode:
-    """Get the current session mode."""
-    return _session_mode
-
-
-def is_auto_session() -> bool:
-    """Check if currently in autonomous session (auto:session)."""
-    return _session_mode == SessionMode.AUTO
-
-
-def is_main_session() -> bool:
-    """Check if currently in operator-driven session (main:session)."""
-    return _session_mode == SessionMode.MAIN
 
 
 # ---------------------------------------------------------------------------
