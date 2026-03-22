@@ -405,11 +405,36 @@ def _run_auto_worker(layout: "Layout", task: dict, wake_up_message: str) -> None
     cron_id = task.get("id", "")
     description = task.get("description", cron_id)
 
+    # context = task instructions from agenda + workspace_focus
+    context_parts = [
+        "[task instructions]",
+        task.get("task") or "(no instructions provided)",
+        "",
+        "[environment]",
+    ]
+    workspace_focus_file = layout.root / "state" / "workspace_focus.json"
+    if workspace_focus_file.exists():
+        try:
+            import json as _json
+            wf = _json.loads(workspace_focus_file.read_text(encoding="utf-8"))
+            context_parts.append(f"workspace_focus: {wf.get('path', '(unset)')}")
+        except Exception:
+            context_parts.append("workspace_focus: (unavailable)")
+    else:
+        context_parts.append("workspace_focus: (not set)")
+    context = "\n".join(context_parts)
+
+    persona = (
+        task.get("persona")
+        or "You are an autonomous FCP worker executing a scheduled task. "
+           "Act on the stimulus, follow the task instructions, and return a structured result."
+    )
+
     try:
         result = dispatch(layout, "worker_skill", {
             "task": wake_up_message,
-            "context": task.get("task", ""),
-            "persona": "FCP autonomous worker",
+            "context": context,
+            "persona": persona,
         }, index)
     except Exception as exc:
         result = f"error: {exc}"
