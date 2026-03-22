@@ -224,6 +224,89 @@ class TestCliAutoWorker(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# cli/commands — run_status, run_agenda
+# ---------------------------------------------------------------------------
+
+class TestCliStatus(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp, _ = _make_entity()
+        from fcp_base.store import Layout
+        self.layout = Layout(self.tmp)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_run_status_does_not_raise(self):
+        from fcp_base.cli.commands import run_status
+        import io
+        with patch("sys.stdout", io.StringIO()):
+            run_status(self.layout)  # must not raise
+
+    def test_run_status_shows_model_from_baseline(self):
+        from fcp_base.cli.commands import run_status
+        import io
+        out = io.StringIO()
+        with patch("sys.stdout", out):
+            run_status(self.layout)
+        self.assertIn("ollama", out.getvalue())
+
+    def test_run_status_no_session_token(self):
+        from fcp_base.cli.commands import run_status
+        import io
+        out = io.StringIO()
+        with patch("sys.stdout", out):
+            run_status(self.layout)
+        self.assertIn("inactive", out.getvalue())
+
+
+class TestCliAgenda(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp, _ = _make_entity()
+        from fcp_base.store import Layout
+        self.layout = Layout(self.tmp)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_run_agenda_no_agenda_file(self):
+        from fcp_base.cli.commands import run_agenda
+        import io
+        with patch("sys.stdout", io.StringIO()) as out:
+            run_agenda(self.layout)
+        # should print info, not raise
+
+    def test_run_agenda_empty_tasks(self):
+        from fcp_base.cli.commands import run_agenda
+        import io
+        self.layout.agenda.write_text(json.dumps({"tasks": []}), encoding="utf-8")
+        out = io.StringIO()
+        with patch("sys.stdout", out):
+            run_agenda(self.layout)
+        self.assertIn("empty", out.getvalue().lower())
+
+    def test_run_agenda_lists_tasks(self):
+        from fcp_base.cli.commands import run_agenda
+        import io
+        tasks = [
+            {"id": "t1", "description": "backup", "status": "approved",
+             "schedule": "0 2 * * *", "executor": "cpe"},
+            {"id": "t2", "description": "report", "status": "pending",
+             "executor": "worker"},
+        ]
+        self.layout.agenda.write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
+        out = io.StringIO()
+        with patch("sys.stdout", out):
+            run_agenda(self.layout)
+        text = out.getvalue()
+        self.assertIn("backup", text)
+        self.assertIn("report", text)
+        self.assertIn("t1", text)
+        self.assertIn("2 task(s)", text)
+
+
+# ---------------------------------------------------------------------------
 # cli/endure — unit tests (git not required)
 # ---------------------------------------------------------------------------
 

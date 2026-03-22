@@ -1,5 +1,6 @@
 """
-CLI runtime commands — normal, auto, auto-worker, model, doctor, decommission, update.
+CLI runtime commands — normal, auto, auto-worker, model, doctor, decommission, update,
+status, agenda.
 """
 
 from __future__ import annotations
@@ -431,4 +432,113 @@ def run_update() -> None:
         ui.print_ok("FCP updated successfully.")
         print()
         print(r.stdout.strip())
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Status — entity overview without booting a session
+# ---------------------------------------------------------------------------
+
+def run_status(layout: "Layout") -> None:
+    """Print entity status overview (no session required)."""
+    from ..sil import beacon_is_active
+
+    print()
+    ui.hr("fcp status")
+
+    # baseline / model
+    try:
+        baseline = read_json(layout.baseline)
+        cpe = baseline.get("cpe", {})
+        backend = cpe.get("backend", "?")
+        model = cpe.get("model", "?")
+        ui.print_info(f"model          : {backend}:{model}")
+    except Exception:
+        ui.print_warn("baseline.json unreadable")
+
+    # session token
+    token_active = layout.session_token.exists()
+    ui.print_info(f"session token  : {'active' if token_active else 'inactive'}")
+
+    # session store size
+    session_size = layout.session_store.stat().st_size if layout.session_store.exists() else 0
+    ui.print_info(f"session store  : {ui.format_bytes(session_size)}")
+
+    # workspace focus
+    wf = ""
+    if layout.workspace_focus.exists():
+        try:
+            wf = str(read_json(layout.workspace_focus).get("path", ""))
+        except Exception:
+            pass
+    ui.print_info(f"workspace      : {wf or '(not set)'}")
+
+    # distress beacon
+    if beacon_is_active(layout):
+        ui.print_warn("distress beacon: ACTIVE")
+    else:
+        ui.print_info("distress beacon: clear")
+
+    # notifications
+    notif_count = 0
+    if layout.operator_notifications_dir.exists():
+        notif_count = sum(1 for _ in layout.operator_notifications_dir.iterdir())
+    if notif_count:
+        ui.print_warn(f"notifications  : {notif_count} pending")
+    else:
+        ui.print_info("notifications  : none")
+
+    # memory
+    mem_count = 0
+    for subdir in ("episodic", "semantic"):
+        d = layout.root / "memory" / subdir
+        if d.exists():
+            mem_count += sum(1 for _ in d.iterdir() if _.is_file())
+    ui.print_info(f"memories       : {mem_count}")
+
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Agenda — list scheduled tasks without booting a session
+# ---------------------------------------------------------------------------
+
+def run_agenda(layout: "Layout") -> None:
+    """List scheduled tasks from agenda.json (no session required)."""
+    print()
+    ui.hr("fcp agenda")
+
+    if not layout.agenda.exists():
+        ui.print_info("No agenda found. Tasks are created via /cron add in-session.")
+        print()
+        return
+
+    try:
+        agenda = json.loads(layout.agenda.read_text(encoding="utf-8"))
+    except Exception as exc:
+        ui.print_err(f"Could not read agenda: {exc}")
+        print()
+        return
+
+    tasks = agenda.get("tasks", [])
+    if not tasks:
+        ui.print_info("Agenda is empty.")
+        print()
+        return
+
+    for task in tasks:
+        tid = task.get("id", "?")
+        desc = task.get("description", tid)
+        status = task.get("status", "?")
+        schedule = task.get("schedule", "")
+        last_run = task.get("last_run", "")
+        executor = task.get("executor", "cpe")
+
+        status_mark = "[√]" if status == "approved" else "[!]" if status == "pending" else "[ ]"
+        schedule_str = f"  {schedule}" if schedule else ""
+        last_str = f"  last: {last_run}" if last_run else ""
+        print(f"  {status_mark} [{tid}] {desc}  ({executor}{schedule_str}{last_str})")
+
+    print()
+    print(f"  {len(tasks)} task(s) — manage with /cron in-session")
     print()

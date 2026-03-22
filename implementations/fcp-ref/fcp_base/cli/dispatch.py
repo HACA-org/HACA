@@ -22,6 +22,8 @@ from .commands import (
     run_doctor,
     run_decommission,
     run_model,
+    run_status,
+    run_agenda,
 )
 from .endure import run_endure_sync, run_endure_origin, run_endure_chain
 from .init import run_init
@@ -38,8 +40,9 @@ def print_help() -> None:
     print("""
   fcp                              — boot entity and start session
   fcp init                         — initialize a new entity
+  fcp status                       — entity status overview (no session needed)
+  fcp agenda                       — list scheduled tasks (no session needed)
   fcp model                        — interactive model picker
-  fcp mcp                          — Manager MCP server
   fcp endure sync                  — sync entity root with git remote
   fcp endure origin                — set or update git remote origin
   fcp endure chain                 — display integrity chain
@@ -112,6 +115,16 @@ def _main() -> None:
         run_init(fcp_ref_root)
         return
 
+    if cmd == "status":
+        require_entity_root(entity_root)
+        run_status(Layout(entity_root))
+        return
+
+    if cmd == "agenda":
+        require_entity_root(entity_root)
+        run_agenda(Layout(entity_root))
+        return
+
     if cmd == "doctor":
         require_entity_root(entity_root)
         run_doctor(Layout(entity_root), rest)
@@ -152,5 +165,5 @@ def _main() -> None:
         return
 
     print(f"unknown command: {cmd}")
-    print("usage: fcp [init | model | update | doctor [--fix] | decommission --archive|--destroy | endure sync | --auto <cron_id>]")
+    print("usage: fcp [init | status | agenda | model | update | doctor [--fix] | decommission --archive|--destroy | endure sync | --auto <cron_id>]")
     sys.exit(1)

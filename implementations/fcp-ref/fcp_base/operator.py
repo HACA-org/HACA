@@ -323,8 +323,8 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
         _cmd_allowlist_new(layout, args)
         return True
     if cmd == "/shell":
-        # legacy: treat as /skill allowlist [args]
-        _cmd_skill(layout, ["allowlist"] + args)
+        # legacy alias for /allowlist
+        _cmd_allowlist_new(layout, args)
         return True
 
     # --- Model, endure & cron ---
@@ -364,19 +364,30 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
 # --- Entity & session ---
 
 def _cmd_status(layout: Layout) -> None:
+    from .sil import beacon_is_active
     token_present = layout.session_token.exists()
     session_size = layout.session_store.stat().st_size if layout.session_store.exists() else 0
-    beacon = layout.distress_beacon.exists()
-    print(f"  session token  : {'active' if token_present else 'inactive'}")
-    print(f"  session store  : {session_size} bytes")
-    print(f"  distress beacon: {'ACTIVE' if beacon else 'clear'}")
     wf = ""
     if layout.workspace_focus.exists():
         try:
             wf = str(read_json(layout.workspace_focus).get("path", ""))
         except Exception:
             pass
-    print(f"  workspace focus: {wf or '(not set)'}")
+    notif_count = 0
+    if layout.operator_notifications_dir.exists():
+        notif_count = sum(1 for _ in layout.operator_notifications_dir.iterdir())
+
+    ui.print_info(f"session token  : {'active' if token_present else 'inactive'}")
+    ui.print_info(f"session store  : {ui.format_bytes(session_size)}")
+    ui.print_info(f"workspace      : {wf or '(not set)'}")
+    if beacon_is_active(layout):
+        ui.print_warn("distress beacon: ACTIVE")
+    else:
+        ui.print_info("distress beacon: clear")
+    if notif_count:
+        ui.print_warn(f"notifications  : {notif_count} pending")
+    else:
+        ui.print_info("notifications  : none")
 
 
 def run_doctor(layout: Layout, fix: bool, clear_sentinels: bool = False) -> None:
