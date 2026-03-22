@@ -17,53 +17,21 @@ from __future__ import annotations
 import json
 import os
 import time
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from .acp import drain_inbox, make as acp_encode
 from .cpe.base import AdapterRef, CPEAdapter, CPEResponse, CPEError, CPEAuthError, CPERateLimitError
-from .mil import memory_recall, process_closure, result_recall, summarize_session, write_episodic, SESSION_CACHE_FILE
+from .dispatch import dispatch_tool_use
+from .mil import process_closure, summarize_session, SESSION_CACHE_FILE
 from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger, is_compact_pending as _is_compact_pending, set_compact_pending as _set_compact_pending, is_endure_approved as _is_endure_approved, set_endure_approved as _set_endure_approved
-from .sil import sha256_str as _sha256_str, write_evolution_auth as _write_evolution_auth, write_notification as _write_notification
-from .stimuli import inject_evolution_result as _write_evolution_stimuli
+from .session_mode import SessionMode, set_session_mode, get_session_mode, is_auto_session, is_main_session
+from .tools import build_tools_index as _build_tools_index, build_tool_declarations as _tool_declarations
+from .sil import write_notification as _write_notification
 from .store import Layout, append_jsonl, atomic_write, load_baseline, read_json, read_jsonl
+from . import cmi_fmt as _cmi_fmt
 from . import ui
 from . import vital as _vital
-
-
-# ---------------------------------------------------------------------------
-# Session Mode Context
-# ---------------------------------------------------------------------------
-
-class SessionMode(Enum):
-    """Session execution mode."""
-    MAIN = "main"  # Operator directly (UI/TUI, Telegram, etc)
-    AUTO = "auto"  # Autonomous (cron, CMI delegate, etc)
-
-
-_session_mode: SessionMode = SessionMode.MAIN
-
-
-def set_session_mode(mode: SessionMode) -> None:
-    """Set the current session mode (MAIN or AUTO)."""
-    global _session_mode
-    _session_mode = mode
-
-
-def get_session_mode() -> SessionMode:
-    """Get the current session mode."""
-    return _session_mode
-
-
-def is_auto_session() -> bool:
-    """Check if currently in autonomous session (auto:session)."""
-    return _session_mode == SessionMode.AUTO
-
-
-def is_main_session() -> bool:
-    """Check if currently in operator-driven session (main:session)."""
-    return _session_mode == SessionMode.MAIN
 
 
 # ---------------------------------------------------------------------------
@@ -169,12 +137,10 @@ def _process_stimulus_and_input(
 
         # Platform commands — handle without invoking CPE
         if stripped.startswith("/"):
-            from .operator import handle_platform_command
+            from .operator import handle_platform_command, _cmd_output
             handled = handle_platform_command(layout, stripped, adapter_ref=adapter_ref)
             if handled:
                 cmd, _args = _parse_command(stripped)
-                if cmd in ("/verbose", "/debugger"):
-                    pass  # debug output appears on next CPE cycle
                 if _is_endure_approved():
                     _set_endure_approved(False)
                     return True, True, "endure_approved"
@@ -182,7 +148,6 @@ def _process_stimulus_and_input(
                     return True, True, "operator_exit"
                 if cmd in ("/new", "/clear", "/reset"):
                     return True, True, "operator_reset"
-                # Check if /compact was requested
                 if _is_compact_pending():
                     _set_compact_pending(False)
                     compact_msg = (
@@ -195,15 +160,14 @@ def _process_stimulus_and_input(
                     chat_history.append({"role": "user", "content": compact_msg})
                     return True, False, "compact_requested"
                 return False, False, ""
-            if not handled:
-                from .operator import _cmd_output
-                cmd, _args = _parse_command(stripped)
-                with _cmd_output():
-                    if cmd:
-                        print(f"unknown command: {cmd}")
-                    else:
-                        print("invalid command (must start with /)")
-                return False, False, ""
+            # unknown command
+            cmd, _args = _parse_command(stripped)
+            with _cmd_output():
+                if cmd:
+                    print(f"unknown command: {cmd}")
+                else:
+                    print("invalid command (must start with /)")
+            return False, False, ""
 
         _append_msg(layout, "operator", user_input)
         chat_history.append({"role": "user", "content": stripped})
@@ -278,6 +242,38 @@ def _make_cycle_fingerprint(
         fingerprints.append((call.tool, input_hash, result_hash))
 
     return frozenset(fingerprints)
+
+
+# ---------------------------------------------------------------------------
+# CPE backoff policy
+# ---------------------------------------------------------------------------
+
+class _CPEBackoff:
+    """Exponential backoff state for CPE transient errors."""
+
+    MAX_CONSECUTIVE = 5
+    INITIAL_SECS    = 1.0
+
+    def __init__(self) -> None:
+        self.consecutive = 0
+        self.last_error_time = 0.0
+
+    def reset(self) -> None:
+        self.consecutive = 0
+        self.last_error_time = 0.0
+
+    def record_error(self) -> None:
+        import time as _t
+        self.consecutive += 1
+        self.last_error_time = _t.time()
+
+    @property
+    def sleep_secs(self) -> float:
+        return self.INITIAL_SECS * (2 ** (self.consecutive - 1))
+
+    @property
+    def exceeded(self) -> bool:
+        return self.consecutive >= self.MAX_CONSECUTIVE
 
 
 # ---------------------------------------------------------------------------
@@ -361,10 +357,7 @@ def run_session(
     _LOOP_THRESHOLD = 3
 
     # CPE error handling — exponential backoff for transient failures
-    _cpe_consecutive_errors = 0
-    _cpe_last_error_time = 0.0
-    _CPE_MAX_CONSECUTIVE_ERRORS = 5
-    _CPE_INITIAL_BACKOFF_SECS = 1.0
+    _backoff = _CPEBackoff()
 
     # Vital Check state — triggers on cycle_threshold or interval_seconds
     _baseline = None
@@ -411,9 +404,7 @@ def run_session(
         # invoke CPE (adapter_ref.current may be swapped mid-session via /model)
         try:
             response = adapter_ref.current.invoke(system, chat_history, tools)
-            # Reset consecutive error counter on success
-            _cpe_consecutive_errors = 0
-            _cpe_last_error_time = 0.0
+            _backoff.reset()
         except CPEAuthError as exc:
             # Authentication errors are not retryable — exit immediately
             err_msg = f"CPE authentication failed: {str(exc)}"
@@ -423,41 +414,36 @@ def run_session(
             close_reason = "cpe_auth_error"
             break
         except CPERateLimitError as exc:
-            # Rate limit is transient — apply exponential backoff
-            _cpe_consecutive_errors = _cpe_consecutive_errors + 1
-            backoff_secs = _CPE_INITIAL_BACKOFF_SECS * (2 ** (_cpe_consecutive_errors - 1))
-            err_msg = f"CPE rate limited (attempt {_cpe_consecutive_errors}): {str(exc)}"
-            print(f"\n{_DIM}  [fcp] {err_msg} (backoff {backoff_secs:.1f}s){_RESET}")
-            _append_msg(layout, "fcp", f"{err_msg} — retrying in {backoff_secs:.0f}s")
-            _vlog("fcp", f"rate limit backoff: {backoff_secs}s")
-            if _cpe_consecutive_errors >= _CPE_MAX_CONSECUTIVE_ERRORS:
+            _backoff.record_error()
+            err_msg = f"CPE rate limited (attempt {_backoff.consecutive}): {str(exc)}"
+            print(f"\n{_DIM}  [fcp] {err_msg} (backoff {_backoff.sleep_secs:.1f}s){_RESET}")
+            _append_msg(layout, "fcp", f"{err_msg} — retrying in {_backoff.sleep_secs:.0f}s")
+            _vlog("fcp", f"rate limit backoff: {_backoff.sleep_secs}s")
+            if _backoff.exceeded:
                 close_reason = "cpe_rate_limit_exceeded"
                 break
-            time.sleep(backoff_secs)
+            time.sleep(_backoff.sleep_secs)
             stimulus_ready = False
             continue
         except CPEError as exc:
-            # Other CPE errors (network, model errors) are retryable
-            _cpe_consecutive_errors = _cpe_consecutive_errors + 1
-            backoff_secs = _CPE_INITIAL_BACKOFF_SECS * (2 ** (_cpe_consecutive_errors - 1))
-            err_msg = f"CPE error (attempt {_cpe_consecutive_errors}): {str(exc)}"
-            print(f"\n{_DIM}  [fcp] {err_msg} (backoff {backoff_secs:.1f}s){_RESET}")
-            _append_msg(layout, "fcp", f"{err_msg} — retrying in {backoff_secs:.0f}s")
-            _vlog("fcp", f"cpe error backoff: {backoff_secs}s")
-            if _cpe_consecutive_errors >= _CPE_MAX_CONSECUTIVE_ERRORS:
+            _backoff.record_error()
+            err_msg = f"CPE error (attempt {_backoff.consecutive}): {str(exc)}"
+            print(f"\n{_DIM}  [fcp] {err_msg} (backoff {_backoff.sleep_secs:.1f}s){_RESET}")
+            _append_msg(layout, "fcp", f"{err_msg} — retrying in {_backoff.sleep_secs:.0f}s")
+            _vlog("fcp", f"cpe error backoff: {_backoff.sleep_secs}s")
+            if _backoff.exceeded:
                 close_reason = "cpe_error_max_retries"
                 break
-            time.sleep(backoff_secs)
+            time.sleep(_backoff.sleep_secs)
             stimulus_ready = False
             continue
         except Exception as exc:
-            # Unexpected error (shouldn't happen with proper exception hierarchy)
-            _cpe_consecutive_errors = _cpe_consecutive_errors + 1
-            err_msg = f"CPE unexpected error (attempt {_cpe_consecutive_errors}): {str(exc)}"
+            _backoff.record_error()
+            err_msg = f"CPE unexpected error (attempt {_backoff.consecutive}): {str(exc)}"
             print(f"\n{_DIM}  [fcp] {err_msg}{_RESET}")
             _append_msg(layout, "fcp", err_msg)
             _vlog("fcp", f"unexpected error: {err_msg}")
-            if _cpe_consecutive_errors >= _CPE_MAX_CONSECUTIVE_ERRORS:
+            if _backoff.exceeded:
                 close_reason = "cpe_error_max_retries"
                 break
             stimulus_ready = False
@@ -595,13 +581,7 @@ def run_session(
 # Boot context assembly  §5.1
 # ---------------------------------------------------------------------------
 
-# System envelope types that must not appear as conversation turns.
-_SYSTEM_TYPES = frozenset({
-    "SESSION_START", "SESSION_CLOSE", "SLEEP_COMPLETE", "HEARTBEAT",
-    "DRIFT_FAULT", "IDENTITY_DRIFT", "SEVERANCE_PENDING", "CRITICAL_CLEARED",
-    "PROPOSAL_PENDING", "EVOLUTION_AUTH", "EVOLUTION_REJECTED",
-    "ENDURE_COMMIT", "DECOMMISSION",
-})
+_SYSTEM_TYPES = _cmi_fmt.SYSTEM_TYPES
 
 
 def build_boot_context(
@@ -779,378 +759,11 @@ def _session_to_turns(layout: Layout) -> list[tuple[str, str]]:
     return pairs
 
 
-def _format_cmi_stimulus(env: dict[str, Any]) -> str:
-    """Format a CMI inbox envelope as a readable stimulus for the CPE."""
-    msg_type = env.get("type", "")
-    chan_id = env.get("channel_id", "?")
-    sender = env.get("from", env.get("host_identity", ""))
-    sender_short = sender[:16] + "..." if len(sender) > 16 else sender
-
-    if msg_type == "CMI_CONTROL":
-        event = env.get("event", "")
-        if event == "channel_closing":
-            return (
-                f"[CMI] Channel {chan_id} is closing.\n"
-                f"The Blackboard is now final. Review it with `/cmi bb {chan_id}` "
-                f"and decide what to preserve in memory."
-            )
-        if event == "enrolled":
-            role = env.get("role", "peer")
-            task = env.get("task", "")
-            bb = env.get("blackboard", [])
-            bb_note = f" Blackboard has {len(bb)} existing contribution(s)." if bb else ""
-            return (
-                f"[CMI] You have been enrolled in channel {chan_id} as {role}.\n"
-                f"Task: {task}{bb_note}\n"
-                f"Use `cmi_send` to participate."
-            )
-        if event == "peer_enrolled":
-            ni = env.get("node_identity", "?")
-            ni_short = ni[:16] + "..." if len(ni) > 16 else ni
-            return f"[CMI] Peer enrolled on channel {chan_id}: {ni_short}"
-        return f"[CMI] Control event on channel {chan_id}: {event}"
-
-    if msg_type == "CMI_MSG_GENERAL":
-        content = env.get("content", "")
-        return f"[CMI:{chan_id}] {sender_short}: {content}"
-
-    if msg_type == "CMI_MSG_PEER":
-        to = env.get("to", "")
-        content = env.get("content", "")
-        to_short = to[:16] + "..." if len(to) > 16 else to
-        return f"[CMI:{chan_id}] {sender_short} → {to_short}: {content}"
-
-    if msg_type == "CMI_MSG_BB":
-        content = env.get("content", "")
-        seq = env.get("seq", "?")
-        return f"[CMI:{chan_id}] BB[{seq}] {sender_short}: {content}"
-
-    # fallback for unknown CMI types
-    return f"[CMI:{chan_id}] {msg_type}: {json.dumps(env, ensure_ascii=False)}"
-
-
-def _parse_env_data(env: dict[str, Any]) -> Any:
-    """Return the parsed data field of an ACP envelope."""
-    raw_data = env.get("data", "")
-    if isinstance(raw_data, str):
-        try:
-            return json.loads(raw_data)
-        except json.JSONDecodeError:
-            # Not JSON — return as raw string
-            return raw_data
-        except Exception as e:
-            _vlog("fcp", f"envelope data parse error in _parse_env_data ({e})")
-            return raw_data
-    return raw_data
-
-
-def _cmi_indicator(env: dict[str, Any]) -> str:
-    """Return a short operator-facing indicator if env is a CMI stimulus, else ''."""
-    data = _parse_env_data(env)
-    if not isinstance(data, dict):
-        return ""
-    data_type = data.get("type", "")
-    if not isinstance(data_type, str) or not data_type.startswith("CMI_"):
-        return ""
-    chan_id = data.get("channel_id", "?")
-    event = data.get("event", "")
-    if data_type == "CMI_CONTROL":
-        return f"  [cmi:{chan_id}] ← control:{event}"
-    if data_type == "CMI_MSG_GENERAL":
-        sender = data.get("from", "?")
-        return f"  [cmi:{chan_id}] ← msg from {sender[:16]}"
-    if data_type == "CMI_MSG_PEER":
-        sender = data.get("from", "?")
-        return f"  [cmi:{chan_id}] ← peer from {sender[:16]}"
-    if data_type == "CMI_MSG_BB":
-        seq = data.get("seq", "?")
-        return f"  [cmi:{chan_id}] ← bb[{seq}]"
-    return f"  [cmi:{chan_id}] ← {data_type}"
-
-
-def _cmi_send_indicator(params: dict[str, Any], result: dict[str, Any]) -> None:
-    """Print a dim operator-facing line when the CPE sends a CMI message."""
-    chan_id = params.get("chan_id", "?")
-    msg_type = params.get("type", "?")
-    if result.get("status") == "sent":
-        print(f"{_DIM}  [cmi:{chan_id}] → {msg_type}{_RESET}")
-    else:
-        err = result.get("error", "failed")
-        print(f"{_DIM}  [cmi:{chan_id}] → {msg_type} (error: {err}){_RESET}")
-
-
-def _envelope_to_text(env: dict[str, Any]) -> str:
-    """Extract displayable text from an ACP envelope for chat history injection."""
-    data = _parse_env_data(env)
-
-    # CMI stimuli are wrapped in ACP (source=cmi) — data.type starts with CMI_
-    if isinstance(data, dict):
-        data_type = data.get("type", "")
-        if isinstance(data_type, str) and data_type.startswith("CMI_"):
-            return _format_cmi_stimulus(data)
-        if data_type in _SYSTEM_TYPES:
-            return ""
-        return json.dumps(data, ensure_ascii=False)
-    if isinstance(data, str):
-        return data.strip()
-    return json.dumps(data, ensure_ascii=False)
-
-
-# ---------------------------------------------------------------------------
-# Tool dispatch  §6.2
-# ---------------------------------------------------------------------------
-
-def dispatch_tool_use(
-    layout: Layout,
-    call: Any,
-    index: dict[str, Any],
-) -> tuple[dict[str, Any], bool]:
-    """Dispatch a single tool_use call. Returns (result_dict, session_closed)."""
-    tool = call.tool
-    inp = call.input if isinstance(call.input, dict) else {}
-
-    # Some models (e.g. Ollama/llama) wrap the action as a JSON string under "action".
-    if "action" in inp and isinstance(inp["action"], str) and len(inp) == 1:
-        try:
-            inp = json.loads(inp["action"])
-        except json.JSONDecodeError:
-            # Not JSON — use raw action string as-is
-            pass
-        except Exception as e:
-            _vlog("fcp", f"tool input action parse error ({e}) — using raw action")
-
-    # --- MIL tools ---
-    if tool in ("memory_recall", "memory_write", "result_recall", "closure_payload"):
-        action = dict(inp)
-        action["type"] = tool
-        return _dispatch_mil(layout, action)
-
-    # --- CMI tools ---
-    if tool in ("cmi_send", "cmi_req"):
-        return _dispatch_cmi(layout, tool, inp)
-
-    # --- SIL tools ---
-    if tool in ("session_close", "evolution_proposal"):
-        action = dict(inp)
-        action["type"] = tool
-        return _dispatch_sil(layout, action)
-
-    # --- skill_info ---
-    if tool == "skill_info":
-        skill_name = str(inp.get("skill", ""))
-        return _skill_info(layout, skill_name, index), False
-
-    # --- skills by name ---
-    skill_names = {s.get("name") for s in index.get("skills", [])}
-    if tool in skill_names:
-        exec_inp = {"type": "skill_request", "skill": tool, "params": inp}
-        return _dispatch_exec(layout, exec_inp, index)
-
-    # --- legacy fcp_* names (backwards compat during transition) ---
-    if tool == "fcp_mil":
-        return _dispatch_mil(layout, inp)
-    if tool == "fcp_exec":
-        return _dispatch_exec(layout, inp, index)
-    if tool == "fcp_sil":
-        return _dispatch_sil(layout, inp)
-
-    return {"error": f"unknown tool: {tool}"}, False
-
-
-def _dispatch_cmi(
-    layout: Layout, tool: str, params: dict[str, Any]
-) -> tuple[dict[str, Any], bool]:
-    """Dispatch CMI tools (cmi_send, cmi_req) to the CMI component."""
-    from .cmi.dispatch import dispatch_send, dispatch_req
-    if tool == "cmi_send":
-        result = dispatch_send(layout, params)
-    else:
-        result = dispatch_req(layout, params)
-    return result, False
-
-
-def _dispatch_mil(
-    layout: Layout, inp: dict[str, Any]
-) -> tuple[dict[str, Any], bool]:
-    """Dispatch Memory Interface Layer (MIL) actions.
-
-    Handles memory operations: recall (episodic/semantic), write, and closure.
-
-    Args:
-        layout: Entity store layout for memory access.
-        inp: Single action dict or list of actions with type field.
-
-    Returns:
-        Tuple of (results_dict, session_closed) where results_dict contains
-        outcome of each action (ok, conflict, error).
-    """
-    actions: list[Any] = inp if isinstance(inp, list) else [inp]
-    results: list[dict[str, Any]] = []
-    for action in actions:
-        atype = action.get("type", "")
-        if atype == "memory_recall":
-            raw_path = action.get("path") or ""
-            result = memory_recall(layout, str(action.get("query", "")),
-                                   str(raw_path) if raw_path else "")
-            results.append({"type": "memory_recall", "result": result})
-        elif atype == "result_recall":
-            ts = int(action.get("ts", 0))
-            result = result_recall(layout, ts)
-            results.append({"type": "result_recall", "result": result})
-        elif atype == "memory_write":
-            slug = str(action.get("slug", "")).strip()
-            content = str(action.get("content", ""))
-            overwrite = bool(action.get("overwrite", False))
-            if not slug:
-                results.append({"type": "memory_write", "status": "error", "message": "slug is required and must not be empty."})
-            else:
-                outcome = write_episodic(layout, slug, content, overwrite=overwrite)
-                if isinstance(outcome, dict):
-                    results.append({
-                        "type": "memory_write",
-                        "status": "conflict",
-                        "slug": slug,
-                        "existing_content": outcome["existing_content"],
-                        "message": "A memory with this slug already exists. Call memory_write again with overwrite=true to replace it, or use a different slug.",
-                    })
-                else:
-                    results.append({"type": "memory_write", "status": "ok"})
-        elif atype == "closure_payload":
-            payload = {k: v for k, v in action.items() if k != "type"}
-            atomic_write(layout.pending_closure, payload)
-            results.append({"type": "closure_payload", "status": "acknowledged"})
-        else:
-            results.append({"type": atype, "error": "unknown mil action"})
-    return {"results": results}, False
-
-
-def _dispatch_exec(
-    layout: Layout,
-    inp: dict[str, Any],
-    index: dict[str, Any],
-) -> tuple[dict[str, Any], bool]:
-    """Dispatch Execution Interface (skill requests).
-
-    Handles skill execution via exec_ module with error recovery.
-
-    Args:
-        layout: Entity store layout for skill execution context.
-        inp: Single action dict or list of actions with type="skill_request".
-        index: Skill index for skill discovery and invocation.
-
-    Returns:
-        Tuple of (results_dict, session_closed) where results_dict contains
-        skill output or error details.
-    """
-    from .exec_ import dispatch, ExecError, SkillRejected
-    actions: list[Any] = inp if isinstance(inp, list) else [inp]
-    results: list[dict[str, Any]] = []
-    for action in actions:
-        atype = action.get("type", "")
-        if atype == "skill_request":
-            skill_name = str(action.get("skill", ""))
-            params = action.get("params", {})
-            # Some models serialize params as a JSON string instead of an object.
-            if isinstance(params, str):
-                try:
-                    params = json.loads(params)
-                except json.JSONDecodeError:
-                    _vlog("fcp", f"skill params not valid JSON, using empty dict")
-                    params = {}
-                except Exception as e:
-                    _vlog("fcp", f"skill params parse error ({e}), using empty dict")
-                    params = {}
-            if not isinstance(params, dict):
-                params = {}
-            try:
-                output = dispatch(layout, skill_name, params, index)
-                results.append({"type": "skill_request", "skill": skill_name,
-                                 "status": "dispatched", "output": output})
-            except (SkillRejected, ExecError) as exc:
-                results.append({"type": "skill_request", "skill": skill_name,
-                                 "error": str(exc)})
-        elif atype == "skill_info":
-            skill_name = str(action.get("skill", ""))
-            results.append(_skill_info(layout, skill_name, index))
-        else:
-            results.append({"type": atype, "error": "unknown exec action"})
-    return {"results": results}, False
-
-
-def _dispatch_sil(
-    layout: Layout, inp: dict[str, Any]
-) -> tuple[dict[str, Any], bool]:
-    """Dispatch System Interface Layer (SIL) actions.
-
-    Handles system-level operations: evolution proposals, runtime directives.
-
-    Args:
-        layout: Entity store layout for system state access.
-        inp: Single action dict or list of actions with type="evolution_proposal".
-
-    Returns:
-        Tuple of (results_dict, session_closed) where session_closed indicates
-        if CPE triggered session close via evolution.
-    """
-    actions: list[Any] = inp if isinstance(inp, list) else [inp]
-    results: list[dict[str, Any]] = []
-    session_closed = False
-    for action in actions:
-        atype = action.get("type", "")
-        if atype == "evolution_proposal":
-            payload = {k: v for k, v in action.items() if k != "type"}
-            content = json.dumps(payload)
-            proposal_file = _stage_evolution_proposal(layout, content)
-            # Auto-approve for Evolve with autonomous_evolution=True
-            try:
-                baseline = load_baseline(layout)
-                profile = baseline.get("profile", "haca-core")
-                autonomous = (
-                    profile == "haca-evolve"
-                    and baseline.get("evolve", {}).get("scope", {}).get("autonomous_evolution", False)
-                )
-            except FileNotFoundError:
-                _vlog("fcp", "baseline not found — autonomous evolution disabled")
-                autonomous = False
-            except Exception as e:
-                _vlog("fcp", f"baseline load error ({e}) — autonomous evolution disabled")
-                autonomous = False
-            if autonomous:
-                auth_digest = _sha256_str(content)
-                _write_evolution_auth(layout, content, auth_digest)
-                _write_evolution_stimuli(layout, payload.get("description", content), approved=True)
-                proposal_file.unlink(missing_ok=True)
-                _set_endure_approved(True)
-                results.append({"type": "evolution_proposal", "status": "auto_approved"})
-                session_closed = True
-            else:
-                results.append({"type": "evolution_proposal", "status": "queued"})
-        elif atype == "session_close":
-            session_closed = True
-            results.append({"type": "session_close", "status": "acknowledged"})
-        else:
-            results.append({"type": atype, "error": "unknown sil action"})
-    return {"results": results}, session_closed
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _skill_info(
-    layout: Layout, skill_name: str, index: dict[str, Any]
-) -> dict[str, Any]:
-    """Return the manifest JSON of a skill, or an error."""
-    for entry in index.get("skills", []):
-        if entry.get("name") == skill_name:
-            rel = entry.get("manifest", "")
-            if rel:
-                mpath = layout.root / rel
-                if mpath.exists():
-                    return {"type": "skill_info", "skill": skill_name,
-                            "content": mpath.read_text(encoding="utf-8")}
-            return {"type": "skill_info", "skill": skill_name, "error": "no manifest path"}
-    return {"type": "skill_info", "skill": skill_name, "error": "skill not in index"}
+_format_cmi_stimulus = _cmi_fmt.format_cmi_stimulus
+_parse_env_data      = _cmi_fmt.parse_env_data
+_cmi_indicator       = _cmi_fmt.cmi_indicator
+_cmi_send_indicator  = _cmi_fmt.cmi_send_indicator
+_envelope_to_text    = _cmi_fmt.envelope_to_text
 
 
 def _rebuild_compact_history(
@@ -1245,161 +858,19 @@ def _session_byte_size(layout: Layout) -> int:
     return layout.session_store.stat().st_size
 
 
-def build_boot_stats(
-    layout: Layout,
-    index: dict[str, Any],
-    system: str,
-    chat_history: list[dict[str, Any]],
-    tools: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Collect stats for the boot header printed before session starts."""
-    # context % — estimate tokens as chars / 4
-    total_chars = len(system) + sum(len(str(m.get("content", ""))) for m in chat_history)
-    total_tokens = total_chars // 4
-    baseline = load_baseline(layout)
-    ctx_window = baseline.get("context_window", {}).get("budget_tokens", 0)
-    ctx_pct = round(total_tokens / ctx_window * 100, 1) if ctx_window else None
-
-    # sessions — count SLEEP_COMPLETE entries in integrity.log
-    sessions = 0
-    if layout.integrity_log.exists():
-        for line in layout.integrity_log.read_text(encoding="utf-8").splitlines():
-            try:
-                rec = json.loads(line)
-                raw = rec.get("data", "{}")
-                d = json.loads(raw) if isinstance(raw, str) else raw
-                if isinstance(d, dict) and d.get("type") == "SLEEP_COMPLETE":
-                    sessions = sessions + 1
-            except json.JSONDecodeError:
-                # Malformed line in log — skip
-                pass
-            except Exception as e:
-                _vlog("fcp", f"integrity log parse error ({e}) — skipping line")
-
-    # cycles — count ENDURE_COMMIT entries in integrity_chain.jsonl
-    cycles = 0
-    if layout.integrity_chain.exists():
-        for line in layout.integrity_chain.read_text(encoding="utf-8").splitlines():
-            try:
-                rec = json.loads(line)
-                if rec.get("type") == "ENDURE_COMMIT":
-                    cycles = cycles + 1
-            except json.JSONDecodeError:
-                # Malformed line in chain — skip
-                pass
-            except Exception as e:
-                _vlog("fcp", f"integrity chain parse error ({e}) — skipping line")
-
-    # memories — episodic + semantic files
-    memories = 0
-    for d in (layout.episodic_dir, layout.semantic_dir):
-        if d.exists():
-            memories += sum(1 for f in d.rglob("*") if f.is_file())
-
-    # evolutions — authorized vs total EVOLUTION_AUTH
-    evolutions_auth = 0
-    evolutions_total = 0
-    if layout.integrity_log.exists():
-        for line in layout.integrity_log.read_text(encoding="utf-8").splitlines():
-            try:
-                rec = json.loads(line)
-                raw = rec.get("data", "{}")
-                d = json.loads(raw) if isinstance(raw, str) else raw
-                if isinstance(d, dict) and d.get("type") == "EVOLUTION_AUTH":
-                    evolutions_total = evolutions_total + 1
-                    evolutions_auth = evolutions_auth + 1
-                elif isinstance(d, dict) and d.get("type") == "ENDURE_COMMIT":
-                    evolutions_total = evolutions_total + 1
-            except json.JSONDecodeError:
-                # Malformed line in log — skip
-                pass
-            except Exception as e:
-                _vlog("fcp", f"evolution stats parse error ({e}) — skipping line")
-
-    # skills and tools
-    n_skills = len(index.get("skills", []))
-    n_tools = len(tools)
-
-    # notifications
-    n_notif = 0
-    if layout.operator_notifications_dir.exists():
-        n_notif = sum(
-            1 for f in layout.operator_notifications_dir.iterdir()
-            if f.suffix == ".json" and not f.name.endswith(".tmp")
-        )
-
-    return {
-        "ctx_tokens": total_tokens,
-        "ctx_pct": ctx_pct,
-        "sessions": sessions,
-        "cycles": cycles,
-        "memories": memories,
-        "evolutions_auth": evolutions_auth,
-        "evolutions_total": evolutions_total,
-        "skills": n_skills,
-        "tools": n_tools,
-        "notifications": n_notif,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Verbose logging helpers
 # ---------------------------------------------------------------------------
 
-_DIM = ui.DIM
+# Pure display helpers live in ui — import aliases for local use
+_DIM  = ui.DIM
 _RESET = ui.RESET
-_GRAY = ui.GRAY
-
-
-_WIDTH = 50
-
-
-def _print_cpe_block(
-    text: str,
-    model: str = "",
-    input_tokens: int = 0,
-    output_tokens: int = 0,
-    ctx_window: int = 0,
-) -> None:
-    """Print a CPE response with top and bottom separator lines."""
-    label = f"CPE:{model}" if model else "CPE"
-    border = "─" * max(0, _WIDTH - len(label) - 3)
-    print(f"\n{_GRAY}─── {label} {border}{_RESET}")
-    print(text)
-    stats = f"{input_tokens:,} ↑ / {output_tokens:,} ↓"
-    if ctx_window:
-        pct = round(input_tokens / ctx_window * 100, 1)
-        stats += f" | ctx: {pct}%"
-    footer_border = "─" * max(0, _WIDTH - len(stats) - 3)
-    print(f"{_GRAY}─── {stats} {footer_border}{_RESET}")
-
-
-
-def _vprint(text: str) -> None:
-    """Print verbose text in dim style."""
-    print(f"{_DIM}{text}{_RESET}")
-
-
-def _format_bytes(num_bytes: int) -> str:
-    """Format bytes in human-readable form (234B, 1.2KB, 2.3MB)."""
-    if num_bytes < 1024:
-        return f"{num_bytes}B"
-    elif num_bytes < 1024 * 1024:
-        return f"{num_bytes / 1024:.1f}KB"
-    else:
-        return f"{num_bytes / (1024 * 1024):.1f}MB"
-
-
-def _compact_json(data: Any, max_len: int = 150) -> str:
-    """Format data as compact JSON, truncating if too long.
-
-    Useful for inline logging in verbose mode.
-    Truncates long strings and shows ... if output exceeds max_len.
-    """
-    j = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
-    if len(j) > max_len:
-        return j[:max_len] + "...}"
-    return j
+_GRAY  = ui.GRAY
+_print_cpe_block      = ui.print_cpe_block
+_vprint               = ui.vprint
+_format_bytes         = ui.format_bytes
+_compact_json         = ui.compact_json
+_readline_with_history = ui.readline_with_history
 
 
 def _vlog(actor: str, msg: str) -> None:
@@ -1483,14 +954,12 @@ def _vlog_cycle_summary(
             prefix = "  │  └─" if is_last else "  │  ├─"
 
             if verbose:
-                # Verbose mode: show tool name + input/output JSONs
                 print(f"{_DIM}{prefix} {tool}{_RESET}")
                 input_json = _compact_json(tool_info["input"])
                 output_json = _compact_json(tool_info["output"])
                 print(f"{_DIM}{prefix[:-2]}│  ├─ input: {input_json}{_RESET}")
                 print(f"{_DIM}{prefix[:-2]}│  └─ output: {output_json}{_RESET}")
             else:
-                # Compact mode: tool name + sizes
                 print(f"{_DIM}{prefix} {tool} ... input ({input_size}) → {status} ({result_size}{timing_str}){_RESET}")
 
     # CPE response line — ALWAYS show
@@ -1499,10 +968,9 @@ def _vlog_cycle_summary(
         preview = response.text[:50].replace("\n", " ")
         print(f"{_DIM}     └─ text: {preview!r} ({len(response.text)} chars){_RESET}")
 
-    # Add blank line for visual separation between tree and next input prompt
     print()
 
-    # Debugger mode — show original detailed format
+    # Debugger mode
     if dbg and not verbose:
         print(f"{_DIM}[cpe→fcp] response{_RESET}")
         print(f"{_DIM}  stop_reason  : {response.stop_reason}{_RESET}")
@@ -1513,272 +981,3 @@ def _vlog_cycle_summary(
         for call in response.tool_use_calls:
             print(f"{_DIM}  tool_use     : {call.tool} (id={call.id}){_RESET}")
 
-
-def _readline_with_history(prompt: str) -> str:
-    """Read a line with up/down arrow history via readline if available."""
-    try:
-        import readline as _rl  # noqa: F401 — side-effect: enables arrow keys
-    except ImportError:
-        pass
-    return input(prompt)
-
-
-def _stage_evolution_proposal(layout: Layout, content: str) -> Path:
-    ts = int(time.time() * 1000)
-    envelope = acp_encode(
-        env_type="MSG",
-        source="sil",
-        data={"type": "PROPOSAL_PENDING", "content": content, "ts": ts},
-    )
-    dest = layout.operator_notifications_dir / f"{ts}_proposal_pending.json"
-    tmp = dest.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
-    os.replace(tmp, dest)
-    return dest
-
-
-def _build_tools_index(layout: Layout, index: dict[str, Any]) -> str:
-    """Build a compact alphabetical tools reference injected into the boot instruction block.
-
-    Lists every tool available to the CPE: system tools (hardcoded) plus skills
-    from the index (class != 'operator'). Required params marked with *.
-    """
-    # System tools: name → (description, required_params)
-    system_tools: list[tuple[str, str, list[str]]] = [
-        ("closure_payload", "record full session outcome before closing", ["consolidation", "working_memory", "session_handoff"]),
-        ("cmi_req", "read state from an active CMI channel", ["op", "chan_id"]),
-        ("cmi_send", "send a message to an active CMI channel", ["chan_id", "type", "content"]),
-        ("evolution_proposal", "propose structural change to entity (persona, skills, configs, scheduled tasks)", ["description", "changes"]),
-        ("memory_recall", "retrieve context from memory", ["query"]),
-        ("memory_write", "persist information across sessions", ["slug", "content"]),
-        ("result_recall", "retrieve truncated tool result by timestamp", ["ts"]),
-        ("session_close", "signal session complete", []),
-        ("skill_info", "get full documentation for a skill", ["skill"]),
-    ]
-
-    entries: list[tuple[str, str, list[str]]] = list(system_tools)
-
-    # Skills from index
-    if layout.skills_index.exists():
-        idx = index if index else read_json(layout.skills_index)
-        for skill in idx.get("skills", []):
-            if skill.get("class") == "operator":
-                continue
-            name = skill.get("name", "")
-            if not name:
-                continue
-            mrel = skill.get("manifest", "")
-            manifest: dict[str, Any] = {}
-            if mrel:
-                mpath = layout.root / mrel
-                if mpath.exists():
-                    try:
-                        manifest = read_json(mpath)
-                    except Exception:
-                        pass
-            description = manifest.get("description", f"Skill: {name}")
-            params_schema = manifest.get("params", {})
-            required: list[str] = params_schema.get("required", []) if isinstance(params_schema, dict) else []
-            entries.append((name, description, required))
-
-    entries.sort(key=lambda e: e[0])
-
-    lines: list[str] = ["## Tools\n"]
-    for name, desc, required in entries:
-        params_str = ", ".join(f"{p} (required)" for p in required) if required else "none"
-        lines.append(f"{name} — {desc}. params: {params_str}")
-
-    return "\n".join(lines)
-
-
-def _tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[str, Any]]:
-    """Build the tool declarations sent to the CPE each cycle.
-
-    Generates one tool per visible skill (class != 'operator') plus fixed
-    system tools for memory, session control, and skill documentation.
-    """
-    tools: list[dict[str, Any]] = []
-
-    # --- CMI tools ---
-    tools.append({
-        "name": "cmi_send",
-        "description": "Send a message to an active CMI channel. Routes through the local CMI endpoint declared in the structural baseline.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "chan_id": {"type": "string", "description": "Channel identifier (e.g. chan_<uuid>)."},
-                "type": {"type": "string", "enum": ["general", "peer", "bb"], "description": "Message type: 'general' (broadcast to all), 'peer' (directed, visible to all), 'bb' (Blackboard contribution, durable)."},
-                "content": {"type": "string", "description": "Message content."},
-                "to": {"type": "string", "description": "Target Node Identity for 'peer' messages. Required when type is 'peer'."},
-            },
-            "required": ["chan_id", "type", "content"],
-        },
-    })
-    tools.append({
-        "name": "cmi_req",
-        "description": "Read state from an active CMI channel. 'bb' returns all Blackboard entries; 'status' returns channel status and enrolled participants.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "op": {"type": "string", "enum": ["bb", "status"], "description": "Operation: 'bb' to read the Blackboard, 'status' to get channel status and participants."},
-                "chan_id": {"type": "string", "description": "Channel identifier (e.g. chan_<uuid>)."},
-            },
-            "required": ["op", "chan_id"],
-        },
-    })
-
-    # --- memory tools ---
-    tools.append({
-        "name": "memory_recall",
-        "description": "Retrieve context from memory before acting on requests that depend on prior sessions.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "What to look for in memory."},
-                "path": {"type": "string", "description": "Optional: restrict recall to a specific memory file path."},
-            },
-            "required": ["query"],
-        },
-    })
-    tools.append({
-        "name": "memory_write",
-        "description": "Persist information that should survive across sessions.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "slug": {"type": "string", "description": "Short, stable, kebab-case identifier."},
-                "content": {"type": "string", "description": "Content to persist."},
-                "overwrite": {"type": "boolean", "description": "Set to true to overwrite an existing memory with this slug. If false (default) and the slug exists, the write is rejected and the existing content is returned for review."},
-            },
-            "required": ["slug", "content"],
-        },
-    })
-
-    tools.append({
-        "name": "result_recall",
-        "description": "Retrieve the full payload of a truncated tool result from a previous cycle, by its timestamp.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "ts": {"type": "integer", "description": "The _ts_ms timestamp embedded in the truncated tool result."},
-            },
-            "required": ["ts"],
-        },
-    })
-
-    # --- session control tools ---
-    tools.append({
-        "name": "session_close",
-        "description": (
-            "Signal that the session is complete. Always call closure_payload "
-            "first to record the session outcome, then call this tool."
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-    })
-    tools.append({
-        "name": "closure_payload",
-        "description": (
-            "Record the full session outcome before closing. Call this immediately before session_close. "
-            "Fields: consolidation (required), promotion (list of slugs), working_memory (list of {priority, path}), "
-            "session_handoff ({pending_tasks, next_steps})."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "consolidation": {"type": "string", "description": "Narrative summary of insights and decisions from this session."},
-                "promotion": {"type": "array", "items": {"type": "string"}, "description": "Slugs of episodic memories to promote to semantic knowledge."},
-                "working_memory": {
-                    "type": "array",
-                    "items": {"type": "object"},
-                    "description": "Artefacts to load at the next session, ordered by priority.",
-                },
-                "session_handoff": {
-                    "type": "object",
-                    "description": "Pending tasks and next steps for the following session.",
-                },
-            },
-            "required": ["consolidation", "working_memory", "session_handoff"],
-        },
-    })
-    tools.append({
-        "name": "evolution_proposal",
-        "description": (
-            "Propose a structural change to the Entity Store. "
-            "To install a custom skill: use skill_install op with the skill name (must be staged in workspace/stage/<name>/ and validated with skill_audit first). "
-            "For other structural changes (persona files, configs): use json_merge, file_write, or file_delete ops. "
-            "To propose a scheduled task: use cron_add op. "
-            "Requires explicit Operator approval before taking effect."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "description": {"type": "string", "description": "Human-readable summary of the proposed change."},
-                "changes": {
-                    "type": "array",
-                    "description": "List of structural changes to apply to the Entity Store.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "op": {
-                                "type": "string",
-                                "enum": ["json_merge", "file_write", "file_delete", "skill_install", "cron_add"],
-                                "description": "Operation: json_merge (partial update to a JSON file), file_write (create/replace a file), file_delete (remove a file), skill_install (promote a staged skill from workspace/stage/<name>/ to skills/<name>/ — use this to install custom skills, never file_write), cron_add (propose a new scheduled task).",
-                            },
-                            "target": {"type": "string", "description": "Path relative to entity root. Required for json_merge, file_write, file_delete. Not used for skill_install or cron_add."},
-                            "name": {"type": "string", "description": "For skill_install: the skill name as it appears in workspace/stage/<name>/."},
-                            "patch": {"type": "object", "description": "For json_merge: the fields to merge into the target JSON."},
-                            "content": {"type": "string", "description": "For file_write: the full file content to write."},
-                            "task": {"type": "string", "description": "For cron_add: clear, verifiable instruction the entity will execute when the schedule fires."},
-                            "schedule": {"type": "string", "description": "For cron_add: cron expression (e.g. '0 9 * * 1-5')."},
-                            "executor": {"type": "string", "enum": ["worker", "cpe"], "description": "For cron_add: 'worker' for read-only analysis tasks, 'cpe' for tasks that may write memory or call tools."},
-                            "tools": {"type": "string", "description": "For cron_add: comma-separated list of skills/tools the task may use (leave empty if none)."},
-                        },
-                        "required": ["op"],
-                    },
-                },
-            },
-            "required": ["description", "changes"],
-        },
-    })
-
-    # --- skill_info ---
-    tools.append({
-        "name": "skill_info",
-        "description": "Retrieve the full documentation of a skill, including parameters and usage details.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "skill": {"type": "string", "description": "Name of the skill to inspect."},
-            },
-            "required": ["skill"],
-        },
-    })
-
-    # --- one tool per visible skill ---
-    if layout.skills_index.exists():
-        idx = index if index else read_json(layout.skills_index)
-        for skill in idx.get("skills", []):
-            if skill.get("class") == "operator":
-                continue
-            name = skill.get("name", "")
-            if not name:
-                continue
-            # load manifest for description and params schema
-            mrel = skill.get("manifest", "")
-            manifest: dict[str, Any] = {}
-            if mrel:
-                mpath = layout.root / mrel
-                if mpath.exists():
-                    try:
-                        manifest = read_json(mpath)
-                    except Exception:
-                        pass
-            description = manifest.get("description", f"Skill: {name}")
-            params_schema = manifest.get("params", {"type": "object", "properties": {}})
-            tools.append({
-                "name": name,
-                "description": description,
-                "input_schema": params_schema,
-            })
-
-    return tools

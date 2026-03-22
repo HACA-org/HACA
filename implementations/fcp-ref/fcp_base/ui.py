@@ -207,3 +207,65 @@ def pick_many(
 
     print()
     return states
+
+
+# ---------------------------------------------------------------------------
+# Session cycle display — verbose logging helpers
+# ---------------------------------------------------------------------------
+
+import json as _json
+from typing import Any as _Any
+
+_WIDTH = 50
+
+
+def print_cpe_block(
+    text: str,
+    model: str = "",
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    ctx_window: int = 0,
+) -> None:
+    """Print a CPE response with top and bottom separator lines."""
+    label = f"CPE:{model}" if model else "CPE"
+    border = "─" * max(0, _WIDTH - len(label) - 3)
+    print(f"\n{GRAY}─── {label} {border}{RESET}")
+    print(text)
+    stats = f"{input_tokens:,} ↑ / {output_tokens:,} ↓"
+    if ctx_window:
+        pct = round(input_tokens / ctx_window * 100, 1)
+        stats += f" | ctx: {pct}%"
+    footer_border = "─" * max(0, _WIDTH - len(stats) - 3)
+    print(f"{GRAY}─── {stats} {footer_border}{RESET}")
+
+
+def vprint(text: str) -> None:
+    """Print verbose text in dim style."""
+    print(f"{DIM}{text}{RESET}")
+
+
+def format_bytes(num_bytes: int) -> str:
+    """Format bytes in human-readable form (234B, 1.2KB, 2.3MB)."""
+    if num_bytes < 1024:
+        return f"{num_bytes}B"
+    elif num_bytes < 1024 * 1024:
+        return f"{num_bytes / 1024:.1f}KB"
+    else:
+        return f"{num_bytes / (1024 * 1024):.1f}MB"
+
+
+def compact_json(data: _Any, max_len: int = 150) -> str:
+    """Format data as compact JSON, truncated to max_len chars."""
+    j = _json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+    if len(j) > max_len:
+        return j[:max_len] + "...}"
+    return j
+
+
+def readline_with_history(prompt: str) -> str:
+    """Read a line with up/down arrow history via readline if available."""
+    try:
+        import readline as _rl  # noqa: F401 — side-effect: enables arrow keys
+    except ImportError:
+        pass
+    return input(prompt)

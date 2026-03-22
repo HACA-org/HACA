@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -506,3 +507,22 @@ def operator_channel_available(layout: Layout) -> tuple[bool, bool]:
     terminal_ok = sys.stdin.isatty()
 
     return notif_ok, terminal_ok
+
+
+# ---------------------------------------------------------------------------
+# §10.5 — Evolution proposal staging
+# ---------------------------------------------------------------------------
+
+def stage_evolution_proposal(layout: Layout, content: str) -> Path:
+    """Write a PROPOSAL_PENDING notification and return its path."""
+    ts = int(time.time() * 1000)
+    envelope = _acp_make(
+        env_type="MSG",
+        source="sil",
+        data={"type": "PROPOSAL_PENDING", "content": content, "ts": ts},
+    )
+    dest = layout.operator_notifications_dir / f"{ts}_proposal_pending.json"
+    tmp = dest.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+    os.replace(tmp, dest)
+    return dest

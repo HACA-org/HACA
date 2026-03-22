@@ -118,6 +118,18 @@ class TestWebFetchAllowlist(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["content"], "hello world")
 
+    def test_url_without_trailing_slash_matches_prefix(self):
+        """https://example.com (no slash) must match allowlist prefix https://example.com/."""
+        self.tmp = _make_entity(allowlist=["https://example.com/"])
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"hello"
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = _run_skill(self.tmp, {"url": "https://example.com"})
+        self.assertEqual(result["status"], "ok")
+
     def test_multiple_prefixes_any_match_allowed(self):
         self.tmp = _make_entity(allowlist=["https://a.com/", "https://b.com/"])
         mock_resp = MagicMock()

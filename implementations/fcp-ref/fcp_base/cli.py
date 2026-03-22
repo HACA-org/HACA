@@ -19,15 +19,97 @@ import sys
 import time
 from pathlib import Path
 
+import logging
+
 from .store import (
     API_KEY_ENV,
     Layout,
     atomic_write,
     load_env_file,
+    load_baseline,
     read_json,
     save_api_key,
 )
 from . import ui
+
+_log = logging.getLogger(__name__)
+
+
+def _build_boot_stats(
+    layout: Layout,
+    index: dict,
+    system: str,
+    chat_history: list,
+    tools: list,
+) -> dict:
+    """Collect stats for the boot header.  Scans integrity.log once."""
+    total_chars = len(system) + sum(len(str(m.get("content", ""))) for m in chat_history)
+    total_tokens = total_chars // 4
+    baseline = load_baseline(layout)
+    ctx_window = baseline.get("context_window", {}).get("budget_tokens", 0)
+    ctx_pct = round(total_tokens / ctx_window * 100, 1) if ctx_window else None
+
+    # single pass over integrity.log
+    sessions = 0
+    evolutions_auth = 0
+    evolutions_total = 0
+    if layout.integrity_log.exists():
+        for line in layout.integrity_log.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+                raw = rec.get("data", "{}")
+                d = json.loads(raw) if isinstance(raw, str) else raw
+                if not isinstance(d, dict):
+                    continue
+                t = d.get("type")
+                if t == "SLEEP_COMPLETE":
+                    sessions += 1
+                elif t == "EVOLUTION_AUTH":
+                    evolutions_total += 1
+                    evolutions_auth += 1
+                elif t == "ENDURE_COMMIT":
+                    evolutions_total += 1
+            except json.JSONDecodeError:
+                pass
+            except Exception as e:
+                _log.debug("integrity log parse error: %s", e)
+
+    cycles = 0
+    if layout.integrity_chain.exists():
+        for line in layout.integrity_chain.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+                if rec.get("type") == "ENDURE_COMMIT":
+                    cycles += 1
+            except json.JSONDecodeError:
+                pass
+            except Exception as e:
+                _log.debug("integrity chain parse error: %s", e)
+
+    memories = 0
+    for d in (layout.episodic_dir, layout.semantic_dir):
+        if d.exists():
+            memories += sum(1 for f in d.rglob("*") if f.is_file())
+
+    n_notif = 0
+    if layout.operator_notifications_dir.exists():
+        n_notif = sum(
+            1 for f in layout.operator_notifications_dir.iterdir()
+            if f.suffix == ".json" and not f.name.endswith(".tmp")
+        )
+
+    return {
+        "ctx_tokens": total_tokens,
+        "ctx_pct": ctx_pct,
+        "sessions": sessions,
+        "cycles": cycles,
+        "memories": memories,
+        "evolutions_auth": evolutions_auth,
+        "evolutions_total": evolutions_total,
+        "skills": len(index.get("skills", [])),
+        "tools": len(tools),
+        "notifications": n_notif,
+    }
 
 
 def _require_entity_root(entity_root: Path) -> None:
@@ -305,7 +387,7 @@ def _run_auto(layout: "Layout", cron_id: str) -> None:
     from .boot import run as boot_run, BootError
     from .cpe.base import make_adapter
     from .fap import FAPError
-    from .session import set_session_mode, SessionMode
+    from .session_mode import set_session_mode, SessionMode
     from .sleep import run_sleep_cycle
     from .store import read_json
     from .sil import write_notification
@@ -390,7 +472,7 @@ def _run_auto(layout: "Layout", cron_id: str) -> None:
 def _run_auto_worker(layout: "Layout", task: dict, wake_up_message: str) -> None:
     """Run a worker_skill task directly without a CPE session."""
     import json
-    from .session import set_session_mode, SessionMode
+    from .session_mode import set_session_mode, SessionMode
     from .store import atomic_write, read_json
     from .sil import write_notification
     from .exec_ import dispatch
@@ -1446,12 +1528,12 @@ def _print_block(label: str, lines: list, color: str = "\x1b[96m") -> None:
 
 
 def _print_boot_header(layout: "Layout", index: dict) -> None:
-    from .session import build_boot_context, build_boot_stats, _tool_declarations
-    from .store import read_json
+    from .session import build_boot_context
+    from .tools import build_tool_declarations as _tool_declarations
 
     system, chat_history = build_boot_context(layout, index)
     tools = _tool_declarations(layout, index)
-    s = build_boot_stats(layout, index, system, chat_history, tools)
+    s = _build_boot_stats(layout, index, system, chat_history, tools)
 
     ctx_str = f"{s['ctx_pct']}%" if s["ctx_pct"] is not None else "?%"
     evol_str = f"{s['evolutions_auth']}/{s['evolutions_total']}"

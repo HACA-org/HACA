@@ -37,16 +37,26 @@ def main() -> None:
         allowlist = [str(a) for a in manifest.get("allowlist", [])]
         max_bytes = int(manifest.get("max_bytes", _DEFAULT_MAX_BYTES))
 
+    # Normalise: ensure URL has a trailing slash after the host when there is no path,
+    # so that "https://example.com" and "https://example.com/" match the same prefix.
+    try:
+        from urllib.parse import urlparse as _up
+        _p = _up(url)
+        if _p.path == "":
+            url = url + "/"
+    except Exception:
+        pass
+
     # operator "allow once" bypass via env var
     allow_once = os.environ.get("FCP_WEB_FETCH_ALLOW_ONCE", "")
     if not (allow_once and allow_once == url):
         # allowlist empty = block all (secure default)
         if not allowlist:
             print(json.dumps({"error": f"URL not in allowlist: {url}"}))
-            sys.exit(1)
+            sys.exit(0)
         if not any(url.startswith(prefix) for prefix in allowlist):
             print(json.dumps({"error": f"URL not in allowlist: {url}"}))
-            sys.exit(1)
+            sys.exit(0)
 
     try:
         with urllib.request.urlopen(url, timeout=25) as resp:
