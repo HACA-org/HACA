@@ -1,7 +1,7 @@
 {
   "name": "worker_skill",
   "version": "1.0.0",
-  "description": "Sub-agent for isolated analysis tasks. Has read-only access to the workspace via file_reader.",
+  "description": "Stateless read-only sub-agent for isolated analysis tasks. Invoked by CPE, SIL (drift check), or auto/cron. Has read-only access to the workspace via file_reader only.",
   "timeout_seconds": 120,
   "background": false,
   "irreversible": false,
