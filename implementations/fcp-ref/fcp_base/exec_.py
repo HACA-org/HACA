@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .acp import make as acp_encode
+from .approval import ApprovalDecision, request_approval
 from .sil import write_notification
 from .store import Layout, append_jsonl, read_json
 from . import ui
@@ -316,7 +317,7 @@ def _maybe_prompt_shell_allowlist(
     In main:session: prompt operator to approve once/always.
     In auto:session: log to operator_notifications and return error (no interactive prompt).
 
-    - "allow once" (y): sets SHELL_RUN_ALLOW_ONCE env var for single execution
+    - "allow once" (y): sets FCP_SHELL_RUN_ALLOW_ONCE env var for single execution
     - "allow always" (a): persists command to manifest allowlist_composite
     """
     try:
@@ -330,64 +331,38 @@ def _maybe_prompt_shell_allowlist(
 
     command = str(params.get("command", "")).strip()
 
-    # In auto:session: no interactive prompt — just log and return error
-    from .session import is_auto_session
-    if is_auto_session():
-        from .sil import write_notification
-        ui.print_warn(f"[auto:session] shell_run blocked — command not in allowlist: {command!r}")
-        # Log to operator_notifications for review
-        write_notification(
-            layout,
-            severity="shell_run_blocked",
-            payload={
-                "message": "Command blocked in autonomous session (auto:session)",
-                "command": command,
-                "context": "auto:session",
-                "timestamp": time.time(),
-                "note": "Operator can approve in main:session if needed"
-            }
-        )
-        return output  # Return original error
+    decision = request_approval(
+        layout,
+        subject="shell_run",
+        detail=command,
+        prompt="Allow this command?",
+        options=("allow_once", "allow_always", "deny"),
+        notification_severity="shell_run_blocked",
+        notification_payload={
+            "message": "Command blocked in autonomous session (auto:session)",
+            "command": command,
+            "context": "auto:session",
+            "timestamp": time.time(),
+            "note": "Operator can approve in main:session if needed",
+        },
+    )
 
-    # In main:session: prompt operator interactively
-    print()
-    ui.hr("OPERATOR ACTION REQUIRED")
-    _REV = "\x1b[7m"
-    _REV_RESET = "\x1b[27m"
-    print()
-    print(f"{_REV}  [!] shell_run blocked — command not in allowlist:{_REV_RESET}")
-    print(f"{_REV}  {command!r}{_REV_RESET}")
-    print()
-    items = ["y — allow once", "a — allow always (persist)", "N — deny"]
-    try:
-        choice = ui.pick_one("Allow this command?", items, default_idx=2, indent="  ")
-        answer = choice[0].lower()
-    except (KeyboardInterrupt, EOFError):
-        answer = "n"
-
-    if answer not in ("y", "a"):
+    if decision == ApprovalDecision.DENY:
         return output
 
-    if answer == "a":
+    if decision == ApprovalDecision.ALLOW_ALWAYS:
         _shell_allowlist_add(layout, command)
-    elif answer == "y":
-        # For "allow once": pass via environment variable to bypass check
+    elif decision == ApprovalDecision.ALLOW_ONCE:
         import os as _os
-        # Re-execute with bypass flag
-        orig_params = dict(params)
-        # Will be read by shell_run/run.py
         _os.environ["FCP_SHELL_RUN_ALLOW_ONCE"] = command
         try:
-            new_output = _run_skill(layout, entry, manifest, orig_params, timeout)
-            return new_output
+            return _run_skill(layout, entry, manifest, dict(params), timeout)
         finally:
             _os.environ.pop("FCP_SHELL_RUN_ALLOW_ONCE", None)
 
     try:
-        # For "allow always": reload manifest fresh before re-executing
         new_manifest = _load_manifest(layout, entry)
-        new_output = _run_skill(layout, entry, new_manifest, params, timeout)
-        return new_output
+        return _run_skill(layout, entry, new_manifest, params, timeout)
     except Exception:
         return output
 
@@ -419,57 +394,38 @@ def _maybe_prompt_web_allowlist(
 
     url = str(params.get("url", "")).strip()
 
-    from .session import is_auto_session
-    if is_auto_session():
-        from .sil import write_notification
-        ui.print_warn(f"[auto:session] web_fetch blocked — URL not in allowlist: {url!r}")
-        write_notification(
-            layout,
-            severity="web_fetch_blocked",
-            payload={
-                "message": "URL blocked in autonomous session (auto:session)",
-                "url": url,
-                "context": "auto:session",
-                "timestamp": time.time(),
-                "note": "Operator can approve in main:session if needed",
-            },
-        )
+    decision = request_approval(
+        layout,
+        subject="web_fetch",
+        detail=url,
+        prompt="Allow this URL?",
+        options=("allow_once", "allow_always", "deny"),
+        notification_severity="web_fetch_blocked",
+        notification_payload={
+            "message": "URL blocked in autonomous session (auto:session)",
+            "url": url,
+            "context": "auto:session",
+            "timestamp": time.time(),
+            "note": "Operator can approve in main:session if needed",
+        },
+    )
+
+    if decision == ApprovalDecision.DENY:
         return output
 
-    # In main:session: prompt operator interactively
-    print()
-    ui.hr("OPERATOR ACTION REQUIRED")
-    _REV = "\x1b[7m"
-    _REV_RESET = "\x1b[27m"
-    print()
-    print(f"{_REV}  [!] web_fetch blocked — URL not in allowlist:{_REV_RESET}")
-    print(f"{_REV}  {url!r}{_REV_RESET}")
-    print()
-    items = ["y — allow once", "a — allow always (persist prefix)", "N — deny"]
-    try:
-        choice = ui.pick_one("Allow this URL?", items, default_idx=2, indent="  ")
-        answer = choice[0].lower()
-    except (KeyboardInterrupt, EOFError):
-        answer = "n"
-
-    if answer not in ("y", "a"):
-        return output
-
-    if answer == "a":
+    if decision == ApprovalDecision.ALLOW_ALWAYS:
         _web_allowlist_add(layout, url)
-    elif answer == "y":
+    elif decision == ApprovalDecision.ALLOW_ONCE:
         import os as _os
         _os.environ["FCP_WEB_FETCH_ALLOW_ONCE"] = url
         try:
-            new_output = _run_skill(layout, entry, manifest, params, timeout)
-            return new_output
+            return _run_skill(layout, entry, manifest, params, timeout)
         finally:
             _os.environ.pop("FCP_WEB_FETCH_ALLOW_ONCE", None)
 
     try:
         new_manifest = _load_manifest(layout, entry)
-        new_output = _run_skill(layout, entry, new_manifest, params, timeout)
-        return new_output
+        return _run_skill(layout, entry, new_manifest, params, timeout)
     except Exception:
         return output
 
