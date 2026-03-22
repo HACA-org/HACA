@@ -37,6 +37,16 @@ def main() -> None:
         allowlist = [str(a) for a in manifest.get("allowlist", [])]
         max_bytes = int(manifest.get("max_bytes", _DEFAULT_MAX_BYTES))
 
+    # Normalise: ensure URL has a trailing slash after the host when there is no path,
+    # so that "https://example.com" and "https://example.com/" match the same prefix.
+    try:
+        from urllib.parse import urlparse as _up
+        _p = _up(url)
+        if _p.path == "":
+            url = url + "/"
+    except Exception:
+        pass
+
     # operator "allow once" bypass via env var
     allow_once = os.environ.get("FCP_WEB_FETCH_ALLOW_ONCE", "")
     if not (allow_once and allow_once == url):
