@@ -137,12 +137,10 @@ def _process_stimulus_and_input(
 
         # Platform commands — handle without invoking CPE
         if stripped.startswith("/"):
-            from .operator import handle_platform_command
+            from .operator import handle_platform_command, _cmd_output
             handled = handle_platform_command(layout, stripped, adapter_ref=adapter_ref)
             if handled:
                 cmd, _args = _parse_command(stripped)
-                if cmd in ("/verbose", "/debugger"):
-                    pass  # debug output appears on next CPE cycle
                 if _is_endure_approved():
                     _set_endure_approved(False)
                     return True, True, "endure_approved"
@@ -150,7 +148,6 @@ def _process_stimulus_and_input(
                     return True, True, "operator_exit"
                 if cmd in ("/new", "/clear", "/reset"):
                     return True, True, "operator_reset"
-                # Check if /compact was requested
                 if _is_compact_pending():
                     _set_compact_pending(False)
                     compact_msg = (
@@ -163,15 +160,14 @@ def _process_stimulus_and_input(
                     chat_history.append({"role": "user", "content": compact_msg})
                     return True, False, "compact_requested"
                 return False, False, ""
-            if not handled:
-                from .operator import _cmd_output
-                cmd, _args = _parse_command(stripped)
-                with _cmd_output():
-                    if cmd:
-                        print(f"unknown command: {cmd}")
-                    else:
-                        print("invalid command (must start with /)")
-                return False, False, ""
+            # unknown command
+            cmd, _args = _parse_command(stripped)
+            with _cmd_output():
+                if cmd:
+                    print(f"unknown command: {cmd}")
+                else:
+                    print("invalid command (must start with /)")
+            return False, False, ""
 
         _append_msg(layout, "operator", user_input)
         chat_history.append({"role": "user", "content": stripped})
