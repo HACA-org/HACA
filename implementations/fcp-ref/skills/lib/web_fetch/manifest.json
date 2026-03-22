@@ -1,6 +1,6 @@
 {
   "name": "web_fetch",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Fetch the content of a URL and return it as text. Permitted URL prefixes declared as allowlist in this manifest.",
   "timeout_seconds": 30,
   "background": false,
@@ -8,6 +8,7 @@
   "class": "builtin",
   "permissions": [],
   "allowlist": [],
+  "max_bytes": 524288,
   "params": {
     "type": "object",
     "properties": {
