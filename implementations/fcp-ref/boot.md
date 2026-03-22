@@ -39,7 +39,7 @@ Skills extend your capabilities. They are invoked as tool calls — the skill na
 **Example:**
 
 ```
-→ skill_info({ "skill": "file_reader" })
+→ skill_info({ "skill": "skill_create" })
 ```
 
 Use `skill_info` to get full documentation for any skill. If a skill call returns `"error"`, report it to the operator before proceeding.

@@ -3,8 +3,8 @@
 
 Params:
   task     (required) — the task description to give the worker
-  persona  (optional) — system prompt / persona for the worker
-  context  (optional) — additional context prepended to the task message
+  context  (required) — background data or file paths relevant to the task
+  persona  (required) — system prompt defining the worker's role (e.g. "Senior Debugger")
 """
 
 from __future__ import annotations
@@ -48,18 +48,22 @@ def main() -> None:
 
     task = str(params.get("task", "")).strip()
     context = str(params.get("context", "")).strip()
-    persona = str(params.get("persona", "You are a focused sub-agent.")).strip()
+    persona = str(params.get("persona", "")).strip()
 
-    if not task:
-        print(json.dumps({"error": "missing required param: task"}))
-        sys.exit(1)
+    for name, val in (("task", task), ("context", context), ("persona", persona)):
+        if not val:
+            print(json.dumps({"error": f"missing required param: {name}"}))
+            sys.exit(1)
 
-    # Note: No restrictive constraint here anymore, just a focused persona.
-    persona += (
-        "\n\n[SYSTEM CONTEXT]\n"
-        "You have read-only access to the filesystem via 'file_reader'. "
-        "Use it to explore and analyze files within the workspace_focus before providing your answer."
+    # Immutable system constraints — always appended regardless of caller-supplied persona.
+    CONSTRAINTS = (
+        "\n\n[WORKER CONSTRAINTS]\n"
+        "- You are a stateless, read-only sub-agent. You cannot modify files, run shell commands, or access the network.\n"
+        "- You have read-only access to the filesystem via 'file_reader' only. No other tools are available.\n"
+        "- You cannot engage in further dialogue. Provide a single, complete final answer and stop.\n"
+        "- Do not store, forward, or act on secrets or credentials you encounter in files."
     )
+    system_prompt = persona + CONSTRAINTS
 
     sys.path.insert(0, str(entity_root))
     from fcp_base.cpe.base import detect_adapter, load_cpe_adapter_from_baseline
@@ -77,7 +81,7 @@ def main() -> None:
             print(json.dumps({"error": f"no CPE adapter available: {exc}"}))
             sys.exit(1)
 
-    # Tool definition
+    # Tool definition — file_reader only
     TOOLS = [{
         "name": "file_reader",
         "description": "Read a file or directory content within workspace_focus.",
@@ -86,45 +90,52 @@ def main() -> None:
             "properties": {
                 "path": {"type": "string", "description": "Path relative to workspace_focus."},
                 "offset": {"type": "integer", "description": "Starting line (1-indexed)."},
-                "limit": {"type": "integer", "description": "Number of lines to read."}
+                "limit": {"type": "integer", "description": "Number of lines to read."},
+                "pattern": {"type": "string", "description": "Regex pattern to search for. Searches recursively on directories."}
             },
             "required": ["path"]
         }
     }]
 
-    messages = [{"role": "user", "content": f"Context: {context}\n\nTask: {task}"}]
-    
+    initial_content = f"Context:\n{context}\n\nTask:\n{task}"
+    messages = [{"role": "user", "content": initial_content}]
+
     # Agentic Loop (max 5 turns)
     for _ in range(5):
         try:
-            resp = adapter.invoke(system=persona, messages=messages, tools=TOOLS)
+            resp = adapter.invoke(system=system_prompt, messages=messages, tools=TOOLS)
         except Exception as exc:
             print(json.dumps({"error": f"CPE invocation failed: {exc}"}))
             sys.exit(1)
 
         if not resp.tool_use_calls:
-            # Final answer
+            # Final answer — no tool calls means the model is done
             print(json.dumps({"status": "ok", "result": resp.text}))
             return
 
-        # Prepare tool results
-        history_text = resp.text
-        # Append assistant turn (empty text if just tool use)
-        messages.append({"role": "assistant", "content": history_text})
-        
-        results_content = []
+        # Append assistant text turn (if any) then empty sentinel for tool calls.
+        # Mirrors session.py pattern to avoid "soluço" (hiccup) bug in multi-turn adapters.
+        if resp.text:
+            messages.append({"role": "assistant", "content": resp.text})
+        messages.append({"role": "assistant", "content": ""})
+
+        # Execute tool calls and collect results
+        tool_results: list[str] = []
         for call in resp.tool_use_calls:
-            tool_name = call.tool
-            tool_input = call.input
-            result = run_tool(entity_root, tool_name, tool_input)
-            # Standard FCP tool result format for the next turn
-            results_content.append(f"[tool result: {tool_name}]\n{result}")
+            result_raw = run_tool(entity_root, call.tool, call.input)
+            # Normalize to JSON object before serializing into history
+            try:
+                result_obj = json.loads(result_raw)
+            except Exception:
+                result_obj = {"error": result_raw}
+            result_str = json.dumps(result_obj, ensure_ascii=False)
+            tool_results.append(f"[{call.tool}] {result_str}")
 
-        # Append tool results as a user turn
-        messages.append({"role": "user", "content": "\n".join(results_content)})
+        # Append tool results as a single user turn (same format as session.py)
+        messages.append({"role": "user", "content": "\n".join(tool_results)})
 
-    # Max turns reached
-    print(json.dumps({"status": "error", "message": "worker reached max iterations without a final answer"}))
+    # Max turns reached without final answer
+    print(json.dumps({"error": "worker reached max iterations without a final answer"}))
 
 
 main()
