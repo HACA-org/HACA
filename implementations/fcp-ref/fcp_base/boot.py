@@ -21,7 +21,7 @@ from .acp import ACPEnvelope, crc32, parse_envelope_data
 from .fap import run as fap_run
 from .formats import IntegrityDocument, ImprintRecord, SkillIndex, StructuralBaseline
 from .sil import (
-    _utcnow,
+    utcnow as _utcnow,
     activate_beacon,
     beacon_is_active,
     issue_session_token,
