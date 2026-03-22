@@ -93,6 +93,9 @@ def dispatch(
     # For shell_run: intercept "command not in allowlist" and offer operator approval.
     if skill_name == "shell_run":
         output = _maybe_prompt_shell_allowlist(layout, entry, manifest, params, timeout, output)
+    # For web_fetch: intercept "URL not in allowlist" and offer operator approval.
+    elif skill_name == "web_fetch":
+        output = _maybe_prompt_web_allowlist(layout, entry, manifest, params, timeout, output)
 
     if ledger_seq is not None:
         _ledger_resolve(layout, ledger_seq, "complete")
@@ -387,6 +390,120 @@ def _maybe_prompt_shell_allowlist(
         return new_output
     except Exception:
         return output
+
+
+def _maybe_prompt_web_allowlist(
+    layout: Layout,
+    entry: dict[str, Any],
+    manifest: dict[str, Any],
+    params: dict[str, Any],
+    timeout: int,
+    output: str,
+) -> str:
+    """If web_fetch returned a 'URL not in allowlist' error, handle based on session mode.
+
+    In main:session: prompt operator to approve once/always.
+    In auto:session: log to operator_notifications and return error (no interactive prompt).
+
+    - "allow once" (y): re-executes with FCP_WEB_FETCH_ALLOW_ONCE env var set
+    - "allow always" (a): persists URL prefix to manifest allowlist
+    """
+    try:
+        result = json.loads(output)
+    except Exception:
+        return output
+
+    error = result.get("error", "")
+    if not error.startswith("URL not in allowlist:"):
+        return output
+
+    url = str(params.get("url", "")).strip()
+
+    from .session import is_auto_session
+    if is_auto_session():
+        from .sil import write_notification
+        ui.print_warn(f"[auto:session] web_fetch blocked — URL not in allowlist: {url!r}")
+        write_notification(
+            layout,
+            severity="web_fetch_blocked",
+            payload={
+                "message": "URL blocked in autonomous session (auto:session)",
+                "url": url,
+                "context": "auto:session",
+                "timestamp": time.time(),
+                "note": "Operator can approve in main:session if needed",
+            },
+        )
+        return output
+
+    # In main:session: prompt operator interactively
+    print()
+    ui.hr("OPERATOR ACTION REQUIRED")
+    _REV = "\x1b[7m"
+    _REV_RESET = "\x1b[27m"
+    print()
+    print(f"{_REV}  [!] web_fetch blocked — URL not in allowlist:{_REV_RESET}")
+    print(f"{_REV}  {url!r}{_REV_RESET}")
+    print()
+    items = ["y — allow once", "a — allow always (persist prefix)", "N — deny"]
+    try:
+        choice = ui.pick_one("Allow this URL?", items, default_idx=2, indent="  ")
+        answer = choice[0].lower()
+    except (KeyboardInterrupt, EOFError):
+        answer = "n"
+
+    if answer not in ("y", "a"):
+        return output
+
+    if answer == "a":
+        _web_allowlist_add(layout, url)
+    elif answer == "y":
+        import os as _os
+        _os.environ["FCP_WEB_FETCH_ALLOW_ONCE"] = url
+        try:
+            new_output = _run_skill(layout, entry, manifest, params, timeout)
+            return new_output
+        finally:
+            _os.environ.pop("FCP_WEB_FETCH_ALLOW_ONCE", None)
+
+    try:
+        new_manifest = _load_manifest(layout, entry)
+        new_output = _run_skill(layout, entry, new_manifest, params, timeout)
+        return new_output
+    except Exception:
+        return output
+
+
+def _web_allowlist_add(layout: Layout, url: str) -> None:
+    """Append a URL prefix to web_fetch/manifest.json allowlist."""
+    manifest_path = layout.skills_lib_dir / "web_fetch" / "manifest.json"
+    if not manifest_path.exists():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+
+    # Derive a prefix: scheme + host (strip path)
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        prefix = f"{parsed.scheme}://{parsed.netloc}/"
+    except Exception:
+        prefix = url
+
+    allowlist: list[str] = manifest.get("allowlist", [])
+    if prefix in allowlist:
+        return  # already present
+
+    allowlist.append(prefix)
+    manifest["allowlist"] = allowlist
+
+    import os
+    tmp = manifest_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    os.replace(tmp, manifest_path)
+    ui.print_ok(f"[web_fetch] '{prefix}' added to allowlist.")
 
 
 def _shell_allowlist_add(layout: Layout, command: str) -> None:
