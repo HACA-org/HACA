@@ -1313,60 +1313,15 @@ def build_boot_stats(
 # Verbose logging helpers
 # ---------------------------------------------------------------------------
 
-_DIM = ui.DIM
+# Pure display helpers live in ui — import aliases for local use
+_DIM  = ui.DIM
 _RESET = ui.RESET
-_GRAY = ui.GRAY
-
-
-_WIDTH = 50
-
-
-def _print_cpe_block(
-    text: str,
-    model: str = "",
-    input_tokens: int = 0,
-    output_tokens: int = 0,
-    ctx_window: int = 0,
-) -> None:
-    """Print a CPE response with top and bottom separator lines."""
-    label = f"CPE:{model}" if model else "CPE"
-    border = "─" * max(0, _WIDTH - len(label) - 3)
-    print(f"\n{_GRAY}─── {label} {border}{_RESET}")
-    print(text)
-    stats = f"{input_tokens:,} ↑ / {output_tokens:,} ↓"
-    if ctx_window:
-        pct = round(input_tokens / ctx_window * 100, 1)
-        stats += f" | ctx: {pct}%"
-    footer_border = "─" * max(0, _WIDTH - len(stats) - 3)
-    print(f"{_GRAY}─── {stats} {footer_border}{_RESET}")
-
-
-
-def _vprint(text: str) -> None:
-    """Print verbose text in dim style."""
-    print(f"{_DIM}{text}{_RESET}")
-
-
-def _format_bytes(num_bytes: int) -> str:
-    """Format bytes in human-readable form (234B, 1.2KB, 2.3MB)."""
-    if num_bytes < 1024:
-        return f"{num_bytes}B"
-    elif num_bytes < 1024 * 1024:
-        return f"{num_bytes / 1024:.1f}KB"
-    else:
-        return f"{num_bytes / (1024 * 1024):.1f}MB"
-
-
-def _compact_json(data: Any, max_len: int = 150) -> str:
-    """Format data as compact JSON, truncating if too long.
-
-    Useful for inline logging in verbose mode.
-    Truncates long strings and shows ... if output exceeds max_len.
-    """
-    j = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
-    if len(j) > max_len:
-        return j[:max_len] + "...}"
-    return j
+_GRAY  = ui.GRAY
+_print_cpe_block      = ui.print_cpe_block
+_vprint               = ui.vprint
+_format_bytes         = ui.format_bytes
+_compact_json         = ui.compact_json
+_readline_with_history = ui.readline_with_history
 
 
 def _vlog(actor: str, msg: str) -> None:
@@ -1450,14 +1405,12 @@ def _vlog_cycle_summary(
             prefix = "  │  └─" if is_last else "  │  ├─"
 
             if verbose:
-                # Verbose mode: show tool name + input/output JSONs
                 print(f"{_DIM}{prefix} {tool}{_RESET}")
                 input_json = _compact_json(tool_info["input"])
                 output_json = _compact_json(tool_info["output"])
                 print(f"{_DIM}{prefix[:-2]}│  ├─ input: {input_json}{_RESET}")
                 print(f"{_DIM}{prefix[:-2]}│  └─ output: {output_json}{_RESET}")
             else:
-                # Compact mode: tool name + sizes
                 print(f"{_DIM}{prefix} {tool} ... input ({input_size}) → {status} ({result_size}{timing_str}){_RESET}")
 
     # CPE response line — ALWAYS show
@@ -1466,10 +1419,9 @@ def _vlog_cycle_summary(
         preview = response.text[:50].replace("\n", " ")
         print(f"{_DIM}     └─ text: {preview!r} ({len(response.text)} chars){_RESET}")
 
-    # Add blank line for visual separation between tree and next input prompt
     print()
 
-    # Debugger mode — show original detailed format
+    # Debugger mode
     if dbg and not verbose:
         print(f"{_DIM}[cpe→fcp] response{_RESET}")
         print(f"{_DIM}  stop_reason  : {response.stop_reason}{_RESET}")
@@ -1479,15 +1431,6 @@ def _vlog_cycle_summary(
             print(f"{_DIM}  text         : {preview!r}{_RESET}")
         for call in response.tool_use_calls:
             print(f"{_DIM}  tool_use     : {call.tool} (id={call.id}){_RESET}")
-
-
-def _readline_with_history(prompt: str) -> str:
-    """Read a line with up/down arrow history via readline if available."""
-    try:
-        import readline as _rl  # noqa: F401 — side-effect: enables arrow keys
-    except ImportError:
-        pass
-    return input(prompt)
 
 
 def _stage_evolution_proposal(layout: Layout, content: str) -> Path:
