@@ -148,26 +148,55 @@ def _run_text_skill(
     timeout: int,
 ) -> str:
     """Execute a text-only skill by delegating to worker_skill internally."""
-    instructions = instructions_path.read_text(encoding="utf-8")
-    context_parts = [f"Skill: {skill_name}"]
-    if params:
-        context_parts.append(f"Parameters: {json.dumps(params, ensure_ascii=False)}")
-    context = "\n".join(context_parts)
-
-    worker_entry = _find_skill({"skills": [
-        {"name": "worker_skill", "class": "builtin", "manifest": f"skills/lib/worker_skill/manifest.json"}
-    ]}, "worker_skill")
-    # locate worker_skill run.py directly
     worker_run = layout.skills_lib_dir / "worker_skill" / "run.py"
     if not worker_run.exists():
         raise ExecError(f"worker_skill not available — cannot execute text-only skill {skill_name!r}")
 
+    instructions = instructions_path.read_text(encoding="utf-8")
+
+    # task = the concrete work (params received from the caller)
+    task_parts = [f"Execute skill '{skill_name}' with the following parameters:"]
+    task_parts.append(json.dumps(params, ensure_ascii=False, indent=2) if params else "(no parameters)")
+    task = "\n".join(task_parts)
+
+    # context = skill instructions + environment
+    context_parts = [
+        "[skill instructions]",
+        instructions,
+        "",
+        "[environment]",
+    ]
+    workspace_focus_file = layout.root / "state" / "workspace_focus.json"
+    if workspace_focus_file.exists():
+        try:
+            wf = read_json(workspace_focus_file)
+            context_parts.append(f"workspace_focus: {wf.get('path', '(unset)')}")
+        except Exception:
+            context_parts.append("workspace_focus: (unavailable)")
+    else:
+        context_parts.append("workspace_focus: (not set)")
+    context = "\n".join(context_parts)
+
+    # persona = from skill manifest description, or generic fallback
+    manifest_path = instructions_path.parent / "manifest.json"
+    skill_desc = ""
+    if manifest_path.exists():
+        try:
+            skill_desc = read_json(manifest_path).get("description", "")
+        except Exception:
+            pass
+    persona = (
+        f"You are a precise skill executor for the '{skill_name}' skill.\n{skill_desc}"
+        if skill_desc else
+        f"You are executing the '{skill_name}' skill. Follow the instructions precisely and return a structured result."
+    )
+
     input_data = json.dumps({
         "skill": "worker_skill",
         "params": {
-            "task": instructions,
+            "task": task,
             "context": context,
-            "persona": f"You are executing the '{skill_name}' skill. Follow the instructions precisely and return a structured result.",
+            "persona": persona,
         },
         "entity_root": str(layout.root),
     })

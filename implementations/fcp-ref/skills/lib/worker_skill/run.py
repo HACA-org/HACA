@@ -41,26 +41,34 @@ def run_tool(entity_root: Path, tool_name: str, params: dict[str, Any]) -> str:
 
 
 def main() -> None:
-    import subprocess
     req = json.loads(sys.stdin.read())
     params = req.get("params", {})
     entity_root = Path(req.get("entity_root", ".")).resolve()
 
-    task = str(params.get("task", "")).strip()
-    context = str(params.get("context", "")).strip()
-    persona = str(params.get("persona", "")).strip()
+    task = params.get("task")
+    context = params.get("context")
+    persona = params.get("persona")
 
     for name, val in (("task", task), ("context", context), ("persona", persona)):
-        if not val:
+        if not val or not str(val).strip():
             print(json.dumps({"error": f"missing required param: {name}"}))
             sys.exit(1)
+
+    task = str(task).strip()
+    context = str(context).strip()
+    persona = str(persona).strip()
 
     # Immutable system constraints — always appended regardless of caller-supplied persona.
     CONSTRAINTS = (
         "\n\n[WORKER CONSTRAINTS]\n"
         "- You are a stateless, read-only sub-agent. You cannot modify files, run shell commands, or access the network.\n"
         "- You have read-only access to the filesystem via 'file_reader' only. No other tools are available.\n"
-        "- You cannot engage in further dialogue. Provide a single, complete final answer and stop.\n"
+        "- You have no chat history and no contact with the Operator. You received a single stimulus and must complete the task autonomously.\n"
+        "- Execution model: plan internally → execute reads → return final result. Do not pause, ask questions, or wait for input.\n"
+        "- Minimize tool calls. Plan which files to read before executing. Do not read the same file twice.\n"
+        "- Return only what was asked. Do not add explanations, caveats, or commentary beyond the task scope.\n"
+        "- Each invocation is independent. Do not reference or assume results from previous invocations.\n"
+        "- If a file appears to contain secrets or credentials, skip it and note the omission in your result.\n"
         "- Do not store, forward, or act on secrets or credentials you encounter in files."
     )
     system_prompt = persona + CONSTRAINTS
@@ -97,7 +105,7 @@ def main() -> None:
         }
     }]
 
-    initial_content = f"Context:\n{context}\n\nTask:\n{task}"
+    initial_content = f"{context}\n\n[task]\n{task}"
     messages = [{"role": "user", "content": initial_content}]
 
     # Agentic Loop (max 5 turns)
@@ -113,8 +121,11 @@ def main() -> None:
             print(json.dumps({"status": "ok", "result": resp.text}))
             return
 
-        # Append assistant text turn (if any) then empty sentinel for tool calls.
-        # Mirrors session.py pattern to avoid "soluço" (hiccup) bug in multi-turn adapters.
+        # Add assistant text turn if present, then always add empty sentinel.
+        # session.py pattern: text turn first (if any), then empty sentinel.
+        # The sentinel signals to adapters that tool results follow — without it,
+        # text+tool_calls responses cause tool results to be treated as plain text
+        # in subsequent cycles ("soluço" / hiccup bug).
         if resp.text:
             messages.append({"role": "assistant", "content": resp.text})
         messages.append({"role": "assistant", "content": ""})
