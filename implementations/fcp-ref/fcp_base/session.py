@@ -26,7 +26,7 @@ from .mil import memory_recall, process_closure, result_recall, summarize_sessio
 from .operator import is_verbose as _is_verbose, get_debugger as _get_debugger, is_compact_pending as _is_compact_pending, set_compact_pending as _set_compact_pending, is_endure_approved as _is_endure_approved, set_endure_approved as _set_endure_approved
 from .session_mode import SessionMode, set_session_mode, get_session_mode, is_auto_session, is_main_session
 from .tools import build_tools_index as _build_tools_index, build_tool_declarations as _tool_declarations
-from .sil import sha256_str as _sha256_str, write_evolution_auth as _write_evolution_auth, write_notification as _write_notification
+from .sil import sha256_str as _sha256_str, stage_evolution_proposal as _stage_evolution_proposal, write_evolution_auth as _write_evolution_auth, write_notification as _write_notification
 from .stimuli import inject_evolution_result as _write_evolution_stimuli
 from .store import Layout, append_jsonl, atomic_write, load_baseline, read_json, read_jsonl
 from . import cmi_fmt as _cmi_fmt
@@ -1316,18 +1316,4 @@ def _vlog_cycle_summary(
             print(f"{_DIM}  text         : {preview!r}{_RESET}")
         for call in response.tool_use_calls:
             print(f"{_DIM}  tool_use     : {call.tool} (id={call.id}){_RESET}")
-
-
-def _stage_evolution_proposal(layout: Layout, content: str) -> Path:
-    ts = int(time.time() * 1000)
-    envelope = acp_encode(
-        env_type="MSG",
-        source="sil",
-        data={"type": "PROPOSAL_PENDING", "content": content, "ts": ts},
-    )
-    dest = layout.operator_notifications_dir / f"{ts}_proposal_pending.json"
-    tmp = dest.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
-    os.replace(tmp, dest)
-    return dest
 
