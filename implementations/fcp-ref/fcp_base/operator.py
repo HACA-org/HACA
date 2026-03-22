@@ -3,7 +3,7 @@ Operator Interface — FCP §12.
 
 §12.2  Interactive loop (input → inject as MSG → session cycle)
 §12.3.1 Platform commands (/status, /doctor, /model, /endure, /inbox, /work, /skill, /verbose, /debugger)
-§12.3.2 Skill aliases (/commit, ...)
+§12.3.2 Skill aliases
 §12.4  Notifications
 """
 

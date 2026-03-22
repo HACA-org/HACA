@@ -142,13 +142,20 @@ def _convert_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                             "type": "function",
                             "function": {
                                 "name": tm["tool_name"],
-                                "arguments": "{}",
+                                "arguments": {},
                             },
                         }
                         for j, tm in enumerate(tool_parsed)
                     ]
-                    # Overwrite the previous assistant entry with tool_calls added
-                    result[prev_idx] = dict(prev, tool_calls=synthetic_calls)
+                    # text+tools case: sentinel {assistant: ""} follows {assistant: "text"}.
+                    # Ollama requires tool_calls on the SAME turn as the text — merge into
+                    # the preceding text turn and discard the empty sentinel.
+                    if not prev.get("content", "") and prev_idx > 0 and result[prev_idx - 1].get("role") == "assistant":
+                        result.pop(prev_idx)  # discard empty sentinel
+                        result[prev_idx - 1] = dict(result[prev_idx - 1], tool_calls=synthetic_calls)
+                    else:
+                        # plain tool-only case: add tool_calls to the assistant turn (empty or text)
+                        result[prev_idx] = dict(prev, tool_calls=synthetic_calls)
                     # Emit role:tool messages with matching tool_call_id
                     for j, tm in enumerate(tool_parsed):
                         result.append({

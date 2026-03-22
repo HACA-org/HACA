@@ -2,7 +2,7 @@
 
 Execute an allowed shell command within `workspace_focus`. Commands run with `workspace_focus` as the working directory.
 
-Permitted commands: `ls`, `cat`, `pwd`, `find`, `grep`. Any other command is rejected. Direct git access is not permitted — use `commit` instead.
+Permitted commands are declared in the skill manifest allowlist. Any other command is rejected. `git` commands are permitted within `workspace_focus` — the system automatically blocks operations that would affect the entity's internal repository.
 
 ## Examples
 

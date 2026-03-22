@@ -474,8 +474,12 @@ def run_session(
             _model_label = getattr(adapter_ref.current, "_model", "")
             _print_cpe_block(response.text, _model_label, response.input_tokens, response.output_tokens, _ctx_window)
             chat_history.append({"role": "assistant", "content": response.text})
-        if response.tool_use_calls and not response.text:
-            # assistant turn with tool use only — needs empty content tracked
+        if response.tool_use_calls:
+            # Always append an empty assistant sentinel when there are tool calls.
+            # Adapters detect tool-result turns by checking that the preceding assistant
+            # turn has empty content. Without this sentinel, text+tool_calls responses
+            # leave a non-empty assistant turn, causing tool results to be treated as
+            # plain text in subsequent cycles ("soluço" / hiccup bug).
             chat_history.append({"role": "assistant", "content": ""})
 
         # process tool_use calls — fcp_mil before fcp_exec before fcp_sil (per spec)
@@ -581,7 +585,7 @@ def run_session(
             chat_history[:] = _rebuild_compact_history(layout, index, system)
             summarize_session(layout)
             _vlog("fcp", f"compact: done — history={len(chat_history)} msgs")
-            print("  [session compacted]")
+            print(f"\n{_DIM}  [fcp] session compacted{_RESET}")
 
     _vlog("fcp", f"session closed — reason: {close_reason}")
     return close_reason

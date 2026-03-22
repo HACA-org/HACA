@@ -191,7 +191,7 @@ def check_chain(layout: Layout) -> list[Finding]:
 
 BUILTIN_SKILLS = [
     "skill_create", "skill_audit", "file_reader",
-    "file_writer", "worker_skill", "commit", "shell_run", "web_fetch",
+    "file_writer", "worker_skill", "shell_run", "web_fetch",
 ]
 
 REQUIRED_MANIFEST_FIELDS = [
