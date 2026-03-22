@@ -319,9 +319,12 @@ def _maybe_prompt_shell_allowlist(
 
     # In main:session: prompt operator interactively
     print()
-    ui.hr("operator action required")
-    ui.print_warn(f"shell_run blocked — command not in allowlist:")
-    print(f"  {command!r}")
+    ui.hr("OPERATOR ACTION REQUIRED")
+    _REV = "\x1b[7m"
+    _REV_RESET = "\x1b[27m"
+    print()
+    print(f"{_REV}  [!] shell_run blocked — command not in allowlist:{_REV_RESET}")
+    print(f"{_REV}  {command!r}{_REV_RESET}")
     print()
     items = ["y — allow once", "a — allow always (persist)", "N — deny"]
     try:

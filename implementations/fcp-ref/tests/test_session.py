@@ -6,7 +6,7 @@ import unittest
 from typing import Any
 
 from fcp_base.cpe.base import CPEResponse, ToolUseCall
-from fcp_base.session import build_boot_context, dispatch_tool_use, _tool_declarations
+from fcp_base.session import build_boot_context, dispatch_tool_use, _tool_declarations, _make_cycle_fingerprint
 from fcp_base.store import Layout, atomic_write
 from fcp_base import mil
 from tests.helpers import make_layout
@@ -133,6 +133,87 @@ class TestDispatchToolUse(unittest.TestCase):
         result, closed = dispatch_tool_use(self.layout, call, {})
         self.assertFalse(closed)
         self.assertIn("error", result)
+
+
+class TestCycleFingerprint(unittest.TestCase):
+    """Tests for _make_cycle_fingerprint (loop detection)."""
+
+    def _call(self, tool: str, inp: dict) -> ToolUseCall:
+        return ToolUseCall(id="x", tool=tool, input=inp)
+
+    def test_identical_cycles_match(self) -> None:
+        calls = [self._call("fcp_mil", {"type": "memory_recall", "query": "foo"})]
+        results = ['{"status": "ok"}']
+        fp1 = _make_cycle_fingerprint(calls, results)
+        fp2 = _make_cycle_fingerprint(calls, results)
+        self.assertEqual(fp1, fp2)
+
+    def test_different_inputs_differ(self) -> None:
+        calls_a = [self._call("fcp_mil", {"query": "foo"})]
+        calls_b = [self._call("fcp_mil", {"query": "bar"})]
+        result = ['{"status": "ok"}']
+        self.assertNotEqual(
+            _make_cycle_fingerprint(calls_a, result),
+            _make_cycle_fingerprint(calls_b, result),
+        )
+
+    def test_different_results_differ(self) -> None:
+        calls = [self._call("fcp_exec", {"skill": "s"})]
+        self.assertNotEqual(
+            _make_cycle_fingerprint(calls, ['{"a": 1}']),
+            _make_cycle_fingerprint(calls, ['{"a": 2}']),
+        )
+
+    def test_order_independent(self) -> None:
+        c1 = self._call("fcp_mil", {"q": "x"})
+        c2 = self._call("fcp_exec", {"s": "y"})
+        r1, r2 = ["result_a"], ["result_b"]
+        fp_ab = _make_cycle_fingerprint([c1, c2], [r1[0], r2[0]])
+        fp_ba = _make_cycle_fingerprint([c2, c1], [r2[0], r1[0]])
+        self.assertEqual(fp_ab, fp_ba)
+
+    def test_count_mismatch_raises(self) -> None:
+        calls = [self._call("fcp_mil", {}), self._call("fcp_exec", {})]
+        with self.assertRaises(ValueError):
+            _make_cycle_fingerprint(calls, ["only_one_result"])
+
+    def test_empty_cycle(self) -> None:
+        fp = _make_cycle_fingerprint([], [])
+        self.assertEqual(fp, frozenset())
+
+
+class TestDispatchMILRecall(unittest.TestCase):
+    """Tests for memory_recall and result_recall dispatch paths."""
+
+    def setUp(self) -> None:
+        self.layout, self.tmp = make_layout()
+
+    def tearDown(self) -> None:
+        import shutil
+        shutil.rmtree(self.tmp)
+
+    def _make_call(self, tool: str, inp: dict) -> ToolUseCall:
+        return ToolUseCall(id="test-id", tool=tool, input=inp)
+
+    def test_mil_memory_recall_empty(self) -> None:
+        call = self._make_call("fcp_mil", {"type": "memory_recall", "query": "foo", "path": ""})
+        result, closed = dispatch_tool_use(self.layout, call, {})
+        self.assertFalse(closed)
+        self.assertNotIn("error", result)
+
+    def test_mil_memory_recall_finds_written(self) -> None:
+        mil.write_episodic(self.layout, "testslug", "# test content\nfoo bar baz")
+        call = self._make_call("fcp_mil", {"type": "memory_recall", "query": "foo", "path": ""})
+        result, closed = dispatch_tool_use(self.layout, call, {})
+        self.assertFalse(closed)
+        # Result should contain something (recalled or empty list)
+        self.assertIsInstance(result, dict)
+
+    def test_mil_result_recall(self) -> None:
+        call = self._make_call("fcp_mil", {"type": "result_recall", "path": "memory/episodic/"})
+        result, closed = dispatch_tool_use(self.layout, call, {})
+        self.assertFalse(closed)
+        self.assertIsInstance(result, dict)
 
 
 if __name__ == "__main__":

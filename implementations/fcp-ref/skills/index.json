@@ -13,13 +13,7 @@
       "manifest": "skills/lib/cmi_send/manifest.json",
       "class": "builtin"
     },
-    {
-      "name": "commit",
-      "desc": "Commit a path within workspace_focus. Only git interface available to the CPE.",
-      "manifest": "skills/lib/commit/manifest.json",
-      "class": "builtin"
-    },
-    {
+{
       "name": "file_reader",
       "desc": "Read a file within workspace/. Rejects any path outside workspace/.",
       "manifest": "skills/lib/file_reader/manifest.json",

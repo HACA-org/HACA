@@ -100,13 +100,30 @@ def _build_contents(
             if not content:
                 is_last = (i == last_tool_turn_idx)
                 if is_last and last_model_parts:
-                    # Last tool turn: use verbatim to preserve thought_signature
-                    contents.append({"role": "model", "parts": last_model_parts})
+                    # Last tool turn: use verbatim to preserve thought_signature.
+                    # If preceded by a non-empty assistant turn (text+tools case), the text
+                    # was already emitted — only emit functionCall parts to avoid duplication
+                    # and consecutive model turns.
+                    prev_msg = messages[i - 1] if i > 0 else {}
+                    if prev_msg.get("role") == "assistant" and prev_msg.get("content", ""):
+                        # text was already emitted; strip text/thought parts, keep only functionCalls
+                        fc_parts = [p for p in last_model_parts if "functionCall" in p]
+                        if fc_parts:
+                            # Merge into the already-appended text model turn
+                            if contents and contents[-1].get("role") == "model":
+                                contents[-1]["parts"] = contents[-1]["parts"] + fc_parts
+                            else:
+                                contents.append({"role": "model", "parts": fc_parts})
+                    else:
+                        contents.append({"role": "model", "parts": last_model_parts})
                 else:
                     # Historical tool turn: emit as plain text to avoid thought_signature error.
                     # Gemini requires thought_signature on all functionCall parts, but we only
                     # have it for the last turn. Plain text preserves conversation context.
-                    contents.append({"role": "model", "parts": [{"text": ""}]})
+                    # Skip if preceded by a non-empty assistant turn (text+tools case — already emitted).
+                    prev_msg = messages[i - 1] if i > 0 else {}
+                    if not (prev_msg.get("role") == "assistant" and prev_msg.get("content", "")):
+                        contents.append({"role": "model", "parts": [{"text": ""}]})
             else:
                 contents.append({"role": "model", "parts": [{"text": content}]})
             i += 1

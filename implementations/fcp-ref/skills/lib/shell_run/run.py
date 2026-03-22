@@ -106,6 +106,13 @@ def main() -> None:
             print(json.dumps({"error": f"path argument not permitted: {token!r}"}))
             sys.exit(1)
 
+    if base_cmd == "git":
+        from . import git_guard
+        blocked = git_guard.check(entity_root, focus_path)
+        if blocked:
+            print(json.dumps(blocked))
+            sys.exit(0)
+
     result = subprocess.run(
         tokens,
         shell=False,

@@ -1234,3 +1234,45 @@ class TestOllamaConvertMessages:
         assert result[1]["role"] == "user"
         assert "tool_call_id" not in result[1]
         assert "tool_calls" not in result[0]
+
+    def test_text_plus_tools_sentinel_pattern(self):
+        """Text+tools sentinel pattern: {assistant: text}, {assistant: ""}, {user: tool results}.
+
+        session.py now always appends an empty sentinel when tool_calls are present.
+        For text+tools responses, the sentinel follows the text turn.
+        Ollama must merge tool_calls into the text turn and discard the sentinel.
+        """
+        messages = [
+            {"role": "user", "content": "do it"},
+            {"role": "assistant", "content": "Sure, I'll run that now"},
+            {"role": "assistant", "content": ""},  # sentinel from session.py
+            {"role": "user", "content": '[shell_run] {"status": "ok", "stdout": "done"}'},
+        ]
+        result = _convert_messages(messages)
+        # Must NOT have two consecutive assistant turns
+        assert result[0]["role"] == "user"
+        assert result[1]["role"] == "assistant"
+        assert result[2]["role"] == "tool"
+        assert len(result) == 3
+        # text preserved on the assistant turn that gets tool_calls
+        assert result[1]["content"] == "Sure, I'll run that now"
+        assert "tool_calls" in result[1]
+        assert result[1]["tool_calls"][0]["function"]["name"] == "shell_run"
+        assert result[2]["tool_call_id"] == "call_0"
+
+    def test_text_plus_tools_sentinel_multiple(self):
+        """Sentinel pattern with multiple tool calls merged into text turn."""
+        messages = [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "Running both tools"},
+            {"role": "assistant", "content": ""},  # sentinel
+            {"role": "user", "content": '[tool_a] {"r": 1}\n[tool_b] {"r": 2}'},
+        ]
+        result = _convert_messages(messages)
+        assert len(result) == 4  # user + assistant(merged) + tool + tool
+        assert result[1]["content"] == "Running both tools"
+        assert len(result[1]["tool_calls"]) == 2
+        assert result[1]["tool_calls"][0]["function"]["name"] == "tool_a"
+        assert result[1]["tool_calls"][1]["function"]["name"] == "tool_b"
+        assert result[2]["role"] == "tool"
+        assert result[3]["role"] == "tool"
