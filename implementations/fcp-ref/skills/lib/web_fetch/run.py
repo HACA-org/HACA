@@ -43,10 +43,10 @@ def main() -> None:
         # allowlist empty = block all (secure default)
         if not allowlist:
             print(json.dumps({"error": f"URL not in allowlist: {url}"}))
-            sys.exit(1)
+            sys.exit(0)
         if not any(url.startswith(prefix) for prefix in allowlist):
             print(json.dumps({"error": f"URL not in allowlist: {url}"}))
-            sys.exit(1)
+            sys.exit(0)
 
     try:
         with urllib.request.urlopen(url, timeout=25) as resp:
