@@ -4,14 +4,16 @@ Operator approval gate — FCP §10.6
 Provides a single reusable entry point for any component that needs to request
 on-the-fly operator authorization before proceeding.
 
-Behaviour depends on session mode:
+Behaviour depends on session mode and TTY availability:
 
-  main:session — blocks the current execution and prompts the operator
-                 interactively via the terminal picker.  Returns the operator's
-                 decision as an ApprovalDecision value.
+  main:session + TTY  — blocks and prompts the operator interactively via the
+                        terminal picker.  Returns the operator's decision.
 
-  auto:session  — writes a notification to state/operator_notifications/ and
-                  returns DENY immediately (no interactive prompt).
+  main:session no TTY — writes a notification to state/operator_notifications/
+                        and returns DENY (operator is not at the terminal).
+
+  auto:session        — writes a notification to state/operator_notifications/
+                        and returns DENY immediately (no interactive prompt).
 
 Usage::
 
@@ -32,6 +34,7 @@ Usage::
 
 from __future__ import annotations
 
+import sys
 import time
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -52,9 +55,9 @@ class ApprovalDecision(str, Enum):
 # Menu label → ApprovalDecision mapping.  The first character of each label is
 # used as the keyboard shortcut when the terminal is not a TTY.
 _OPTION_LABELS: dict[str, tuple[str, ApprovalDecision]] = {
-    "allow_once":   ("y — allow once",          ApprovalDecision.ALLOW_ONCE),
-    "allow_always": ("a — allow always",         ApprovalDecision.ALLOW_ALWAYS),
-    "deny":         ("N — deny",                 ApprovalDecision.DENY),
+    "allow_once":   ("y — allow once",                  ApprovalDecision.ALLOW_ONCE),
+    "allow_always": ("a — allow always (add to allowlist)", ApprovalDecision.ALLOW_ALWAYS),
+    "deny":         ("N — deny",                        ApprovalDecision.DENY),
 }
 
 
@@ -83,13 +86,15 @@ def request_approval(
         notification_payload:    Payload dict written to the notification file.
 
     Returns:
-        ApprovalDecision — the operator's choice, or DENY if auto:session.
+        ApprovalDecision — the operator's choice, or DENY if no TTY / auto:session.
     """
     if "deny" not in options:
         raise ValueError("'deny' must be included in options")
 
-    if is_auto_session():
-        return _auto_session_deny(layout, subject, detail, notification_severity, notification_payload)
+    no_tty = not sys.stdin.isatty()
+
+    if is_auto_session() or no_tty:
+        return _notify_and_deny(layout, subject, detail, notification_severity, notification_payload)
 
     return _interactive_prompt(subject, detail, prompt, options)
 
@@ -98,16 +103,16 @@ def request_approval(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _auto_session_deny(
+def _notify_and_deny(
     layout: "Layout",
     subject: str,
     detail: str,
     severity: str,
     payload: dict,
 ) -> ApprovalDecision:
-    """Log notification and return DENY without prompting."""
+    """Write an operator notification and return DENY without prompting."""
     from .sil import write_notification
-    ui.print_warn(f"[auto:session] {subject} blocked: {detail!r}")
+    ui.print_warn(f"{subject} blocked — notification written: {detail!r}")
     write_notification(layout, severity=severity, payload=payload)
     return ApprovalDecision.DENY
 
@@ -128,8 +133,7 @@ def _interactive_prompt(
     print()
     ui.hr("OPERATOR ACTION REQUIRED")
     print()
-    print(f"{_REV}  [!] {subject} blocked:{_RST}")
-    print(f"{_REV}  {detail!r}{_RST}")
+    print(f"{_REV}  [!] {subject} blocked: {detail!r}{_RST}")
     print()
 
     try:

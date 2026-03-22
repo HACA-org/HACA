@@ -60,9 +60,11 @@ class TestAutoSessionAlwaysDenies(unittest.TestCase):
 
     def test_no_notification_in_main_session_deny(self):
         notif_dir = self.layout.operator_notifications_dir
-        # main:session, operator picks deny
+        # main:session with TTY available, operator picks deny — no notification written
         with patch("fcp_base.approval.is_auto_session", return_value=False), \
+             patch("fcp_base.approval.sys") as mock_sys, \
              patch("fcp_base.approval._interactive_prompt", return_value=ApprovalDecision.DENY):
+            mock_sys.stdin.isatty.return_value = True
             request_approval(**_base_kwargs(self.layout))
         files = list(notif_dir.glob("*.json"))
         self.assertEqual(len(files), 0)
@@ -78,7 +80,9 @@ class TestMainSessionInteractiveDecisions(unittest.TestCase):
 
     def _call(self, decision: ApprovalDecision) -> ApprovalDecision:
         with patch("fcp_base.approval.is_auto_session", return_value=False), \
+             patch("fcp_base.approval.sys") as mock_sys, \
              patch("fcp_base.approval._interactive_prompt", return_value=decision):
+            mock_sys.stdin.isatty.return_value = True
             return request_approval(**_base_kwargs(self.layout))
 
     def test_allow_once_returned(self):
@@ -154,7 +158,7 @@ class TestInteractivePromptFallbacks(unittest.TestCase):
 
     def test_valid_allow_always_label_returns_allow_always(self):
         from fcp_base.approval import _interactive_prompt
-        with patch("fcp_base.approval.ui.pick_one", return_value="a — allow always"), \
+        with patch("fcp_base.approval.ui.pick_one", return_value="a — allow always (add to allowlist)"), \
              patch("fcp_base.approval.ui.hr"), \
              patch("builtins.print"):
             result = _interactive_prompt(
