@@ -45,7 +45,7 @@ def make_layout() -> tuple[Layout, Path]:
         "profile": "haca-core",
         "haca_profile": "HACA-Core-1.0.0",
         "cpe": {"backend": "ollama", "model": "llama3.2", "topology": "transparent"},
-        "context_window": {"budget_tokens": 200000, "critical_pct": 80},
+        "context_window": {"budget_pct": 80, "critical_pct": 80},
         "context_budget": {"session_critical_threshold": 100000},
         "drift": {"comparison_mechanism": "hash", "threshold": 0.0},
         "session_store": {"rotation_threshold_bytes": 1000000},

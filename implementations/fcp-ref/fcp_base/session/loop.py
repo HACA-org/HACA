@@ -20,6 +20,7 @@ from typing import Any
 
 from ..acp import make as acp_encode
 from ..cpe.base import AdapterRef, CPEAdapter, CPEResponse, CPEError, CPEAuthError, CPERateLimitError
+from ..cpe.models import get_context_window as _get_context_window
 from ..dispatch import dispatch_tool_use
 from ..mil import process_closure, summarize_session
 from ..operator import (
@@ -325,6 +326,7 @@ def run_session(
     compact_in_progress = False
     stimulus_ready = bool(greeting or inject or first_stimuli_injected)
     tokens_used = 0
+    session_start_time = time.time()
 
     # loop detection: track last N cycle fingerprints (each a frozenset of (tool, input_json, result) tuples)
     _loop_window: list[Any] = []
@@ -337,10 +339,11 @@ def run_session(
     _baseline = None
     _vital_state = None
     _ctx_window = 0
+    _cpe_backend = ""
     try:
         from ..formats import StructuralBaseline
         _baseline = StructuralBaseline.from_dict(read_json(layout.baseline))
-        _ctx_window = _baseline.context_window_budget_tokens
+        _cpe_backend = _baseline.cpe.backend
         _session_id = ""
         if layout.session_token.exists():
             _session_id = str(read_json(layout.session_token).get("session_id", ""))
@@ -427,11 +430,12 @@ def run_session(
 
         # add CPE response to chat history and display status
         if response.tool_use_calls and not _is_verbose():
-            tools_repr = ", ".join(c.tool for c in response.tool_use_calls)
-            print(f"\n{_DIM}  [fcp] working... cycle {cycle} — {tools_repr}{_RESET}")
+            n = len(response.tool_use_calls)
+            print(f"\n{_DIM}  ○ cycle {cycle} — {n}x tool call{'s' if n != 1 else ''}{_RESET}")
+        _model_label = getattr(adapter_ref.current, "_model", "")
+        _ctx_window = _get_context_window(_cpe_backend, _model_label)
         if response.text:
             _append_msg(layout, "cpe", response.text)
-            _model_label = getattr(adapter_ref.current, "_model", "")
             _print_cpe_block(response.text, _model_label, response.input_tokens, response.output_tokens, _ctx_window)
             chat_history.append({"role": "assistant", "content": response.text})
         if response.tool_use_calls:
@@ -490,7 +494,8 @@ def run_session(
                 session_closed = True
 
         # Print cycle summary: [DISPATCH] + [← CPE] in correct order
-        _vlog_cycle_summary(response, cycle_elapsed, tool_log_lines)
+        _budget_pct = _baseline.context_window_budget_pct if _baseline else 0
+        _vlog_cycle_summary(response, cycle_elapsed, tool_log_lines, _ctx_window, _budget_pct, _cpe_backend, _model_label)
 
         if session_closed:
             break
@@ -534,7 +539,7 @@ def run_session(
         if _vital_state is not None and _baseline is not None:
             _vital.tick(_vital_state)
             if _vital.should_run(_vital_state, _baseline):
-                _vital.run(layout, _baseline, _vital_state, tokens_used)
+                _vital.run(layout, _baseline, _vital_state, tokens_used, _cpe_backend, _model_label)
 
         # compact: if closure_payload was written during this cycle, execute Stage 1
         # and rebuild chat_history with the condensed context
@@ -548,4 +553,35 @@ def run_session(
             print(f"\n{_DIM}  [fcp] session compacted{_RESET}")
 
     _vlog("fcp", f"session closed — reason: {close_reason}")
+
+    # Persist last_session.json for status display
+    try:
+        import datetime as _dt
+        session_duration = int(time.time() - session_start_time)
+        _sid = ""
+        if layout.session_token.exists():
+            _sid = str(read_json(layout.session_token).get("session_id", ""))
+        from ..store import atomic_write as _atomic_write
+        last_session: dict[str, Any] = {}
+        if layout.last_session.exists():
+            try:
+                last_session = read_json(layout.last_session)
+            except Exception:
+                pass
+        total_cycles = last_session.get("total_cycles", 0) + cycle
+        total_sessions = last_session.get("total_sessions", 0) + 1
+        total_duration = last_session.get("total_duration_seconds", 0) + session_duration
+        _atomic_write(layout.last_session, {
+            "session_id": _sid,
+            "cycles": cycle,
+            "duration_seconds": session_duration,
+            "closed_at": _dt.datetime.utcnow().isoformat() + "Z",
+            "close_reason": close_reason,
+            "total_cycles": total_cycles,
+            "total_sessions": total_sessions,
+            "total_duration_seconds": total_duration,
+        })
+    except Exception:
+        pass
+
     return close_reason

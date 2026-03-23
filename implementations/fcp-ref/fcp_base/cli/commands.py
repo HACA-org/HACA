@@ -1,5 +1,6 @@
 """
-CLI runtime commands — normal, auto, auto-worker, model, doctor, decommission, update.
+CLI runtime commands — normal, auto, auto-worker, model, doctor, decommission, update,
+status, agenda.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..store import API_KEY_ENV, atomic_write, load_baseline, read_json, save_api_key
 from .. import ui
@@ -411,7 +412,6 @@ def run_update() -> None:
         ui.print_err(f"Cannot update: FCP installation at {fcp_root} is not a git repository.")
         sys.exit(1)
 
-    print()
     ui.hr("fcp update")
     ui.print_info(f"Checking for updates in {fcp_root}...")
 
@@ -431,4 +431,376 @@ def run_update() -> None:
         ui.print_ok("FCP updated successfully.")
         print()
         print(r.stdout.strip())
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Status — shared rendering helper
+# ---------------------------------------------------------------------------
+
+def _fmt_duration(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m {seconds % 60}s"
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    return f"{h}h {m}m"
+
+
+def _last_integrity_event(layout: "Layout", event_type: str) -> tuple[str, str]:
+    """Return (ts_iso, session_id) of the last matching event in integrity.log, or ('', '')."""
+    if not layout.integrity_log.exists():
+        return "", ""
+    ts_iso = ""
+    sid = ""
+    for line in layout.integrity_log.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+            raw = rec.get("data", "{}")
+            data = json.loads(raw) if isinstance(raw, str) else raw
+            if not isinstance(data, dict):
+                continue
+            if data.get("type") == event_type:
+                ts_raw = data.get("ts") or rec.get("ts", "")
+                # ts may be ms int or ISO string
+                if isinstance(ts_raw, (int, float)) and ts_raw > 1e10:
+                    import datetime as _dt
+                    ts_iso = _dt.datetime.utcfromtimestamp(ts_raw / 1000).strftime("%Y-%m-%dT%H:%M:%SZ")
+                else:
+                    ts_iso = str(ts_raw)
+                sid = data.get("session_id", "")
+        except Exception:
+            continue
+    return ts_iso, sid
+
+
+def _last_evolution_event(layout: "Layout") -> tuple[str, str, str, str]:
+    """Return (status, operator, ts_iso, session_id) of the last evolution event."""
+    if not layout.integrity_log.exists():
+        return "", "", "", ""
+    status = ""
+    operator = ""
+    ts_iso = ""
+    sid = ""
+    for line in layout.integrity_log.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+            raw = rec.get("data", "{}")
+            data = json.loads(raw) if isinstance(raw, str) else raw
+            if not isinstance(data, dict):
+                continue
+            etype = data.get("type", "")
+            if etype == "EVOLUTION_AUTH":
+                status = "approved"
+                content = data.get("content", {})
+                if isinstance(content, str):
+                    try:
+                        content = json.loads(content)
+                    except Exception:
+                        content = {}
+                operator = content.get("operator", "") if isinstance(content, dict) else ""
+                ts_raw = data.get("ts", "") or rec.get("ts", "")
+                if isinstance(ts_raw, (int, float)) and ts_raw > 1e10:
+                    import datetime as _dt
+                    ts_iso = _dt.datetime.utcfromtimestamp(ts_raw / 1000).strftime("%Y-%m-%dT%H:%M:%SZ")
+                else:
+                    ts_iso = str(ts_raw)
+                sid = data.get("session_id", "")
+            elif etype == "EVOLUTION_REJECTED":
+                status = "rejected"
+                ts_raw = data.get("ts", "") or rec.get("ts", "")
+                if isinstance(ts_raw, (int, float)) and ts_raw > 1e10:
+                    import datetime as _dt
+                    ts_iso = _dt.datetime.utcfromtimestamp(ts_raw / 1000).strftime("%Y-%m-%dT%H:%M:%SZ")
+                else:
+                    ts_iso = str(ts_raw)
+                sid = ""
+        except Exception:
+            continue
+
+    # check for pending proposals
+    if layout.operator_notifications_dir.exists():
+        for f in layout.operator_notifications_dir.iterdir():
+            try:
+                n = read_json(f)
+                if n.get("type") == "evolution_proposal" or (
+                    isinstance(n.get("detail"), dict) and n["detail"].get("type") == "EVOLUTION_PROPOSAL"
+                ):
+                    status = "pending"
+                    break
+            except Exception:
+                continue
+
+    return status, operator, ts_iso, sid
+
+
+def _print_status_sections(layout: "Layout", beacon_is_active: Any, in_session: bool = False,
+                            live_tokens: int = 0, live_ctx_window: int = 0,
+                            live_budget_tokens: int = 0, live_cycle: int = 0) -> None:
+    from pathlib import Path as _Path
+    import datetime as _dt
+
+    # --- ENTITY ---
+    ui.hr("ENTITY")
+    baseline: dict = {}
+    try:
+        baseline = read_json(layout.baseline)
+        cpe = baseline.get("cpe", {})
+        backend = cpe.get("backend", "?")
+        model = cpe.get("model", "?")
+        entity_version = baseline.get("fcp_version", "?")
+        profile = baseline.get("profile", "?")
+
+        try:
+            from importlib.metadata import version as _ver
+            fcp_version = _ver("fcp")
+        except Exception:
+            try:
+                from .. import __version__ as fcp_version  # type: ignore
+            except Exception:
+                fcp_version = "?"
+
+        if fcp_version != "?" and entity_version != "?" and entity_version != fcp_version:
+            version_label = f"v{entity_version}  [!] fcp {fcp_version} available"
+        else:
+            version_label = f"v{entity_version}"
+
+        imprint: dict = {}
+        if layout.imprint.exists():
+            try:
+                imprint = read_json(layout.imprint)
+            except Exception:
+                pass
+        op_bound = imprint.get("operator_bound", {})
+        op_name = op_bound.get("operator_name", "(not enrolled)")
+        op_email = op_bound.get("operator_email", "")
+        op_str = f"{op_name} — {op_email}" if op_email else op_name
+        activated_at = imprint.get("activated_at", "?")
+
+        ui.print_info(f"FCP            : {version_label}")
+        ui.print_info(f"Profile        : {profile}")
+        ui.print_info(f"Path           : {layout.root}")
+        ui.print_info(f"Operator       : {op_str}")
+        ui.print_info(f"Activation     : {activated_at}")
+    except Exception:
+        ui.print_warn("baseline.json unreadable")
+    print()
+
+    # --- SESSION ---
+    ui.hr("SESSION")
+    token_active = layout.session_token.exists()
+    ui.print_info(f"Token          : {'active' if token_active else 'inactive'}")
+
+    # model + ctx
+    try:
+        cpe = baseline.get("cpe", {})
+        backend = cpe.get("backend", "?")
+        model = cpe.get("model", "?")
+        from ..cpe.models import get_context_window
+        ctx_window = get_context_window(backend, model)
+        budget_pct = baseline.get("context_window", {}).get("budget_pct", 80)
+        ctx_str = f"{ctx_window:,}" if ctx_window else "unknown"
+        ui.print_info(f"Model          : {backend}:{model}")
+        ui.print_info(f"  ctx          : {ctx_str}")
+        ui.print_info(f"  budget       : {budget_pct}%")
+        if in_session and live_tokens and ctx_window:
+            ctx_pct = round(live_tokens / ctx_window * 100, 1)
+            budget_used = round(live_tokens / live_budget_tokens * 100, 1) if live_budget_tokens else 0.0
+            ui.print_info(f"  ctx used     : {ctx_pct}%  ({live_tokens:,} / {ctx_window:,})")
+            ui.print_info(f"  budget used  : {budget_used}%  ({live_tokens:,} / {live_budget_tokens:,})")
+            ui.print_info(f"  cycle        : {live_cycle}")
+    except Exception:
+        pass
+
+    # last session info
+    if layout.last_session.exists():
+        try:
+            ls = read_json(layout.last_session)
+            ls_cycles = ls.get("cycles", 0)
+            ls_dur = _fmt_duration(ls.get("duration_seconds", 0))
+            ls_date = ls.get("closed_at", "?")
+            ls_sid = ls.get("session_id", "?")
+            ui.print_info(f"Last session   : {ls_cycles} cycles / {ls_dur} / {ls_date} / {ls_sid}")
+            total_cycles = ls.get("total_cycles", 0)
+            total_sessions = ls.get("total_sessions", 0)
+            total_dur = _fmt_duration(ls.get("total_duration_seconds", 0))
+            ui.print_info(f"Total          : {total_cycles} cycles / {total_sessions} sessions / {total_dur}")
+        except Exception:
+            pass
+
+    # last closure payload
+    cp_ts, cp_sid = _last_integrity_event(layout, "CLOSURE_PROCESSED")
+    if cp_ts:
+        ui.print_info(f"Last closure   : {cp_ts} / {cp_sid}" if cp_sid else f"Last closure   : {cp_ts}")
+
+    # last sleep cycle
+    sc_ts, sc_sid = _last_integrity_event(layout, "SLEEP_COMPLETE")
+    if sc_ts:
+        ui.print_info(f"Last sleep     : {sc_ts} / {sc_sid}" if sc_sid else f"Last sleep     : {sc_ts}")
+
+    # last evolution proposal
+    ev_status, ev_op, ev_ts, ev_sid = _last_evolution_event(layout)
+    if ev_status:
+        ev_parts = [ev_status]
+        if ev_op:
+            ev_parts.append(ev_op)
+        if ev_ts:
+            ev_parts.append(ev_ts)
+        if ev_sid:
+            ev_parts.append(ev_sid)
+        ev_str = " / ".join(ev_parts)
+        if ev_status == "pending":
+            ui.print_warn(f"Last evolution : {ev_str}")
+        else:
+            ui.print_info(f"Last evolution : {ev_str}")
+
+    # last heartbeat
+    from ..exec_.counters import last_heartbeat_ts
+    hb_ts = last_heartbeat_ts(layout)
+    if hb_ts:
+        hb_str = _dt.datetime.utcfromtimestamp(hb_ts).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ui.print_info(f"Last heartbeat : {hb_str}")
+    print()
+
+    # --- STATE ---
+    ui.hr("STATE")
+    if beacon_is_active(layout):
+        ui.print_warn("Beacon         : ACTIVE")
+    else:
+        ui.print_info("Beacon         : clear")
+
+    agenda_count = 0
+    if layout.agenda.exists():
+        try:
+            agenda_count = len(read_json(layout.agenda).get("tasks", []))
+        except Exception:
+            pass
+    ui.print_info(f"Agenda         : {agenda_count} task(s)")
+
+    ep_count = 0
+    sem_count = 0
+    for subdir in ("episodic", "semantic"):
+        d = layout.root / "memory" / subdir
+        if d.exists():
+            n = sum(1 for _ in d.iterdir() if _.is_file())
+            if subdir == "episodic":
+                ep_count = n
+            else:
+                sem_count = n
+    mem_count = ep_count + sem_count
+    ui.print_info(f"Memories       : {mem_count}  ({ep_count} episodic / {sem_count} semantic)")
+
+    wf = ""
+    if layout.workspace_focus.exists():
+        try:
+            wf = str(read_json(layout.workspace_focus).get("path", ""))
+        except Exception:
+            pass
+    ui.print_info(f"Workspace      : {wf or '(not set)'}")
+
+    # CMI status
+    cmi_active = False
+    try:
+        cmi_cfg = baseline.get("cmi", {})
+        cmi_active = bool(cmi_cfg.get("active"))
+    except Exception:
+        pass
+    ui.print_info(f"CMI            : {'active' if cmi_active else 'inactive'}")
+
+    # MCP / pairing
+    pairing_dir = _Path.home() / ".fcp" / "pairing"
+    pairing_active = pairing_dir.exists() and bool(list(pairing_dir.glob("*.meta.json")))
+    ui.print_info(f"MCP            : {'active' if pairing_active else 'inactive'}")
+
+    # inbox
+    inbox_count = 0
+    if layout.inbox_dir.exists():
+        inbox_count = sum(1 for f in layout.inbox_dir.iterdir() if f.is_file())
+    if inbox_count:
+        ui.print_warn(f"[!] /inbox     : {inbox_count} pending")
+    print()
+
+    # --- PAIRING (detail) ---
+    if pairing_active:
+        ui.hr("PAIRING")
+        for meta_path in pairing_dir.glob("*.meta.json"):
+            try:
+                meta = read_json(meta_path)
+                sid = meta.get("session_id", "?")
+                key = meta.get("key", "?")
+                model_p = meta.get("model", "?")
+                started = meta.get("started_at", "?")
+                request_path = pairing_dir / f"{sid}.request.json"
+                pending = "yes" if request_path.exists() else "no"
+                ui.print_info(f"Session        : {sid}  key: {key}")
+                ui.print_info(f"Model          : {model_p}")
+                ui.print_info(f"Started        : {started}")
+                ui.print_info(f"MCP dir        : {pairing_dir}")
+                ui.print_info(f"Pending prompt : {pending}")
+            except Exception:
+                pass
+        print()
+
+
+# ---------------------------------------------------------------------------
+# Status — entity overview without booting a session
+# ---------------------------------------------------------------------------
+
+def run_status(layout: "Layout") -> None:
+    """Print entity status overview (no session required)."""
+    from ..sil import beacon_is_active
+    from pathlib import Path as _Path
+
+    ui.hr("fcp status")
+    _print_status_sections(layout, beacon_is_active, in_session=False)
+
+
+# ---------------------------------------------------------------------------
+# Agenda — list scheduled tasks without booting a session
+# ---------------------------------------------------------------------------
+
+def run_agenda(layout: "Layout") -> None:
+    """List scheduled tasks from agenda.json (no session required)."""
+    ui.hr("fcp agenda")
+
+    if not layout.agenda.exists():
+        ui.print_info("No agenda found. Tasks are created via /cron add in-session.")
+        print()
+        return
+
+    try:
+        agenda = json.loads(layout.agenda.read_text(encoding="utf-8"))
+    except Exception as exc:
+        ui.print_err(f"Could not read agenda: {exc}")
+        print()
+        return
+
+    tasks = agenda.get("tasks", [])
+    if not tasks:
+        ui.print_info("Agenda is empty.")
+        print()
+        return
+
+    for task in tasks:
+        tid = task.get("id", "?")
+        desc = task.get("description", tid)
+        status = task.get("status", "?")
+        schedule = task.get("schedule", "")
+        last_run = task.get("last_run", "")
+        executor = task.get("executor", "cpe")
+
+        status_mark = "[√]" if status == "approved" else "[!]" if status == "pending" else "[ ]"
+        schedule_str = f"  {schedule}" if schedule else ""
+        last_str = f"  last: {last_run}" if last_run else ""
+        print(f"  {status_mark} [{tid}] {desc}  ({executor}{schedule_str}{last_str})")
+
+    print()
+    print(f"  {len(tasks)} task(s) — manage with /cron in-session")
     print()

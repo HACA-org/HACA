@@ -13,9 +13,9 @@ adapters:
     api_version: "2024-06-15"
     max_tokens: 8192
     models:
-      - claude-opus-4-6
-      - claude-sonnet-4-6
-      - claude-haiku-4-5-20251001
+      claude-opus-4-6:           { context_window: 200000 }
+      claude-sonnet-4-6:         { context_window: 200000 }
+      claude-haiku-4-5-20251001: { context_window: 200000 }
 
   openai:
     # GPT family — best-in-class for reasoning at scale
@@ -28,9 +28,9 @@ adapters:
       - streaming: false
       - vision: true
     models:
-      - gpt-4o
-      - gpt-4o-mini
-      - gpt-4-turbo
+      gpt-4o:       { context_window: 128000 }
+      gpt-4o-mini:  { context_window: 128000 }
+      gpt-4-turbo:  { context_window: 128000 }
 
   google:
     # Gemini family — competitive reasoning with thinking
@@ -42,12 +42,17 @@ adapters:
       - thinking: true
       - streaming: false
     models:
-      - gemini-2.0-flash
-      - gemini-2.0-flash-thinking-exp-01-21
-      - gemini-1.5-pro
+      gemini-2.5-flash:                      { context_window: 1048576 }
+      gemini-3-flash-preview:                { context_window: 1048576 }
+      gemini-3.1-flash-lite-preview:         { context_window: 1048576 }
+      gemini-3.1-pro-preview:                { context_window: 1048576 }
+      gemini-2.0-flash:                      { context_window: 1048576 }
+      gemini-2.0-flash-thinking-exp-01-21:   { context_window: 1048576 }
+      gemini-1.5-pro:                        { context_window: 2097152 }
 
   ollama:
     # Local inference — zero cost, full control
+    # context_window only set for well-known models; others report as unknown (no ctx%)
     default: llama3.2
     description: "Local inference, configurable model"
     api_url: "http://localhost:11434"
@@ -56,11 +61,17 @@ adapters:
       - streaming: true
       - local_only: true
     models:
-      - llama3.2
-      - llama2
-      - neural-chat
-      - mistral
-      - neural-chat
+      minimax-m2.7:        { context_window: 200000 }
+      minimax-m2.5:        { context_window: 198000 }
+      nemotron-3-super:    { context_window: 256000 }
+      qwen3.5:             { context_window: 256000 }
+      qwen3-coder-next:    { context_window: 256000 }
+      ministral-3:         { context_window: 256000 }
+      glm-5:               { context_window: 198000 }
+      llama3.2:            {}
+      llama2:              {}
+      neural-chat:         {}
+      mistral:             {}
     notes: "Check local Ollama instance for available models"
 
   pairing:

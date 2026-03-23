@@ -46,9 +46,13 @@ def print_info(msg: str) -> None: print(info(msg))
 _W = 60
 
 def hr(label: str = "", width: int = _W) -> None:
-    """Print a section divider, optionally with a label."""
+    """Print a section divider, optionally with a label.
+
+    A labelled divider includes a leading blank line so callers do not need
+    to emit one themselves.  An unlabelled divider prints the rule only.
+    """
     if label:
-        pad = width - len(label) - 4
+        pad = max(0, width - len(label) - 4)
         print(f"\n  ── {label} {'─' * pad}")
     else:
         print(f"  {'─' * width}")
@@ -231,12 +235,7 @@ def print_cpe_block(
     border = "─" * max(0, _WIDTH - len(label) - 3)
     print(f"\n{GRAY}─── {label} {border}{RESET}")
     print(text)
-    stats = f"{input_tokens:,} ↑ / {output_tokens:,} ↓"
-    if ctx_window:
-        pct = round(input_tokens / ctx_window * 100, 1)
-        stats += f" | ctx: {pct}%"
-    footer_border = "─" * max(0, _WIDTH - len(stats) - 3)
-    print(f"{GRAY}─── {stats} {footer_border}{RESET}")
+    print(f"{GRAY}{'─' * _WIDTH}{RESET}")
 
 
 def vprint(text: str) -> None:

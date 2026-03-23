@@ -23,6 +23,7 @@ from fcp_base.cpe.models import (
     get_default_model,
     get_api_version,
     get_max_tokens,
+    get_context_window,
     list_models,
     supports_feature,
 )
@@ -818,6 +819,18 @@ class TestModelRegistry:
         models = list_models("anthropic")
         assert len(models) > 0
         assert "claude-opus-4-6" in models
+
+    def test_get_context_window_known_model(self):
+        """Known models return their real context window."""
+        assert get_context_window("anthropic", "claude-opus-4-6") == 200000
+        assert get_context_window("openai", "gpt-4o") == 128000
+        assert get_context_window("google", "gemini-2.0-flash") == 1048576
+
+    def test_get_context_window_unknown_model(self):
+        """Unknown models return 0 (suppress ctx% display)."""
+        assert get_context_window("ollama", "llama3.2") == 0
+        assert get_context_window("ollama", "custom-model") == 0
+        assert get_context_window("unknown", "any-model") == 0
 
     def test_supports_feature_openai_caching(self):
         """OpenAI supports prompt caching."""

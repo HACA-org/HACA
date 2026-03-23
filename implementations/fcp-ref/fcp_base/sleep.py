@@ -78,8 +78,16 @@ def run_sleep_cycle(layout: Layout) -> None:
     # Cache session tail for faster boot on next cycle
     cache_session_tail(layout)
 
+    # Read session_id before removing token
+    _session_id = ""
+    if layout.session_token.exists():
+        try:
+            _session_id = str(read_json(layout.session_token).get("session_id", ""))
+        except Exception:
+            pass
+
     # Write SLEEP_COMPLETE
-    _write_sleep_complete(layout)
+    _write_sleep_complete(layout, _session_id)
 
     # Remove session token (last act)
     _remove_session_token(layout)
@@ -560,11 +568,11 @@ def _update_integrity_doc(layout: Layout, files_written: dict[str, str]) -> None
 # Completion
 # ---------------------------------------------------------------------------
 
-def _write_sleep_complete(layout: Layout) -> None:
+def _write_sleep_complete(layout: Layout, session_id: str = "") -> None:
     envelope = acp_encode(
         env_type="MSG",
         source="sil",
-        data={"type": "SLEEP_COMPLETE", "ts": int(time.time() * 1000)},
+        data={"type": "SLEEP_COMPLETE", "session_id": session_id, "ts": int(time.time() * 1000)},
     )
     append_jsonl(layout.integrity_log, envelope)
 

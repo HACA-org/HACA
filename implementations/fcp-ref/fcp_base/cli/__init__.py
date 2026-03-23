@@ -16,6 +16,8 @@ from .commands import (
     run_doctor,
     run_decommission,
     run_model,
+    run_status,
+    run_agenda,
 )
 from .endure import run_endure_sync, run_endure_origin, run_endure_chain
 
@@ -34,6 +36,8 @@ __all__ = [
     "run_doctor",
     "run_decommission",
     "run_model",
+    "run_status",
+    "run_agenda",
     "run_endure_sync",
     "run_endure_origin",
     "run_endure_chain",

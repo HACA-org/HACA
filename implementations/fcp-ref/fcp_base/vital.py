@@ -23,6 +23,9 @@ from typing import Any
 from .formats import StructuralBaseline
 from .sil import log_critical, log_heartbeat, log_severance_commit, sha256_file as _sha256_file, write_notification
 from .store import Layout, atomic_write, read_json
+from .cpe.models import get_context_window as _get_context_window
+
+_BUDGET_FALLBACK_TOKENS = 200_000
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +37,7 @@ class VitalCheckState:
     cycles_since_check: int = 0
     last_check_ts: float = field(default_factory=time.time)
     session_id: str = ""
-    context_budget_notified: bool = False
+    context_critical_triggered: bool = False
 
 
 def should_run(state: VitalCheckState, baseline: StructuralBaseline) -> bool:
@@ -54,6 +57,8 @@ def run(
     baseline: StructuralBaseline,
     state: VitalCheckState,
     tokens_used: int,
+    cpe_backend: str = "",
+    cpe_model: str = "",
 ) -> list[str]:
     """Execute all Vital Checks. Returns list of Critical condition names raised.
 
@@ -62,7 +67,7 @@ def run(
     """
     criticals: list[str] = []
 
-    criticals += _check_context_budget(layout, baseline, tokens_used, state)
+    criticals += _check_context_budget(layout, baseline, tokens_used, state, cpe_backend, cpe_model)
     criticals += _check_workspace_focus(layout)
     _check_presession_buffer(layout, baseline)
     criticals += _check_identity_drift(layout)
@@ -86,21 +91,32 @@ def _check_context_budget(
     baseline: StructuralBaseline,
     tokens_used: int,
     state: VitalCheckState,
+    cpe_backend: str = "",
+    cpe_model: str = "",
 ) -> list[str]:
-    budget = baseline.context_window_budget_tokens
+    budget_pct = baseline.context_window_budget_pct
     critical_pct = baseline.context_window_critical_pct
+    model_window = _get_context_window(cpe_backend, cpe_model) if cpe_backend and cpe_model else 0
+    budget = int(model_window * budget_pct / 100) if model_window else _BUDGET_FALLBACK_TOKENS
     if budget <= 0:
         return []
     pct = int(tokens_used * 100 / budget)
     if pct >= critical_pct:
-        if not state.context_budget_notified:
-            detail = {"tokens_used": tokens_used, "budget": budget, "pct": pct, "threshold_pct": critical_pct}
+        if not state.context_critical_triggered:
+            detail = {
+                "tokens_used": tokens_used,
+                "budget": budget,
+                "budget_pct": budget_pct,
+                "model_window": model_window or _BUDGET_FALLBACK_TOKENS,
+                "pct": pct,
+                "threshold_pct": critical_pct,
+            }
             log_critical(layout, "CONTEXT_BUDGET_CRITICAL", detail)
             write_notification(layout, "critical", {
                 "type": "CONTEXT_BUDGET_CRITICAL",
                 "detail": detail,
             })
-            state.context_budget_notified = True
+            state.context_critical_triggered = True
         return ["context_budget"]
     return []
 

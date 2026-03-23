@@ -298,7 +298,6 @@ def _resolve_action_ledger(layout: Layout) -> None:
     if not pending:
         return
 
-    print()
     ui.hr("Crash Recovery")
     ui.print_warn("The following skills were in-progress when the session crashed:")
     print()

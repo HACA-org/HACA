@@ -8,6 +8,8 @@ import json
 from typing import Any, TYPE_CHECKING
 
 from ..operator import is_verbose as _is_verbose, get_debugger as _get_debugger
+from ..cpe.models import get_context_window as _get_context_window
+from ..vital import _BUDGET_FALLBACK_TOKENS
 from .. import ui
 
 if TYPE_CHECKING:
@@ -20,6 +22,21 @@ _GRAY  = ui.GRAY
 _vprint       = ui.vprint
 _format_bytes = ui.format_bytes
 _compact_json = ui.compact_json
+
+
+def _yaml_inline(data: Any) -> str:
+    """Format a dict as clean key: value pairs, stripping JSON punctuation."""
+    if not isinstance(data, dict):
+        return str(data)
+    parts = []
+    for k, v in data.items():
+        if isinstance(v, str):
+            parts.append(f"{k}: {v}")
+        elif isinstance(v, dict):
+            parts.append(f"{k}: {{{', '.join(f'{dk}: {dv}' for dk, dv in v.items())}}}")
+        else:
+            parts.append(f"{k}: {v}")
+    return "  ".join(parts)
 
 
 def _vlog(actor: str, msg: str) -> None:
@@ -77,6 +94,10 @@ def _vlog_cycle_summary(
     response: "CPEResponse",
     elapsed_secs: float,
     tool_log_lines: list[dict[str, Any]],
+    ctx_window: int = 0,
+    budget_pct: int = 0,
+    cpe_backend: str = "",
+    cpe_model: str = "",
 ) -> None:
     """Print cycle summary: [DISPATCH] tree + [← CPE] line (always visible).
 
@@ -90,7 +111,6 @@ def _vlog_cycle_summary(
 
     # Dispatch block — ALWAYS show (if tools were called)
     if tool_log_lines:
-        print(f"{_DIM}  ├─ [DISPATCH]{_RESET}")
         for tool_info in tool_log_lines:
             tool = tool_info["tool"]
             is_last = tool_info["is_last"]
@@ -100,19 +120,26 @@ def _vlog_cycle_summary(
             timing_ms = tool_info["timing_ms"]
             timing_str = f", {timing_ms:.0f}ms" if timing_ms > 10 else ""
 
-            prefix = "  │  └─" if is_last else "  │  ├─"
+            prefix = "  └─" if is_last else "  ├─"
 
             if verbose:
                 print(f"{_DIM}{prefix} {tool}{_RESET}")
-                input_json = _compact_json(tool_info["input"])
-                output_json = _compact_json(tool_info["output"])
-                print(f"{_DIM}{prefix[:-2]}│  ├─ input: {input_json}{_RESET}")
-                print(f"{_DIM}{prefix[:-2]}│  └─ output: {output_json}{_RESET}")
+                print(f"{_DIM}  │    input:  {_yaml_inline(tool_info['input'])}{_RESET}")
+                print(f"{_DIM}  │    output: {_yaml_inline(tool_info['output'])}{_RESET}")
             else:
-                print(f"{_DIM}{prefix} {tool} ... input ({input_size}) → {status} ({result_size}{timing_str}){_RESET}")
+                print(f"{_DIM}{prefix} {tool}  {input_size} → {status} ({result_size}{timing_str}){_RESET}")
 
     # CPE response line — ALWAYS show
-    print(f"{_DIM}  └─ [← CPE] ⏱ {elapsed_secs:.1f}s | {response.stop_reason}{_RESET}")
+    _tokens = f"{response.input_tokens:,} ↑ / {response.output_tokens:,} ↓"
+    if ctx_window:
+        _ctx_pct = round(response.input_tokens / ctx_window * 100, 1)
+        _tokens += f" | ctx: {_ctx_pct}%"
+    if budget_pct and cpe_backend and cpe_model:
+        _model_window = _get_context_window(cpe_backend, cpe_model)
+        _budget_tokens = int(_model_window * budget_pct / 100) if _model_window else _BUDGET_FALLBACK_TOKENS
+        _bpct = round(response.input_tokens / _budget_tokens * 100, 1)
+        _tokens += f" | budget: {_bpct}%"
+    print(f"{_DIM}  └─ CPE  ◷ {elapsed_secs:.1f}s | {_tokens} | {response.stop_reason}{_RESET}")
     if verbose and response.text:
         preview = response.text[:50].replace("\n", " ")
         print(f"{_DIM}     └─ text: {preview!r} ({len(response.text)} chars){_RESET}")

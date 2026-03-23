@@ -323,8 +323,8 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
         _cmd_allowlist_new(layout, args)
         return True
     if cmd == "/shell":
-        # legacy: treat as /skill allowlist [args]
-        _cmd_skill(layout, ["allowlist"] + args)
+        # legacy alias for /allowlist
+        _cmd_allowlist_new(layout, args)
         return True
 
     # --- Model, endure & cron ---
@@ -364,19 +364,26 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
 # --- Entity & session ---
 
 def _cmd_status(layout: Layout) -> None:
-    token_present = layout.session_token.exists()
-    session_size = layout.session_store.stat().st_size if layout.session_store.exists() else 0
-    beacon = layout.distress_beacon.exists()
-    print(f"  session token  : {'active' if token_present else 'inactive'}")
-    print(f"  session store  : {session_size} bytes")
-    print(f"  distress beacon: {'ACTIVE' if beacon else 'clear'}")
-    wf = ""
-    if layout.workspace_focus.exists():
-        try:
-            wf = str(read_json(layout.workspace_focus).get("path", ""))
-        except Exception:
-            pass
-    print(f"  workspace focus: {wf or '(not set)'}")
+    from .sil import beacon_is_active
+    from .cli.commands import _print_status_sections
+
+    # gather live session data from vlog module state
+    live_tokens = live_ctx_window = live_budget_tokens = live_cycle = 0
+    try:
+        from .session.vlog import _input_tokens, _model_window, _budget_tokens, _cycle_count
+        live_tokens = _input_tokens
+        live_ctx_window = _model_window
+        live_budget_tokens = _budget_tokens
+        live_cycle = _cycle_count
+    except Exception:
+        pass
+
+    ui.hr("/status")
+    _print_status_sections(
+        layout, beacon_is_active, in_session=True,
+        live_tokens=live_tokens, live_ctx_window=live_ctx_window,
+        live_budget_tokens=live_budget_tokens, live_cycle=live_cycle,
+    )
 
 
 def run_doctor(layout: Layout, fix: bool, clear_sentinels: bool = False) -> None:
@@ -835,7 +842,6 @@ def _skill_run_direct(layout: Layout, skill_name: str, params: dict[str, Any]) -
         return
     try:
         output = dispatch(layout, skill_name, params, idx)
-        print()
         ui.hr(f"skill: {skill_name}")
         print(output)
         print()
@@ -969,7 +975,6 @@ def _pick_model_interactive(current_backend: str, current_model: str) -> tuple[s
 def print_integrity_chain(layout: Layout) -> None:
     """Display all entries in the integrity chain."""
     from .store import read_jsonl
-    print()
     ui.hr("integrity chain")
     if not layout.integrity_chain.exists() or layout.integrity_chain.stat().st_size == 0:
         ui.print_info("Integrity chain is empty.")
