@@ -429,8 +429,8 @@ def run_session(
 
         # add CPE response to chat history and display status
         if response.tool_use_calls and not _is_verbose():
-            tools_repr = ", ".join(c.tool for c in response.tool_use_calls)
-            print(f"\n{_DIM}  ┄ cycle {cycle} — {tools_repr}{_RESET}")
+            n = len(response.tool_use_calls)
+            print(f"\n{_DIM}  ┄ cycle {cycle} — {n}x tool call{'s' if n != 1 else ''}{_RESET}")
         _model_label = getattr(adapter_ref.current, "_model", "")
         _ctx_window = _get_context_window(_cpe_backend, _model_label)
         if response.text:
