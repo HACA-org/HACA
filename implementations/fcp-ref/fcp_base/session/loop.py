@@ -326,6 +326,7 @@ def run_session(
     compact_in_progress = False
     stimulus_ready = bool(greeting or inject or first_stimuli_injected)
     tokens_used = 0
+    session_start_time = time.time()
 
     # loop detection: track last N cycle fingerprints (each a frozenset of (tool, input_json, result) tuples)
     _loop_window: list[Any] = []
@@ -552,4 +553,35 @@ def run_session(
             print(f"\n{_DIM}  [fcp] session compacted{_RESET}")
 
     _vlog("fcp", f"session closed — reason: {close_reason}")
+
+    # Persist last_session.json for status display
+    try:
+        import datetime as _dt
+        session_duration = int(time.time() - session_start_time)
+        _sid = ""
+        if layout.session_token.exists():
+            _sid = str(read_json(layout.session_token).get("session_id", ""))
+        from ..store import atomic_write as _atomic_write
+        last_session: dict[str, Any] = {}
+        if layout.last_session.exists():
+            try:
+                last_session = read_json(layout.last_session)
+            except Exception:
+                pass
+        total_cycles = last_session.get("total_cycles", 0) + cycle
+        total_sessions = last_session.get("total_sessions", 0) + 1
+        total_duration = last_session.get("total_duration_seconds", 0) + session_duration
+        _atomic_write(layout.last_session, {
+            "session_id": _sid,
+            "cycles": cycle,
+            "duration_seconds": session_duration,
+            "closed_at": _dt.datetime.utcnow().isoformat() + "Z",
+            "close_reason": close_reason,
+            "total_cycles": total_cycles,
+            "total_sessions": total_sessions,
+            "total_duration_seconds": total_duration,
+        })
+    except Exception:
+        pass
+
     return close_reason

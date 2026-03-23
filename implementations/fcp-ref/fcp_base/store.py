@@ -218,6 +218,10 @@ class Layout:
         return self.root / "state" / "agenda.json"
 
     @property
+    def last_session(self) -> Path:
+        return self.root / "state" / "last_session.json"
+
+    @property
     def first_stimuli(self) -> Path:
         return self.root / "state" / "first-stimuli.json"
 

@@ -493,6 +493,13 @@ def process_closure(layout: Layout) -> bool:
     # 4. delete pending-closure.json
     layout.pending_closure.unlink()
 
+    # 5. log CLOSURE_PROCESSED to integrity.log
+    try:
+        from .sil.chain import _log_envelope
+        _log_envelope(layout, "mil", "CLOSURE_PROCESSED", json.dumps({"ts": int(time.time() * 1000)}))
+    except Exception:
+        pass
+
     return True
 
 

@@ -365,158 +365,25 @@ def _dispatch_command(layout: Layout, cmd: str, args: list, adapter_ref: Any) ->
 
 def _cmd_status(layout: Layout) -> None:
     from .sil import beacon_is_active
-    from pathlib import Path as _Path
+    from .cli.commands import _print_status_sections
 
-    # --- ENTITY ---
-    ui.hr("ENTITY")
-    try:
-        baseline = read_json(layout.baseline)
-        cpe = baseline.get("cpe", {})
-        backend = cpe.get("backend", "?")
-        model = cpe.get("model", "?")
-        entity_version = baseline.get("fcp_version", "?")
-        profile = baseline.get("profile", "?")
-
-        try:
-            from importlib.metadata import version as _ver
-            fcp_version = _ver("fcp")
-        except Exception:
-            try:
-                from . import __version__ as fcp_version  # type: ignore
-            except Exception:
-                fcp_version = "?"
-
-        version_str = f"v{entity_version}"
-        if fcp_version != "?" and entity_version != "?":
-            if entity_version == fcp_version:
-                version_str += f" (fcp {fcp_version} — up to date)"
-            else:
-                version_str += f" (fcp {fcp_version} — update available)"
-
-        from .cpe.models import get_context_window
-        ctx_window = get_context_window(backend, model)
-        budget_pct = baseline.get("context_window", {}).get("budget_pct", 80)
-        ctx_str = f"{ctx_window:,}" if ctx_window else "unknown"
-        model_str = f"{backend}:{model} | ctx: {ctx_str} | budget: {budget_pct}%"
-
-        entity_id = layout.root.name
-        ui.print_info(f"identity       : {entity_id}  {version_str}")
-        ui.print_info(f"model          : {model_str}")
-        ui.print_info(f"profile        : {profile}")
-    except Exception:
-        ui.print_warn("baseline.json unreadable")
-
-    print()
-
-    # --- SESSION ---
-    ui.hr("SESSION")
-    token_present = layout.session_token.exists()
-    session_size = layout.session_store.stat().st_size if layout.session_store.exists() else 0
-    ui.print_info(f"token          : {'active' if token_present else 'inactive'}")
-    ui.print_info(f"store          : {ui.format_bytes(session_size)}")
-
-    # live ctx/budget from vlog state
+    # gather live session data from vlog module state
+    live_tokens = live_ctx_window = live_budget_tokens = live_cycle = 0
     try:
         from .session.vlog import _input_tokens, _model_window, _budget_tokens, _cycle_count
-        if _input_tokens and _model_window:
-            ctx_pct = round(_input_tokens / _model_window * 100, 1)
-            budget_pct_used = round(_input_tokens / _budget_tokens * 100, 1) if _budget_tokens else 0.0
-            ui.print_info(f"cycle          : {_cycle_count}")
-            ui.print_info(f"context used   : {ctx_pct}%  ({_input_tokens:,} / {_model_window:,} tokens)")
-            ui.print_info(f"budget used    : {budget_pct_used}%  ({_input_tokens:,} / {_budget_tokens:,} budget tokens)")
+        live_tokens = _input_tokens
+        live_ctx_window = _model_window
+        live_budget_tokens = _budget_tokens
+        live_cycle = _cycle_count
     except Exception:
         pass
 
-    print()
-
-    # --- WORKSPACE ---
-    ui.hr("WORKSPACE")
-    wf = ""
-    if layout.workspace_focus.exists():
-        try:
-            wf = str(read_json(layout.workspace_focus).get("path", ""))
-        except Exception:
-            pass
-    ui.print_info(f"focus          : {wf or '(not set)'}")
-    print()
-
-    # --- STATE ---
-    ui.hr("STATE")
-    if beacon_is_active(layout):
-        ui.print_warn("beacon         : ACTIVE")
-    else:
-        ui.print_info("beacon         : clear")
-
-    notif_count = 0
-    if layout.operator_notifications_dir.exists():
-        notif_count = sum(1 for _ in layout.operator_notifications_dir.iterdir())
-    if notif_count:
-        ui.print_warn(f"notifications  : {notif_count} pending")
-    else:
-        ui.print_info("notifications  : none")
-
-    ep_count = 0
-    sem_count = 0
-    for subdir in ("episodic", "semantic"):
-        d = layout.root / "memory" / subdir
-        if d.exists():
-            n = sum(1 for _ in d.iterdir() if _.is_file())
-            if subdir == "episodic":
-                ep_count = n
-            else:
-                sem_count = n
-    mem_count = ep_count + sem_count
-    ui.print_info(f"memories       : {mem_count}  ({ep_count} episodic / {sem_count} semantic)")
-
-    agenda_count = 0
-    if layout.agenda.exists():
-        try:
-            agenda_data = read_json(layout.agenda)
-            agenda_count = len(agenda_data.get("tasks", []))
-        except Exception:
-            pass
-    ui.print_info(f"agenda         : {agenda_count} task(s)")
-    print()
-
-    # --- CMI ---
-    try:
-        cmi_cfg = baseline.get("cmi", {})  # type: ignore[possibly-undefined]
-        if cmi_cfg.get("active"):
-            ui.hr("CMI")
-            node_id = cmi_cfg.get("node_id", "?")
-            endpoint = cmi_cfg.get("endpoint", "?")
-            channels = cmi_cfg.get("channels", [])
-            active_channels = [c for c in channels if c.get("status") == "active"]
-            ui.print_info(f"status         : active  (node: {node_id})")
-            ui.print_info(f"endpoint       : {endpoint}")
-            ui.print_info(f"channels       : {len(active_channels)} active")
-            print()
-    except Exception:
-        pass
-
-    # --- PAIRING ---
-    pairing_dir = _Path.home() / ".fcp" / "pairing"
-    if pairing_dir.exists():
-        sessions = list(pairing_dir.glob("*.meta.json"))
-        if sessions:
-            ui.hr("PAIRING")
-            for meta_path in sessions:
-                try:
-                    meta = read_json(meta_path)
-                    sid = meta.get("session_id", "?")
-                    key = meta.get("key", "?")
-                    model_p = meta.get("model", "?")
-                    started = meta.get("started_at", "?")
-                    request_path = pairing_dir / f"{sid}.request.json"
-                    pending = "yes" if request_path.exists() else "no"
-                    ui.print_info(f"session        : {sid}  key: {key}")
-                    ui.print_info(f"model          : {model_p}")
-                    ui.print_info(f"started        : {started}")
-                    ui.print_info(f"mcp dir        : {pairing_dir}")
-                    ui.print_info(f"pending prompt : {pending}")
-                except Exception:
-                    pass
-            print()
+    ui.hr("/status")
+    _print_status_sections(
+        layout, beacon_is_active, in_session=True,
+        live_tokens=live_tokens, live_ctx_window=live_ctx_window,
+        live_budget_tokens=live_budget_tokens, live_cycle=live_cycle,
+    )
 
 
 def run_doctor(layout: Layout, fix: bool, clear_sentinels: bool = False) -> None:

@@ -37,7 +37,7 @@ class VitalCheckState:
     cycles_since_check: int = 0
     last_check_ts: float = field(default_factory=time.time)
     session_id: str = ""
-    context_budget_notified: bool = False
+    context_critical_triggered: bool = False
 
 
 def should_run(state: VitalCheckState, baseline: StructuralBaseline) -> bool:
@@ -102,7 +102,7 @@ def _check_context_budget(
         return []
     pct = int(tokens_used * 100 / budget)
     if pct >= critical_pct:
-        if not state.context_budget_notified:
+        if not state.context_critical_triggered:
             detail = {
                 "tokens_used": tokens_used,
                 "budget": budget,
@@ -116,7 +116,7 @@ def _check_context_budget(
                 "type": "CONTEXT_BUDGET_CRITICAL",
                 "detail": detail,
             })
-            state.context_budget_notified = True
+            state.context_critical_triggered = True
         return ["context_budget"]
     return []
 
