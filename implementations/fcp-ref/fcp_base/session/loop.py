@@ -490,7 +490,7 @@ def run_session(
                 session_closed = True
 
         # Print cycle summary: [DISPATCH] + [← CPE] in correct order
-        _vlog_cycle_summary(response, cycle_elapsed, tool_log_lines)
+        _vlog_cycle_summary(response, cycle_elapsed, tool_log_lines, _ctx_window)
 
         if session_closed:
             break

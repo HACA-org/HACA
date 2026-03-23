@@ -77,6 +77,7 @@ def _vlog_cycle_summary(
     response: "CPEResponse",
     elapsed_secs: float,
     tool_log_lines: list[dict[str, Any]],
+    ctx_window: int = 0,
 ) -> None:
     """Print cycle summary: [DISPATCH] tree + [← CPE] line (always visible).
 
@@ -112,7 +113,11 @@ def _vlog_cycle_summary(
                 print(f"{_DIM}{prefix} {tool} ... input ({input_size}) → {status} ({result_size}{timing_str}){_RESET}")
 
     # CPE response line — ALWAYS show
-    print(f"{_DIM}  └─ [← CPE] ⏱ {elapsed_secs:.1f}s | {response.stop_reason}{_RESET}")
+    _tokens = f"{response.input_tokens:,} ↑ / {response.output_tokens:,} ↓"
+    if ctx_window:
+        _pct = round(response.input_tokens / ctx_window * 100, 1)
+        _tokens += f" | ctx: {_pct}%"
+    print(f"{_DIM}  └─ [← CPE] ⏱ {elapsed_secs:.1f}s | {_tokens} | {response.stop_reason}{_RESET}")
     if verbose and response.text:
         preview = response.text[:50].replace("\n", " ")
         print(f"{_DIM}     └─ text: {preview!r} ({len(response.text)} chars){_RESET}")
