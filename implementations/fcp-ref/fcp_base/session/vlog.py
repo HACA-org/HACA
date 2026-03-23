@@ -119,8 +119,8 @@ def _vlog_cycle_summary(
 
             if verbose:
                 print(f"{_DIM}{prefix} {tool}{_RESET}")
-                print(f"{_DIM}{prefix[:-2]}  │    input:  {_yaml_inline(tool_info['input'])}{_RESET}")
-                print(f"{_DIM}{prefix[:-2]}  │    output: {_yaml_inline(tool_info['output'])}{_RESET}")
+                print(f"{_DIM}  │    input:  {_yaml_inline(tool_info['input'])}{_RESET}")
+                print(f"{_DIM}  │    output: {_yaml_inline(tool_info['output'])}{_RESET}")
             else:
                 print(f"{_DIM}{prefix} {tool}  {input_size} → {status} ({result_size}{timing_str}){_RESET}")
 
