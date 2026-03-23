@@ -28,7 +28,7 @@ def build_boot_stats(
     total_chars = len(system) + sum(len(str(m.get("content", ""))) for m in chat_history)
     total_tokens = total_chars // 4
     baseline = load_baseline(layout)
-    ctx_window = baseline.get("context_window", {}).get("budget_tokens", 0)
+    ctx_window = baseline.get("context_window", {}).get("budget_pct", 0)
     ctx_pct = round(total_tokens / ctx_window * 100, 1) if ctx_window else None
 
     sessions = 0

@@ -8,6 +8,8 @@ import json
 from typing import Any, TYPE_CHECKING
 
 from ..operator import is_verbose as _is_verbose, get_debugger as _get_debugger
+from ..cpe.models import get_context_window as _get_context_window
+from ..vital import _BUDGET_FALLBACK_TOKENS
 from .. import ui
 
 if TYPE_CHECKING:
@@ -93,6 +95,9 @@ def _vlog_cycle_summary(
     elapsed_secs: float,
     tool_log_lines: list[dict[str, Any]],
     ctx_window: int = 0,
+    budget_pct: int = 0,
+    cpe_backend: str = "",
+    cpe_model: str = "",
 ) -> None:
     """Print cycle summary: [DISPATCH] tree + [← CPE] line (always visible).
 
@@ -127,8 +132,13 @@ def _vlog_cycle_summary(
     # CPE response line — ALWAYS show
     _tokens = f"{response.input_tokens:,} ↑ / {response.output_tokens:,} ↓"
     if ctx_window:
-        _pct = round(response.input_tokens / ctx_window * 100, 1)
-        _tokens += f" | ctx: {_pct}%"
+        _ctx_pct = round(response.input_tokens / ctx_window * 100, 1)
+        _tokens += f" | ctx: {_ctx_pct}%"
+    if budget_pct and cpe_backend and cpe_model:
+        _model_window = _get_context_window(cpe_backend, cpe_model)
+        _budget_tokens = int(_model_window * budget_pct / 100) if _model_window else _BUDGET_FALLBACK_TOKENS
+        _bpct = round(response.input_tokens / _budget_tokens * 100, 1)
+        _tokens += f" | budget: {_bpct}%"
     print(f"{_DIM}  └─ CPE  ⏱ {elapsed_secs:.1f}s | {_tokens} | {response.stop_reason}{_RESET}")
     if verbose and response.text:
         preview = response.text[:50].replace("\n", " ")

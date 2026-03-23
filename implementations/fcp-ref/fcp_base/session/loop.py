@@ -430,7 +430,7 @@ def run_session(
         # add CPE response to chat history and display status
         if response.tool_use_calls and not _is_verbose():
             n = len(response.tool_use_calls)
-            print(f"\n{_DIM}  ┄ cycle {cycle} — {n}x tool call{'s' if n != 1 else ''}{_RESET}")
+            print(f"\n{_DIM}  ○ cycle {cycle} — {n}x tool call{'s' if n != 1 else ''}{_RESET}")
         _model_label = getattr(adapter_ref.current, "_model", "")
         _ctx_window = _get_context_window(_cpe_backend, _model_label)
         if response.text:
@@ -493,7 +493,8 @@ def run_session(
                 session_closed = True
 
         # Print cycle summary: [DISPATCH] + [← CPE] in correct order
-        _vlog_cycle_summary(response, cycle_elapsed, tool_log_lines, _ctx_window)
+        _budget_pct = _baseline.context_window_budget_pct if _baseline else 0
+        _vlog_cycle_summary(response, cycle_elapsed, tool_log_lines, _ctx_window, _budget_pct, _cpe_backend, _model_label)
 
         if session_closed:
             break
@@ -537,7 +538,7 @@ def run_session(
         if _vital_state is not None and _baseline is not None:
             _vital.tick(_vital_state)
             if _vital.should_run(_vital_state, _baseline):
-                _vital.run(layout, _baseline, _vital_state, tokens_used)
+                _vital.run(layout, _baseline, _vital_state, tokens_used, _cpe_backend, _model_label)
 
         # compact: if closure_payload was written during this cycle, execute Stage 1
         # and rebuild chat_history with the condensed context

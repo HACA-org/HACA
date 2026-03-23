@@ -79,7 +79,7 @@ class StructuralBaseline:
     heartbeat_cycle_threshold: int
     heartbeat_interval_seconds: int
     watchdog_sil_threshold_seconds: int
-    context_window_budget_tokens: int
+    context_window_budget_pct: int
     context_window_critical_pct: int
     drift_comparison_mechanism: str
     drift_threshold: float
@@ -102,7 +102,7 @@ class StructuralBaseline:
             heartbeat_cycle_threshold=d["heartbeat"]["cycle_threshold"],
             heartbeat_interval_seconds=d["heartbeat"]["interval_seconds"],
             watchdog_sil_threshold_seconds=d["watchdog"]["sil_threshold_seconds"],
-            context_window_budget_tokens=d["context_window"]["budget_tokens"],
+            context_window_budget_pct=d["context_window"]["budget_pct"],
             context_window_critical_pct=d["context_window"]["critical_pct"],
             drift_comparison_mechanism=d["drift"]["comparison_mechanism"],
             drift_threshold=d["drift"]["threshold"],
@@ -128,7 +128,7 @@ class StructuralBaseline:
             },
             "watchdog": {"sil_threshold_seconds": self.watchdog_sil_threshold_seconds},
             "context_window": {
-                "budget_tokens": self.context_window_budget_tokens,
+                "budget_pct": self.context_window_budget_pct,
                 "critical_pct": self.context_window_critical_pct,
             },
             "drift": {

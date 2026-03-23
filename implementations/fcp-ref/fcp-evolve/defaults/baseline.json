@@ -8,7 +8,7 @@
     "topology": "transparent"
   },
   "context_window": {
-    "budget_tokens": 200000,
+    "budget_pct": 80,
     "critical_pct": 80
   },
   "drift": {
