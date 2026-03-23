@@ -166,6 +166,17 @@ def run_init(fcp_ref_root: Path) -> None:
             sys.exit(0)
         else:
             ui.hr("Update")
+
+            # Version info: installed vs entity
+            _installed_ver = fcp_version
+            try:
+                _entity_marker = json.loads((entity_root / ".fcp-entity").read_text(encoding="utf-8"))
+                _entity_ver = _entity_marker.get("version", "unknown")
+            except Exception:
+                _entity_ver = "unknown"
+            _ver_tag = "up to date" if _entity_ver == _installed_ver else "outdated"
+            print(f"  FCP version:  {_installed_ver} (installed)  ←  {_entity_ver} (entity)  [{_ver_tag}]")
+            print()
             print("      Checked = keep existing.  Unchecked = overwrite from template.")
             print()
 
