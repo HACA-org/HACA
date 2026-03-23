@@ -441,43 +441,79 @@ def run_update() -> None:
 def run_status(layout: "Layout") -> None:
     """Print entity status overview (no session required)."""
     from ..sil import beacon_is_active
+    from pathlib import Path as _Path
 
     ui.hr("fcp status")
 
-    # baseline / model
+    # --- ENTITY ---
+    ui.hr("ENTITY")
     try:
         baseline = read_json(layout.baseline)
         cpe = baseline.get("cpe", {})
         backend = cpe.get("backend", "?")
         model = cpe.get("model", "?")
-        ui.print_info(f"model          : {backend}:{model}")
+        entity_version = baseline.get("fcp_version", "?")
+        profile = baseline.get("profile", "?")
+
+        # installed FCP version
+        try:
+            from importlib.metadata import version as _ver
+            fcp_version = _ver("fcp")
+        except Exception:
+            try:
+                from .. import __version__ as fcp_version  # type: ignore
+            except Exception:
+                fcp_version = "?"
+
+        version_str = f"v{entity_version}"
+        if fcp_version != "?" and entity_version != "?":
+            if entity_version == fcp_version:
+                version_str += f" (fcp {fcp_version} — up to date)"
+            else:
+                version_str += f" (fcp {fcp_version} — update available)"
+
+        # context window
+        from ..cpe.models import get_context_window
+        ctx_window = get_context_window(backend, model)
+        budget_pct = baseline.get("context_window", {}).get("budget_pct", 80)
+        ctx_str = f"{ctx_window:,}" if ctx_window else "unknown"
+        model_str = f"{backend}:{model} | ctx: {ctx_str} | budget: {budget_pct}%"
+
+        entity_id = layout.root.name
+        ui.print_info(f"identity       : {entity_id}  {version_str}")
+        ui.print_info(f"model          : {model_str}")
+        ui.print_info(f"profile        : {profile}")
     except Exception:
         ui.print_warn("baseline.json unreadable")
 
-    # session token
+    print()
+
+    # --- SESSION ---
+    ui.hr("SESSION")
     token_active = layout.session_token.exists()
-    ui.print_info(f"session token  : {'active' if token_active else 'inactive'}")
-
-    # session store size
     session_size = layout.session_store.stat().st_size if layout.session_store.exists() else 0
-    ui.print_info(f"session store  : {ui.format_bytes(session_size)}")
+    ui.print_info(f"token          : {'active' if token_active else 'inactive'}")
+    ui.print_info(f"store          : {ui.format_bytes(session_size)}")
+    print()
 
-    # workspace focus
+    # --- WORKSPACE ---
+    ui.hr("WORKSPACE")
     wf = ""
     if layout.workspace_focus.exists():
         try:
             wf = str(read_json(layout.workspace_focus).get("path", ""))
         except Exception:
             pass
-    ui.print_info(f"workspace      : {wf or '(not set)'}")
+    ui.print_info(f"focus          : {wf or '(not set)'}")
+    print()
 
-    # distress beacon
+    # --- STATE ---
+    ui.hr("STATE")
     if beacon_is_active(layout):
-        ui.print_warn("distress beacon: ACTIVE")
+        ui.print_warn("beacon         : ACTIVE")
     else:
-        ui.print_info("distress beacon: clear")
+        ui.print_info("beacon         : clear")
 
-    # notifications
     notif_count = 0
     if layout.operator_notifications_dir.exists():
         notif_count = sum(1 for _ in layout.operator_notifications_dir.iterdir())
@@ -486,15 +522,68 @@ def run_status(layout: "Layout") -> None:
     else:
         ui.print_info("notifications  : none")
 
-    # memory
-    mem_count = 0
+    ep_count = 0
+    sem_count = 0
     for subdir in ("episodic", "semantic"):
         d = layout.root / "memory" / subdir
         if d.exists():
-            mem_count += sum(1 for _ in d.iterdir() if _.is_file())
-    ui.print_info(f"memories       : {mem_count}")
+            n = sum(1 for _ in d.iterdir() if _.is_file())
+            if subdir == "episodic":
+                ep_count = n
+            else:
+                sem_count = n
+    mem_count = ep_count + sem_count
+    ui.print_info(f"memories       : {mem_count}  ({ep_count} episodic / {sem_count} semantic)")
 
+    agenda_count = 0
+    if layout.agenda.exists():
+        try:
+            agenda = read_json(layout.agenda)
+            agenda_count = len(agenda.get("tasks", []))
+        except Exception:
+            pass
+    ui.print_info(f"agenda         : {agenda_count} task(s)")
     print()
+
+    # --- CMI ---
+    try:
+        cmi_cfg = baseline.get("cmi", {})  # type: ignore[possibly-undefined]
+        if cmi_cfg.get("active"):
+            ui.hr("CMI")
+            node_id = cmi_cfg.get("node_id", "?")
+            endpoint = cmi_cfg.get("endpoint", "?")
+            channels = cmi_cfg.get("channels", [])
+            active_channels = [c for c in channels if c.get("status") == "active"]
+            ui.print_info(f"status         : active  (node: {node_id})")
+            ui.print_info(f"endpoint       : {endpoint}")
+            ui.print_info(f"channels       : {len(active_channels)} active")
+            print()
+    except Exception:
+        pass
+
+    # --- PAIRING ---
+    pairing_dir = _Path.home() / ".fcp" / "pairing"
+    if pairing_dir.exists():
+        sessions = list(pairing_dir.glob("*.meta.json"))
+        if sessions:
+            ui.hr("PAIRING")
+            for meta_path in sessions:
+                try:
+                    meta = read_json(meta_path)
+                    sid = meta.get("session_id", "?")
+                    key = meta.get("key", "?")
+                    model_p = meta.get("model", "?")
+                    started = meta.get("started_at", "?")
+                    request_path = pairing_dir / f"{sid}.request.json"
+                    pending = "yes" if request_path.exists() else "no"
+                    ui.print_info(f"session        : {sid}  key: {key}")
+                    ui.print_info(f"model          : {model_p}")
+                    ui.print_info(f"started        : {started}")
+                    ui.print_info(f"mcp dir        : {pairing_dir}")
+                    ui.print_info(f"pending prompt : {pending}")
+                except Exception:
+                    pass
+            print()
 
 
 # ---------------------------------------------------------------------------

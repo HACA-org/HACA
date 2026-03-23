@@ -139,7 +139,7 @@ def _vlog_cycle_summary(
         _budget_tokens = int(_model_window * budget_pct / 100) if _model_window else _BUDGET_FALLBACK_TOKENS
         _bpct = round(response.input_tokens / _budget_tokens * 100, 1)
         _tokens += f" | budget: {_bpct}%"
-    print(f"{_DIM}  └─ CPE  ⏱ {elapsed_secs:.1f}s | {_tokens} | {response.stop_reason}{_RESET}")
+    print(f"{_DIM}  └─ CPE  ◷ {elapsed_secs:.1f}s | {_tokens} | {response.stop_reason}{_RESET}")
     if verbose and response.text:
         preview = response.text[:50].replace("\n", " ")
         print(f"{_DIM}     └─ text: {preview!r} ({len(response.text)} chars){_RESET}")
