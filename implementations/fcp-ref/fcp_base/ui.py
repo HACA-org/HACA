@@ -235,12 +235,7 @@ def print_cpe_block(
     border = "─" * max(0, _WIDTH - len(label) - 3)
     print(f"\n{GRAY}─── {label} {border}{RESET}")
     print(text)
-    stats = f"{input_tokens:,} ↑ / {output_tokens:,} ↓"
-    if ctx_window:
-        pct = round(input_tokens / ctx_window * 100, 1)
-        stats += f" | ctx: {pct}%"
-    footer_border = "─" * max(0, _WIDTH - len(stats) - 3)
-    print(f"{GRAY}─── {stats} {footer_border}{RESET}")
+    print(f"{GRAY}{'─' * _WIDTH}{RESET}")
 
 
 def vprint(text: str) -> None:
