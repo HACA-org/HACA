@@ -22,6 +22,21 @@ _format_bytes = ui.format_bytes
 _compact_json = ui.compact_json
 
 
+def _yaml_inline(data: Any) -> str:
+    """Format a dict as clean key: value pairs, stripping JSON punctuation."""
+    if not isinstance(data, dict):
+        return str(data)
+    parts = []
+    for k, v in data.items():
+        if isinstance(v, str):
+            parts.append(f"{k}: {v}")
+        elif isinstance(v, dict):
+            parts.append(f"{k}: {{{', '.join(f'{dk}: {dv}' for dk, dv in v.items())}}}")
+        else:
+            parts.append(f"{k}: {v}")
+    return "  ".join(parts)
+
+
 def _vlog(actor: str, msg: str) -> None:
     if not _is_verbose():
         return
@@ -104,10 +119,8 @@ def _vlog_cycle_summary(
 
             if verbose:
                 print(f"{_DIM}{prefix} {tool}{_RESET}")
-                input_json = _compact_json(tool_info["input"])
-                output_json = _compact_json(tool_info["output"])
-                print(f"{_DIM}{prefix[:-2]}  ├─ input: {input_json}{_RESET}")
-                print(f"{_DIM}{prefix[:-2]}  └─ output: {output_json}{_RESET}")
+                print(f"{_DIM}{prefix[:-2]}  │    input:  {_yaml_inline(tool_info['input'])}{_RESET}")
+                print(f"{_DIM}{prefix[:-2]}  │    output: {_yaml_inline(tool_info['output'])}{_RESET}")
             else:
                 print(f"{_DIM}{prefix} {tool}  {input_size} → {status} ({result_size}{timing_str}){_RESET}")
 
