@@ -91,7 +91,6 @@ def _vlog_cycle_summary(
 
     # Dispatch block — ALWAYS show (if tools were called)
     if tool_log_lines:
-        print(f"{_DIM}  ├─ [DISPATCH]{_RESET}")
         for tool_info in tool_log_lines:
             tool = tool_info["tool"]
             is_last = tool_info["is_last"]
@@ -101,23 +100,23 @@ def _vlog_cycle_summary(
             timing_ms = tool_info["timing_ms"]
             timing_str = f", {timing_ms:.0f}ms" if timing_ms > 10 else ""
 
-            prefix = "  │  └─" if is_last else "  │  ├─"
+            prefix = "  └─" if is_last else "  ├─"
 
             if verbose:
                 print(f"{_DIM}{prefix} {tool}{_RESET}")
                 input_json = _compact_json(tool_info["input"])
                 output_json = _compact_json(tool_info["output"])
-                print(f"{_DIM}{prefix[:-2]}│  ├─ input: {input_json}{_RESET}")
-                print(f"{_DIM}{prefix[:-2]}│  └─ output: {output_json}{_RESET}")
+                print(f"{_DIM}{prefix[:-2]}  ├─ input: {input_json}{_RESET}")
+                print(f"{_DIM}{prefix[:-2]}  └─ output: {output_json}{_RESET}")
             else:
-                print(f"{_DIM}{prefix} {tool} ... input ({input_size}) → {status} ({result_size}{timing_str}){_RESET}")
+                print(f"{_DIM}{prefix} {tool}  {input_size} → {status} ({result_size}{timing_str}){_RESET}")
 
     # CPE response line — ALWAYS show
     _tokens = f"{response.input_tokens:,} ↑ / {response.output_tokens:,} ↓"
     if ctx_window:
         _pct = round(response.input_tokens / ctx_window * 100, 1)
         _tokens += f" | ctx: {_pct}%"
-    print(f"{_DIM}  └─ [← CPE] ⏱ {elapsed_secs:.1f}s | {_tokens} | {response.stop_reason}{_RESET}")
+    print(f"{_DIM}  └─ CPE  ⏱ {elapsed_secs:.1f}s | {_tokens} | {response.stop_reason}{_RESET}")
     if verbose and response.text:
         preview = response.text[:50].replace("\n", " ")
         print(f"{_DIM}     └─ text: {preview!r} ({len(response.text)} chars){_RESET}")
