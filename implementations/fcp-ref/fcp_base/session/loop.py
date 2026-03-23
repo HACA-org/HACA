@@ -20,6 +20,7 @@ from typing import Any
 
 from ..acp import make as acp_encode
 from ..cpe.base import AdapterRef, CPEAdapter, CPEResponse, CPEError, CPEAuthError, CPERateLimitError
+from ..cpe.models import get_context_window as _get_context_window
 from ..dispatch import dispatch_tool_use
 from ..mil import process_closure, summarize_session
 from ..operator import (
@@ -337,10 +338,11 @@ def run_session(
     _baseline = None
     _vital_state = None
     _ctx_window = 0
+    _cpe_backend = ""
     try:
         from ..formats import StructuralBaseline
         _baseline = StructuralBaseline.from_dict(read_json(layout.baseline))
-        _ctx_window = _baseline.context_window_budget_tokens
+        _cpe_backend = _baseline.cpe.backend
         _session_id = ""
         if layout.session_token.exists():
             _session_id = str(read_json(layout.session_token).get("session_id", ""))
@@ -429,9 +431,10 @@ def run_session(
         if response.tool_use_calls and not _is_verbose():
             tools_repr = ", ".join(c.tool for c in response.tool_use_calls)
             print(f"\n{_DIM}  [fcp] working... cycle {cycle} — {tools_repr}{_RESET}")
+        _model_label = getattr(adapter_ref.current, "_model", "")
+        _ctx_window = _get_context_window(_cpe_backend, _model_label)
         if response.text:
             _append_msg(layout, "cpe", response.text)
-            _model_label = getattr(adapter_ref.current, "_model", "")
             _print_cpe_block(response.text, _model_label, response.input_tokens, response.output_tokens, _ctx_window)
             chat_history.append({"role": "assistant", "content": response.text})
         if response.tool_use_calls:

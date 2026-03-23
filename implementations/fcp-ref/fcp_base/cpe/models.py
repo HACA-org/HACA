@@ -19,32 +19,54 @@ except ImportError:
 
 
 # Default registry (fallback if YAML not available)
+# models is a dict of {model_name: {context_window: int, ...}}
 _DEFAULT_REGISTRY: dict[str, Any] = {
     "anthropic": {
         "default": "claude-opus-4-6",
         "api_version": "2024-06-15",
         "max_tokens": 8192,
-        "models": ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+        "models": {
+            "claude-opus-4-6":           {"context_window": 200000},
+            "claude-sonnet-4-6":         {"context_window": 200000},
+            "claude-haiku-4-5-20251001": {"context_window": 200000},
+        },
     },
     "openai": {
         "default": "gpt-4o",
         "api_url": "https://api.openai.com/v1",
         "max_tokens": 8192,
-        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+        "models": {
+            "gpt-4o":      {"context_window": 128000},
+            "gpt-4o-mini": {"context_window": 128000},
+            "gpt-4-turbo": {"context_window": 128000},
+        },
         "supports": {"prompt_caching": True, "streaming": False, "vision": True},
     },
     "google": {
         "default": "gemini-2.0-flash",
         "api_url": "https://generativelanguage.googleapis.com/v1beta/models",
         "max_tokens": 8192,
-        "models": ["gemini-2.0-flash", "gemini-2.0-flash-thinking-exp-01-21", "gemini-1.5-pro"],
+        "models": {
+            "gemini-2.5-flash":                    {"context_window": 1048576},
+            "gemini-3-flash-preview":              {"context_window": 1048576},
+            "gemini-3.1-flash-lite-preview":       {"context_window": 1048576},
+            "gemini-3.1-pro-preview":              {"context_window": 1048576},
+            "gemini-2.0-flash":                    {"context_window": 1048576},
+            "gemini-2.0-flash-thinking-exp-01-21": {"context_window": 1048576},
+            "gemini-1.5-pro":                      {"context_window": 2097152},
+        },
         "supports": {"thinking": True, "streaming": False},
     },
     "ollama": {
         "default": "llama3.2",
         "api_url": "http://localhost:11434",
         "max_tokens": 8192,
-        "models": ["llama3.2", "llama2", "neural-chat", "mistral"],
+        "models": {
+            "llama3.2":    {},
+            "llama2":      {},
+            "neural-chat": {},
+            "mistral":     {},
+        },
         "supports": {"streaming": True, "local_only": True},
     },
 }
@@ -127,7 +149,30 @@ def list_models(adapter: str) -> list[str]:
         List of model names
     """
     entry = _REGISTRY.get(adapter, {})
-    return entry.get("models", [])
+    models = entry.get("models", {})
+    if isinstance(models, dict):
+        return list(models.keys())
+    return list(models)
+
+
+def get_context_window(adapter: str, model: str) -> int:
+    """Return the real context window size for a given adapter+model.
+
+    Returns 0 if the model is not in the registry (e.g. custom Ollama models).
+    Callers should treat 0 as "unknown" and suppress ctx% display.
+
+    Args:
+        adapter: Adapter name ("anthropic", "openai", "google", "ollama", …)
+        model:   Model identifier as used in the API call
+
+    Returns:
+        Context window in tokens, or 0 if unknown.
+    """
+    entry = _REGISTRY.get(adapter, {})
+    models = entry.get("models", {})
+    if isinstance(models, dict):
+        return int(models.get(model, {}).get("context_window", 0))
+    return 0
 
 
 def supports_feature(adapter: str, feature: str) -> bool:
