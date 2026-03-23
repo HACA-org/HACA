@@ -52,7 +52,7 @@ adapters:
 
   ollama:
     # Local inference — zero cost, full control
-    # context_window varies by model; omitted here (reported as unknown)
+    # context_window only set for well-known models; others report as unknown (no ctx%)
     default: llama3.2
     description: "Local inference, configurable model"
     api_url: "http://localhost:11434"
@@ -61,10 +61,17 @@ adapters:
       - streaming: true
       - local_only: true
     models:
-      llama3.2:    {}
-      llama2:      {}
-      neural-chat: {}
-      mistral:     {}
+      minimax-m2.7:        { context_window: 200000 }
+      minimax-m2.5:        { context_window: 198000 }
+      nemotron-3-super:    { context_window: 256000 }
+      qwen3.5:             { context_window: 256000 }
+      qwen3-coder-next:    { context_window: 256000 }
+      ministral-3:         { context_window: 256000 }
+      glm-5:               { context_window: 198000 }
+      llama3.2:            {}
+      llama2:              {}
+      neural-chat:         {}
+      mistral:             {}
     notes: "Check local Ollama instance for available models"
 
   pairing:
