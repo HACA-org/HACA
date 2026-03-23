@@ -21,7 +21,7 @@ The Memory Interface manages long-term context preservation. Use these tools to 
     - `slug` (required) — clear, dash-separated identifier (e.g., `fcp-perf-optimization`).
     - `content` (required) — the data, code snippet, or insight to be stored.
     - `overwrite` (optional) — set to `true` to replace existing content if the slug is taken.
-- **result_recall** — Retrieve the full output of a tool call that was truncated in the chat history (typically after context window compaction by the Operator).
+- **result_recall** — Retrieve the full output of a tool call that was truncated in the chat history (typically after context window compaction by the Operator). Use this when a tool result in history shows a `_ts_ms` field but truncated content.
     - `ts` (required) — the numeric tool execution timestamp (found in the `_ts_ms` field of the truncated output).
 
 **Operational Notes:**
@@ -58,7 +58,7 @@ Use `skill_info` to get full documentation for any skill. If a skill call return
 **worker_skill** — instantiate a read-only sub-agent (Worker) to offload tasks (analysis, summarization, debugging) without bloating your main context window.
 - `task` (required) — clear instructions for the worker.
 - `context` (required) — specific file paths, directory paths, or brief metadata relevant to the task. Pass file paths and instruct the worker to use its own `file_reader` to analyze the target environment.
-- `persona` (required) — the role the worker should assume (e.g., "Senior Debugger", "Security Analyst", etc.).
+- `persona` (required) — the role the worker should assume. Available canonical personas: `Analyst`, `Auditor`, `Debugger`, `Reviewer`, `Summarizer`.
 
 **Worker Capabilities:**
 - **Read-Access**: The Worker has read-only access via **`file_reader`** to explore files within the current `workspace_focus`. Accessing any path outside this focus is prohibited.
@@ -127,7 +127,7 @@ Session close tools finalize the cycle and record the session's outcome. These t
 
 - **closure_payload** — record the results and transition state for the next session.
     - `consolidation` (required) — narrative summary of all insights, decisions, and knowledge gained.
-    - `working_memory` (required) — list of `{slug, priority}` memories to preload at the next boot.
+    - `working_memory` (required) — list of `{slug, priority}` memories to preload at the next boot. Use `[]` if no memories are prioritized for preload.
     - `session_handoff` (required) — object containing `{pending_tasks, next_steps}` for the following session.
     - `promotion` (optional) — list of memory slugs to promote from episodic to semantic.
 - **session_close** — signals the immediate end of the active session.
@@ -211,7 +211,7 @@ The Cognitive Mesh Interface enables collaboration between independent entities 
 
 - **Channel Stimuli**: Messages from other entities arrive as incoming stimuli prefixed with `[CMI:<chan_id>]`.
 - **Channel States**: Tools are only permitted during `active` or `closing` states. A `closed` channel rejects all operations.
-- **Channel Closing Protocol**: When a channel enters the `closing` state, you MUST:
+- **Channel Closing Protocol**: When a channel enters the `closing` state — signaled by an incoming `[CMI:<chan_id>] channel_closing` stimulus — you MUST:
     1. Send any pending results or final insights to the Blackboard (BB) via **cmi_send** (type: "bb").
     2. Wait for the host to signal that the BB consolidation is concluded.
     3. Request the final version of the BB via **cmi_req** (op: "bb") if it hasn't been received yet.
