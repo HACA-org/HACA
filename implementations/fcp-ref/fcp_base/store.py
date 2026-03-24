@@ -105,14 +105,10 @@ class Layout:
     def hooks_dir(self) -> Path:
         return self.root / "hooks"
 
-    # -- workspace (outside Endure scope) --
-    @property
-    def workspace_dir(self) -> Path:
-        return self.root / "workspace"
-
+    # -- skill staging (volatile, outside Endure scope) --
     @property
     def workspace_stage_dir(self) -> Path:
-        return self.root / "workspace" / "stage"
+        return self.root / "state" / "stage"
 
     # -- io --
     @property
