@@ -45,7 +45,7 @@ Skills extend your capabilities. They are invoked as tool calls — the skill na
 Use `skill_info` to get full documentation for any skill. If a skill call returns `"error"`, report it to the operator before proceeding.
 
 **Skill Development Protocol:**
-1. **Stage**: Use **`skill_create`** to scaffold a new skill cartridge in `state/stage/<name>/`.
+1. **Stage**: Use **`skill_create`** to scaffold a new skill cartridge in `/tmp/fcp-stage/<entity_id>/<name>/`.
     - `name` (required) — unique identifier for the new skill.
     - `base` (optional) — name of an installed skill to clone as a starting point.
 2. **Inspect**: Use `file_reader` on the staged directory to understand the scaffolded files and the initial `manifest.json` before editing.
@@ -169,7 +169,7 @@ Evolution proposals are used for structural changes to your core identity, boot 
 - **evolution_proposal** — submit a structural change request.
     - `description` (required) — clear explanation of why the change is being made.
     - `changes` (required) — list of operations to perform:
-        - **`skill_install`**: Install a skill from `state/stage/<name>/`.
+        - **`skill_install`**: Install a skill from `/tmp/fcp-stage/<entity_id>/<name>/`.
         - **`json_merge`**: Patch an internal JSON file (e.g., `persona.json`).
         - **`file_write`**: Create or replace an internal file (relative to internal root).
         - **`file_delete`**: Remove an internal file.

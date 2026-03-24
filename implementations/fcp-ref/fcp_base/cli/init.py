@@ -51,9 +51,6 @@ state/distress.beacon
 state/first-stimuli.json
 state/pending-closure.json
 
-# Ignore volatile skill staging area
-state/stage/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -264,9 +261,9 @@ def run_init(fcp_ref_root: Path) -> None:
                 entity_root / "state" / "operator_notifications",
                 entity_root / "io" / "inbox" / "presession",
                 entity_root / "io" / "spool",
-                entity_root / "state" / "stage",
             ]:
                 _d.mkdir(parents=True, exist_ok=True)
+            (Path("/tmp") / "fcp-stage" / entity_root.name).mkdir(parents=True, exist_ok=True)
 
             _git_init = False
             if not (entity_root / ".git").exists():
@@ -475,9 +472,9 @@ def run_init(fcp_ref_root: Path) -> None:
         entity_root / "state" / "operator_notifications",
         entity_root / "io" / "inbox" / "presession",
         entity_root / "io" / "spool",
-        entity_root / "workspace" / "stage",
     ]:
         d.mkdir(parents=True, exist_ok=True)
+    (Path("/tmp") / "fcp-stage" / entity_root.name).mkdir(parents=True, exist_ok=True)
 
     defaults_path = profile_dir / "defaults" / "baseline.json"
     baseline = read_json(defaults_path) if defaults_path.exists() else {}

@@ -82,7 +82,7 @@ class TestGitGuard(unittest.TestCase):
 
     def test_blocked_repo_outside_workspace_focus(self):
         """Repo root is outside workspace_focus — blocked."""
-        outside = self.entity_root / "workspace"  # workspace/ itself, not focus subdir
+        outside = self.entity_root / "state"  # inside entity root, not workspace_focus
         result = self._check(str(outside))
         self.assertIsNotNone(result)
         self.assertIn("outside workspace_focus", result["error"])

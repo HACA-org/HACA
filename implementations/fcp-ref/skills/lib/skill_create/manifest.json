@@ -1,7 +1,7 @@
 {
   "name": "skill_create",
   "version": "1.0.0",
-  "description": "Scaffold a new skill in workspace/stage/<name>/ for installation via evolution_proposal.",
+  "description": "Scaffold a new skill in /tmp/fcp-stage/<entity_id>/<name>/ for installation via evolution_proposal.",
   "timeout_seconds": 30,
   "background": false,
   "irreversible": false,

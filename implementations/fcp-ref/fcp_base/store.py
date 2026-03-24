@@ -105,10 +105,10 @@ class Layout:
     def hooks_dir(self) -> Path:
         return self.root / "hooks"
 
-    # -- skill staging (volatile, outside Endure scope) --
+    # -- skill staging (outside entity root, accessible via workspace_focus) --
     @property
     def workspace_stage_dir(self) -> Path:
-        return self.root / "state" / "stage"
+        return Path("/tmp") / "fcp-stage" / self.root.name
 
     # -- io --
     @property

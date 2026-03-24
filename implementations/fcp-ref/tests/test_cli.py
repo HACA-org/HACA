@@ -183,7 +183,7 @@ class TestCliInit(unittest.TestCase):
             self.assertTrue(gitignore.exists())
             content = gitignore.read_text()
             self.assertIn("state/integrity.log", content)
-            self.assertIn("workspace/", content)
+            self.assertNotIn("workspace/", content)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

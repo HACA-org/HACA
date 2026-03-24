@@ -213,7 +213,7 @@ def main() -> None:
     issues: list[str] = []
 
     # locate manifest — stage takes priority, then installed, then builtin
-    stage_path = entity_root / "workspace" / "stage" / name / "manifest.json"
+    stage_path = Path("/tmp") / "fcp-stage" / entity_root.name / name / "manifest.json"
     installed_path = entity_root / "skills" / name / "manifest.json"
     lib_path = entity_root / "skills" / "lib" / name / "manifest.json"
     candidates = [stage_path, installed_path, lib_path]
@@ -222,7 +222,7 @@ def main() -> None:
     in_stage = manifest_path == stage_path
 
     if not manifest_path.exists():
-        issues.append(f"manifest not found in workspace/stage/{name}/, skills/{name}/, or skills/lib/{name}/")
+        issues.append(f"manifest not found in /tmp/fcp-stage/<entity_id>/{name}/, skills/{name}/, or skills/lib/{name}/")
         print(json.dumps({"skill": name, "valid": False, "issues": issues}))
         return
 

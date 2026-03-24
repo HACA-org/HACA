@@ -3,13 +3,13 @@
   "skills": [
     {
       "name": "file_reader",
-      "desc": "Read a file within workspace/. Rejects any path outside workspace/.",
+      "desc": "Read a file within workspace_focus. Rejects any path outside workspace_focus.",
       "manifest": "skills/lib/file_reader/manifest.json",
       "class": "builtin"
     },
     {
       "name": "file_writer",
-      "desc": "Write a file within workspace/. Rejects any path outside workspace/.",
+      "desc": "Write a file within workspace_focus. Rejects any path outside workspace_focus.",
       "manifest": "skills/lib/file_writer/manifest.json",
       "class": "builtin"
     },
@@ -27,7 +27,7 @@
     },
     {
       "name": "skill_create",
-      "desc": "Scaffold a new skill in workspace/stage/<name>/ for installation via evolution_proposal.",
+      "desc": "Scaffold a new skill in /tmp/fcp-stage/<entity_id>/<name>/ for installation via evolution_proposal.",
       "manifest": "skills/lib/skill_create/manifest.json",
       "class": "builtin"
     },

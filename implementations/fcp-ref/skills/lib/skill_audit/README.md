@@ -1,6 +1,6 @@
 # skill_audit
 
-Validate a skill's structure, format, and security before installation. Searches for the skill in this order: `workspace/stage/<name>/`, `skills/<name>/`, `skills/lib/<name>/`.
+Validate a skill's structure, format, and security before installation. Searches for the skill in this order: `/tmp/fcp-stage/<entity_id>/<name>/`, `skills/<name>/`, `skills/lib/<name>/`.
 
 Run `skill_audit` after developing a skill and before submitting an `evolution_proposal` with `skill_install`. A passing audit does not guarantee the skill will be approved — the Operator reviews the proposal independently.
 
@@ -35,7 +35,7 @@ Run `skill_audit` after developing a skill and before submitting an `evolution_p
 **Index** (`skills/index.json`)
 - Checked only in `installed` mode — skipped for `pre_install`
 
-The audit mode is inferred automatically from the skill's location: `workspace/stage/` → `pre_install`; `skills/` or `skills/lib/` → `installed`. No parameter needed.
+The audit mode is inferred automatically from the skill's location: `/tmp/fcp-stage/` → `pre_install`; `skills/` or `skills/lib/` → `installed`. No parameter needed.
 
 ## Examples
 
