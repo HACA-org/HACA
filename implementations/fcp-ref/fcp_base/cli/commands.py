@@ -408,8 +408,12 @@ def run_decommission(layout: "Layout", args: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 def run_update() -> None:
+    import shutil
+    import json as _json
+
     cli_file = Path(__file__).resolve()
-    fcp_root = cli_file.parents[4]  # cli/ -> fcp_base/ -> fcp-ref/ -> implementations/ -> HACA/
+    fcp_ref_root = cli_file.parents[2]   # cli/ -> fcp_base/ -> fcp-ref/
+    git_root = cli_file.parents[4]       # fcp-ref/ -> implementations/ -> HACA/
 
     # Guard: reject if running from within an entity root
     for ancestor in cli_file.parents:
@@ -417,32 +421,126 @@ def run_update() -> None:
             ui.print_err("fcp update must be run from the global fcp installation.")
             ui.print_err("Use the 'fcp' command in your PATH, not a local copy.")
             sys.exit(1)
-        if ancestor == fcp_root:
+        if ancestor == git_root:
             break
 
-    if not (fcp_root / ".git").exists():
-        ui.print_err(f"Cannot update: FCP installation at {fcp_root} is not a git repository.")
+    if not (git_root / ".git").exists():
+        ui.print_err(f"Cannot update: FCP installation at {git_root} is not a git repository.")
         sys.exit(1)
 
+    # ── Step 1: Pull CLI ─────────────────────────────────────────────────────
     ui.hr("fcp update")
-    ui.print_info(f"Checking for updates in {fcp_root}...")
+    ui.print_info(f"Pulling latest fcp-ref from origin/main ...")
+    print()
 
     r = subprocess.run(
-        ["git", "-C", str(fcp_root), "pull", "origin", "main", "--rebase"],
+        ["git", "-C", str(git_root), "pull", "origin", "main", "--rebase"],
         capture_output=True, text=True
     )
 
     if r.returncode != 0:
-        ui.print_err("Update failed. Check your git configuration or network.")
-        print(f"Error output:\n{r.stderr}")
+        ui.print_err("Pull failed. Check your git configuration or network.")
+        print(r.stderr.strip())
         sys.exit(1)
 
-    if "Already up to date." in r.stdout or "Current branch main is up to date" in r.stdout:
-        ui.print_ok("FCP is already up to date with origin/main.")
+    already_current = "Already up to date." in r.stdout or "Current branch main is up to date" in r.stdout
+    if already_current:
+        ui.print_ok("CLI is already up to date.")
     else:
-        ui.print_ok("FCP updated successfully.")
+        ui.print_ok("CLI updated.")
         print()
         print(r.stdout.strip())
+    print()
+
+    # ── Step 2: Read new version ─────────────────────────────────────────────
+    from .init import read_fcp_version
+    new_version = read_fcp_version(fcp_ref_root)
+
+    # ── Step 3: Check installed entities ────────────────────────────────────
+    from ..store import list_entities, entity_root_for
+    entities = list_entities()
+
+    if not entities:
+        ui.print_info("No entities installed.")
+        print()
+        return
+
+    ui.hr("Entities")
+    print()
+
+    outdated: list[tuple[str, str]] = []  # (entity_id, entity_version)
+    for eid in entities:
+        eroot = entity_root_for(eid)
+        try:
+            marker = _json.loads((eroot / ".fcp-entity").read_text(encoding="utf-8"))
+            ev = marker.get("version", "unknown")
+        except Exception:
+            ev = "unknown"
+        status = "up to date" if ev == new_version else "outdated"
+        ui.print_info(f"  {eid}  v{ev}  [{status}]")
+        if ev != new_version:
+            outdated.append((eid, ev))
+
+    print()
+
+    if not outdated:
+        ui.print_ok(f"All entities are on v{new_version}.")
+        print()
+        return
+
+    ui.print_info(f"CLI is now v{new_version}. {len(outdated)} entity(ies) can be updated.")
+    print()
+
+    # ── Step 4: Offer update per entity ─────────────────────────────────────
+    _UPDATE_SRCS = [
+        (fcp_ref_root / "boot.md",   "boot.md"),
+        (fcp_ref_root / "fcp_base",  "fcp_base"),
+        (fcp_ref_root / "hooks",     "hooks"),
+        (fcp_ref_root / "skills",    "skills"),
+        (fcp_ref_root / "tests",     "tests"),
+    ]
+
+    for eid, ev in outdated:
+        eroot = entity_root_for(eid)
+        answer = ui.confirm(f"Update '{eid}'  v{ev} → v{new_version}?", default=True)
+        if not answer:
+            ui.print_info(f"  Skipped {eid}.")
+            print()
+            continue
+
+        for src, dst_name in _UPDATE_SRCS:
+            if not src.exists():
+                continue
+            dst = eroot / dst_name
+            if src.is_dir():
+                if dst.exists():
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
+            else:
+                shutil.copy2(src, dst)
+            ui.print_info(f"  [↓] {dst_name}")
+
+        # Update fcp launcher script
+        fcp_src = fcp_ref_root / "fcp"
+        if fcp_src.exists():
+            fcp_dst = eroot / "fcp"
+            shutil.copy2(fcp_src, fcp_dst)
+            fcp_dst.chmod(0o755)
+
+        # Bump version in .fcp-entity marker
+        marker_path = eroot / ".fcp-entity"
+        try:
+            marker = _json.loads(marker_path.read_text(encoding="utf-8"))
+        except Exception:
+            marker = {}
+        marker["version"] = new_version
+        marker_path.write_text(_json.dumps(marker, indent=2), encoding="utf-8")
+
+        print()
+        ui.print_ok(f"'{eid}' updated to v{new_version}.")
+        print()
+
+    ui.hr()
     print()
 
 
