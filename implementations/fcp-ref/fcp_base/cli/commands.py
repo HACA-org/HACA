@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..store import API_KEY_ENV, atomic_write, load_baseline, read_json, save_api_key
+from ..store import API_KEY_ENV, atomic_write, read_json, save_api_key
 from .. import ui
 from .ui import print_boot_header
 
@@ -29,7 +29,7 @@ def run_normal(layout: "Layout", workspace_focus: Path | None = None) -> None:
     from ..boot import run as boot_run, BootError
     from ..cpe.base import load_cpe_adapter_from_baseline
     from ..fap import FAPError
-    from ..operator import handle_platform_command, present_notifications, present_evolution_proposals
+    from ..operator import present_evolution_proposals
     from ..session import run_session
     from ..sleep import run_sleep_cycle
     from ..store import atomic_write

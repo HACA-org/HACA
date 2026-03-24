@@ -371,14 +371,10 @@ def run_init(fcp_ref_root: Path) -> None:
         except FileNotFoundError:
             print("  [!] git not found — skipping.")
 
-    # ── Step 7: Set as default if first entity ───────────────────────────────
+    # ── Step 7: Set as default if no default is configured ───────────────────
+    if not get_default_entity():
+        set_default_entity(entity_id)
     was_default = get_default_entity() == entity_id
-    if not was_default and not list_entities():
-        set_default_entity(entity_id)
-        was_default = True
-    elif not get_default_entity():
-        set_default_entity(entity_id)
-        was_default = True
 
     # ── Step 8: Summary ──────────────────────────────────────────────────────
     print()

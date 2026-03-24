@@ -33,7 +33,6 @@ from .mil import (
 from .sil import (
     sha256_file,
     sha256_str,
-    verify_structural_files,
     write_chain_entry,
     last_chain_seq,
     write_notification,
