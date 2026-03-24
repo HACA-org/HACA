@@ -173,34 +173,37 @@ printf "\n"
 
 REPO_URL="https://github.com/HACA-org/HACA.git"
 REF_PATH="implementations/fcp-ref"
+FCP_REF_DIR="$INSTALL_PATH/fcp-ref"
 
-if [ -d "$INSTALL_PATH" ]; then
+if [ -d "$FCP_REF_DIR" ]; then
     info "Target directory exists. Updating..."
-    if [ -d "$INSTALL_PATH/.git" ]; then
-        # Ensure sparse-checkout is still configured correctly
-        git -C "$INSTALL_PATH" sparse-checkout set "$REF_PATH" --quiet 2>/dev/null || true
-        if git -C "$INSTALL_PATH" pull origin main --quiet; then
+    if [ -d "$FCP_REF_DIR/.git" ]; then
+        if git -C "$FCP_REF_DIR" pull origin main --quiet; then
             ok "Repository updated."
         else
             warn "Git pull failed. Proceeding with existing files."
         fi
     else
-        warn "$INSTALL_PATH exists but is not a git repository. Skipping sync."
+        warn "$FCP_REF_DIR exists but is not a git repository. Skipping sync."
     fi
 else
     info "Initiating Sparse Checkout (fetching only fcp-ref)..."
 
-    # 1. Clone with --sparse and filtered blobs to minimize footprint
-    git clone --depth 1 --filter=blob:none --sparse "$REPO_URL" "$INSTALL_PATH" --quiet
+    # Clone into a temp dir, then move the sparse subtree to fcp-ref/
+    _TMP_CLONE=$(mktemp -d)
+    git clone --depth 1 --filter=blob:none --sparse "$REPO_URL" "$_TMP_CLONE" --quiet
+    git -C "$_TMP_CLONE" sparse-checkout set "$REF_PATH" --quiet
+    mkdir -p "$INSTALL_PATH"
+    mv "$_TMP_CLONE/$REF_PATH" "$FCP_REF_DIR"
+    # Relocate .git so fcp-ref/ is a proper git repo for future pulls
+    mv "$_TMP_CLONE/.git" "$FCP_REF_DIR/.git"
+    rm -rf "$_TMP_CLONE"
 
-    # 2. Specifically enable only the fcp-ref implementation path
-    git -C "$INSTALL_PATH" sparse-checkout set "$REF_PATH"
-
-    ok "FCP-Ref synced successfully to $INSTALL_PATH"
+    ok "FCP-Ref synced successfully to $FCP_REF_DIR"
 fi
 
-# Locate the actual executable within the sparse subtree
-REAL_FCP_EXE="$INSTALL_PATH/$REF_PATH/fcp"
+# Locate the actual executable
+REAL_FCP_EXE="$FCP_REF_DIR/fcp"
 
 if [ -f "$REAL_FCP_EXE" ]; then
     chmod +x "$REAL_FCP_EXE"
@@ -223,7 +226,8 @@ printf "\n"
 ok "Installation complete!"
 hr ""
 info "FCP Root     : $INSTALL_PATH"
-info "Active Impl  : $REF_PATH"
+info "CLI          : $FCP_REF_DIR"
+info "Entities     : $INSTALL_PATH/entities/<entity_id>/"
 if [ "$SET_ALIAS" = true ]; then
     info "Global command: fcp"
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then

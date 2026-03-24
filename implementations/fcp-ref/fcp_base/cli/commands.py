@@ -413,7 +413,8 @@ def run_update() -> None:
 
     cli_file = Path(__file__).resolve()
     fcp_ref_root = cli_file.parents[2]   # cli/ -> fcp_base/ -> fcp-ref/
-    git_root = cli_file.parents[4]       # fcp-ref/ -> implementations/ -> HACA/
+    # fcp-ref/ is the sparse-checkout root — it contains .git directly
+    git_root = fcp_ref_root
 
     # Guard: reject if running from within an entity root
     for ancestor in cli_file.parents:

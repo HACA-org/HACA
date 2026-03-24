@@ -312,6 +312,7 @@ def load_env_file() -> None:
 # ---------------------------------------------------------------------------
 
 FCP_HOME = Path.home() / ".fcp"
+FCP_ENTITIES_DIR = FCP_HOME / "entities"
 _FCP_CONFIG = FCP_HOME / "config.json"
 
 
@@ -336,18 +337,18 @@ def set_default_entity(entity_id: str) -> None:
 
 
 def list_entities() -> list[str]:
-    """Return entity_ids found under ~/.fcp/ (dirs containing .fcp-entity)."""
-    if not FCP_HOME.exists():
+    """Return entity_ids found under ~/.fcp/entities/ (dirs containing .fcp-entity)."""
+    if not FCP_ENTITIES_DIR.exists():
         return []
     return sorted(
-        d.name for d in FCP_HOME.iterdir()
+        d.name for d in FCP_ENTITIES_DIR.iterdir()
         if d.is_dir() and (d / ".fcp-entity").exists()
     )
 
 
 def entity_root_for(entity_id: str) -> Path:
     """Return the entity root path for a given entity_id."""
-    return FCP_HOME / entity_id
+    return FCP_ENTITIES_DIR / entity_id
 
 
 def save_api_key(entity_name: str, env_var: str, api_key: str) -> None:
