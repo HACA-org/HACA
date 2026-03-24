@@ -434,10 +434,23 @@ def run_update() -> None:
     ui.print_info(f"Pulling latest fcp-ref from origin/main ...")
     print()
 
+    # Stash any local changes so the pull can proceed cleanly
+    stash_result = subprocess.run(
+        ["git", "-C", str(git_root), "stash"],
+        capture_output=True, text=True
+    )
+    stashed = "No local changes" not in stash_result.stdout
+
     r = subprocess.run(
         ["git", "-C", str(git_root), "pull", "origin", "main", "--rebase"],
         capture_output=True, text=True
     )
+
+    if stashed:
+        subprocess.run(
+            ["git", "-C", str(git_root), "stash", "pop"],
+            capture_output=True, text=True
+        )
 
     if r.returncode != 0:
         ui.print_err("Pull failed. Check your git configuration or network.")
