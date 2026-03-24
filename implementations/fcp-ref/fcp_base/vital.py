@@ -7,7 +7,7 @@ Runs on two triggers (whichever comes first):
 
 Checks performed:
   1. Context budget — tokens_used / budget_tokens >= critical_pct → Critical
-  2. workspace_focus path outside workspace/ → Critical
+  2. workspace_focus path inside entity root → Critical
   3. Pre-session buffer above max_entries → operator notification
   4. Identity Drift — persona hash vs Integrity Document → Critical
 """
@@ -129,19 +129,33 @@ def _check_workspace_focus(layout: Layout) -> list[str]:
     if not layout.workspace_focus.exists():
         return []
     focus_path: Path | None = None
-    workspace: Path | None = None
     try:
         wf = read_json(layout.workspace_focus)
         raw_path = wf.get("path", "")
         if not raw_path:
             return []
         focus_path = Path(str(raw_path)).resolve()
-        workspace = layout.workspace_dir.resolve()
         entity_root = layout.root.resolve()
-        focus_path.relative_to(workspace)
-    except ValueError:
-        # focus_path is outside workspace/ — check if it is an ancestor of entity_root
-        if focus_path is not None and entity_root.is_relative_to(focus_path):
+
+        # workspace_focus must be outside the entity root
+        try:
+            focus_path.relative_to(entity_root)
+            # If we get here, focus_path is inside entity root → REJECT
+            detail = {
+                "path": str(focus_path),
+                "entity_root": str(entity_root),
+            }
+            log_critical(layout, "WORKSPACE_FOCUS_INSIDE_ENTITY", detail)
+            write_notification(layout, "critical", {
+                "type": "WORKSPACE_FOCUS_INSIDE_ENTITY",
+                "detail": detail,
+            })
+            return ["workspace_focus_inside_entity"]
+        except ValueError:
+            pass  # Good: focus_path is outside entity root
+
+        # workspace_focus cannot be an ancestor of entity_root
+        if entity_root.is_relative_to(focus_path):
             detail = {
                 "path": str(focus_path),
                 "entity_root": str(entity_root),
@@ -152,16 +166,6 @@ def _check_workspace_focus(layout: Layout) -> list[str]:
                 "detail": detail,
             })
             return ["workspace_focus_ancestor"]
-        detail = {
-            "path": str(focus_path) if focus_path else "",
-            "workspace": str(workspace) if workspace else "",
-        }
-        log_critical(layout, "WORKSPACE_FOCUS_INVALID", detail)
-        write_notification(layout, "critical", {
-            "type": "WORKSPACE_FOCUS_INVALID",
-            "detail": detail,
-        })
-        return ["workspace_focus_invalid"]
     except Exception:
         pass
     return []

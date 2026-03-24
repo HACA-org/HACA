@@ -336,13 +336,13 @@ def _stage3_endure(layout: Layout) -> None:
             if not op:
                 continue
 
-            # skill_install: moves workspace/stage/<name>/ → skills/<name>/
+            # skill_install: moves state/stage/<name>/ → skills/<name>/
             # path is determined by FCP, not by the proposal
             if op == "skill_install":
                 skill_name = change.get("name", "").strip()
                 if not skill_name:
                     continue
-                source = (layout.root / "workspace" / "stage" / skill_name).resolve()
+                source = layout.workspace_stage_dir.resolve() / skill_name
                 dest = (layout.root / "skills" / skill_name).resolve()
                 stage_manifest = source / "manifest.json"
                 if not stage_manifest.exists():
@@ -413,12 +413,10 @@ def _stage3_endure(layout: Layout) -> None:
             if not target_rel:
                 continue
             target = (layout.root / target_rel).resolve()
-            # security: must stay within entity root, never in workspace/
+            # security: must stay within entity root
             try:
                 target.relative_to(layout.root)
             except ValueError:
-                continue
-            if str(target).startswith(str((layout.root / "workspace").resolve())):
                 continue
             # security: file ops cannot touch skills/ — use skill_install op instead
             if str(target).startswith(str((layout.root / "skills").resolve())):

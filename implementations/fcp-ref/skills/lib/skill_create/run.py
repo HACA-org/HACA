@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""skill_create — stage a new skill cartridge under workspace/stage/<name>/."""
+"""skill_create — stage a new skill cartridge under /tmp/fcp-stage/<entity_id>/<name>/."""
 
 from __future__ import annotations
 import json
@@ -23,8 +23,8 @@ def main() -> None:
         print(json.dumps({"error": "name must be a simple identifier (no path separators or dots)"}))
         sys.exit(1)
 
-    stage_root = (entity_root / "workspace" / "stage").resolve()
-    stage_dir = entity_root / "workspace" / "stage" / name
+    stage_root = (Path("/tmp") / "fcp-stage" / entity_root.name).resolve()
+    stage_dir = stage_root / name
     if not stage_dir.resolve().is_relative_to(stage_root):
         print(json.dumps({"error": "invalid skill name"}))
         sys.exit(1)

@@ -1,9 +1,11 @@
 """
 CLI entry point and command routing — FCP §12.1.
 
-Usage (always run from inside the entity root):
-  fcp                          — boot and run a session
-  fcp init                     — initialise entity root in cwd
+Usage:
+  fcp                          — boot default entity, workspace_focus = cwd
+  fcp init                     — create or update an entity in ~/.fcp/<entity_id>/
+  fcp list                     — list installed entities
+  fcp set <entity_id>          — set default entity
   fcp doctor [--fix]           — check/repair without booting
   fcp decommission --archive | --destroy
 """
@@ -13,7 +15,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from ..store import Layout, load_env_file
+from ..store import (
+    Layout, load_env_file,
+    get_default_entity, set_default_entity, list_entities, entity_root_for,
+)
 from .. import ui
 from .commands import (
     run_normal,
@@ -29,17 +34,27 @@ from .endure import run_endure_sync, run_endure_origin, run_endure_chain
 from .init import run_init
 
 
-def require_entity_root(entity_root: Path) -> None:
-    if not (entity_root / ".fcp-entity").exists():
-        ui.print_err(f"Not an FCP entity root: {entity_root}")
-        ui.print_err("Run 'fcp init' to initialise one, or cd into an existing entity.")
+def resolve_entity_root() -> Path:
+    """Return the default entity root from ~/.fcp/config.json."""
+    entity_id = get_default_entity()
+    if not entity_id:
+        ui.print_err("No default entity set.")
+        ui.print_err("Run 'fcp init' to create one, or 'fcp set <entity_id>' to select one.")
         sys.exit(1)
+    root = entity_root_for(entity_id)
+    if not (root / ".fcp-entity").exists():
+        ui.print_err(f"Entity '{entity_id}' not found at {root}")
+        ui.print_err("Run 'fcp init' to create it, or 'fcp set <entity_id>' to select another.")
+        sys.exit(1)
+    return root
 
 
 def print_help() -> None:
     print("""
-  fcp                              — boot entity and start session
-  fcp init                         — initialize a new entity
+  fcp                              — boot default entity (workspace_focus = cwd)
+  fcp init                         — create or update an entity
+  fcp list                         — list installed entities
+  fcp set <entity_id>              — set default entity
   fcp status                       — entity status overview (no session needed)
   fcp agenda                       — list scheduled tasks (no session needed)
   fcp model                        — interactive model picker
@@ -69,7 +84,7 @@ def main() -> None:
 def _main() -> None:
     load_env_file()
     args = sys.argv[1:]
-    entity_root = Path.cwd()
+    cwd = Path.cwd()
 
     verbose = "--verbose" in args
 
@@ -95,12 +110,12 @@ def _main() -> None:
 
     if not args:
         from ..operator import set_verbose, set_debugger
-        require_entity_root(entity_root)
+        entity_root = resolve_entity_root()
         if verbose and not _dbg_mode:
             set_verbose(True)
         if _dbg_mode:
             set_debugger(_dbg_mode)
-        run_normal(Layout(entity_root))
+        run_normal(Layout(entity_root), workspace_focus=cwd)
         return
 
     cmd = args[0]
@@ -115,33 +130,52 @@ def _main() -> None:
         run_init(fcp_ref_root)
         return
 
+    if cmd == "list":
+        entities = list_entities()
+        default = get_default_entity()
+        if not entities:
+            print("  No entities installed. Run 'fcp init' to create one.")
+            return
+        print()
+        for eid in entities:
+            marker = "  ← default" if eid == default else ""
+            print(f"  {eid}{marker}")
+        print()
+        return
+
+    if cmd == "set" and rest:
+        entity_id = rest[0]
+        root = entity_root_for(entity_id)
+        if not (root / ".fcp-entity").exists():
+            ui.print_err(f"Entity '{entity_id}' not found at {root}")
+            sys.exit(1)
+        set_default_entity(entity_id)
+        ui.print_ok(f"Default entity set to '{entity_id}'")
+        return
+
+    entity_root = resolve_entity_root()
+
     if cmd == "status":
-        require_entity_root(entity_root)
         run_status(Layout(entity_root))
         return
 
     if cmd == "agenda":
-        require_entity_root(entity_root)
         run_agenda(Layout(entity_root))
         return
 
     if cmd == "doctor":
-        require_entity_root(entity_root)
         run_doctor(Layout(entity_root), rest)
         return
 
     if cmd == "decommission":
-        require_entity_root(entity_root)
         run_decommission(Layout(entity_root), rest)
         return
 
     if cmd == "model":
-        require_entity_root(entity_root)
         run_model(Layout(entity_root))
         return
 
     if cmd == "endure" and rest:
-        require_entity_root(entity_root)
         sub = rest[0]
         if sub == "sync":
             run_endure_sync(Layout(entity_root))
@@ -156,7 +190,6 @@ def _main() -> None:
         return
 
     if cmd == "--auto" and rest:
-        require_entity_root(entity_root)
         run_auto(Layout(entity_root), rest[0])
         return
 
@@ -165,5 +198,5 @@ def _main() -> None:
         return
 
     print(f"unknown command: {cmd}")
-    print("usage: fcp [init | status | agenda | model | update | doctor [--fix] | decommission --archive|--destroy | endure sync | --auto <cron_id>]")
+    print("usage: fcp [init | list | set <id> | status | agenda | model | update | doctor [--fix] | decommission --archive|--destroy | endure sync | --auto <cron_id>]")
     sys.exit(1)

@@ -51,8 +51,6 @@ def check_structure(layout: Layout) -> list[Finding]:
         ("skills",            True,  "§2.1"),
         ("skills/lib",        True,  "§2.1"),
         ("hooks",             True,  "§2.1"),
-        ("workspace",         True,  "§2.1"),
-        ("workspace/stage",   True,  "§2.1"),
         ("io",                True,  "§2.1"),
         ("io/inbox",          True,  "§2.1"),
         ("io/inbox/presession", True, "§2.1"),

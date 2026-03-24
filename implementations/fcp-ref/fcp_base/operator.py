@@ -560,18 +560,14 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
         from pathlib import Path as PathlibPath
         subdir = args[1]
         entity_root = layout.root
-        workspace_dir = layout.workspace_dir
 
         # Determine target path:
-        # - Relative path (or ".") → resolve against entity_root/workspace/
-        # - Absolute path → use as-is (but validate it's not an ancestor of entity_root)
-        if subdir in (".", ""):
-            target = workspace_dir.resolve()
-        elif PathlibPath(subdir).is_absolute():
+        # - Absolute path → use as-is
+        # - Relative path (or ".") → resolve against cwd
+        if PathlibPath(subdir).is_absolute():
             target = PathlibPath(subdir).resolve()
         else:
-            # Relative path → resolve against workspace_dir
-            target = (workspace_dir / subdir).resolve()
+            target = (PathlibPath.cwd() / subdir).resolve()
 
         # Security: target cannot be an ancestor of entity_root (including entity_root itself)
         try:
@@ -639,12 +635,6 @@ def _cmd_work(layout: Layout, args: list[str]) -> None:
             except Exception:
                 pass
         print(f"  workspace focus: {wf or '(not set)'}")
-        if layout.workspace_dir.exists():
-            subdirs = [d for d in sorted(layout.workspace_dir.iterdir()) if d.is_dir()]
-            if subdirs:
-                print("  available:")
-                for d in subdirs:
-                    print(f"    {d.name}")
     elif sub in ("unset", "clear"):
         if layout.workspace_focus.exists():
             layout.workspace_focus.unlink()
@@ -1980,9 +1970,9 @@ def _cmd_help() -> None:
 
   Workspace:
     /work status                          — show active workspace focus
-    /work set <path>                      — set workspace focus
-                                            • relative path: resolve against entity_root/workspace/ ('.' → workspace/)
-                                            • absolute path: allow outside entity_root/, no ancestor dir ('/full/path' → project/)
+    /work set <path>                      — set workspace focus (must be outside entity root)
+                                            • relative path: resolve against cwd ('.' → current directory)
+                                            • absolute path: use as-is
     /work clone <repo>                    — clone repo into current workspace_focus (must be set first) 
     /work unset                           — unset workspace focus
 

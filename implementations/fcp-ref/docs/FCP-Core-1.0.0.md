@@ -117,8 +117,6 @@ An FCP entity is a single directory. Its location on the host filesystem is the 
 │       ├── manifest.json       — skill manifest
 │       └── ...                 — skill executables
 ├── hooks/                      — lifecycle hook executables
-├── workspace/                  — CPE work area (outside Endure scope)
-│   └── stage/                  — skill staging area for Endure installation
 ├── io/
 │   ├── inbox/                  — async stimuli queue for CPE
 │   │   └── presession/         — stimuli received without active session
@@ -149,7 +147,7 @@ An FCP entity is a single directory. Its location on the host filesystem is the 
 
 The `persona/`, `skills/`, and `hooks/` directories contain structural content — covered by the Integrity Document, changed only via Endure. The `io/` directory is the CPE's async stimulus queue — any component writes here when a result is relevant to cognition; FCP drains it at the start of each cycle. The `memory/` directory is MIL-exclusive write territory; `imprint.json` is the exception — written once by the MIL during FAP and never modified thereafter. The `state/` directory is SIL territory: structural (`baseline.json`, `integrity.json`, `integrity_chain.jsonl`), integrity-exclusive (`integrity.log`, `distress.beacon`), and operational (`sentinels/`, `operator_notifications/`, `workspace_focus.json`, `pending-closure.json`).
 
-`workspace/` is the CPE's general work area: files here are not tracked by the Integrity Document and are excluded from the Endure scope. It contains `workspace/stage/`, the skill staging area — skill cartridges assembled by `skill_create` land here before being promoted to `skills/` via Endure.
+Skill staging lives outside the entity root at `/tmp/fcp-stage/<entity_id>/` — skill cartridges assembled by `skill_create` land here before being promoted to `skills/` via Endure. This path is outside the Endure scope and not tracked by the Integrity Document.
 
 ### 2.2 File Format Conventions
 
@@ -926,7 +924,7 @@ The SIL processes all queued Evolution Proposals. For each proposal:
 5. Update `state/integrity.json` atomically. If the number of Endure commits since the last checkpoint has reached `integrity_chain.checkpoint_interval`, include the updated `last_checkpoint` field in this same write.
 6. Append the commit entry to `state/integrity_chain.jsonl`. If step 5 updated `last_checkpoint`, this entry is a checkpoint entry — the Integrity Document is the verifiable anchor; the chain entry carries the full chain data.
 7. The SIL invokes the MIL synchronously in-process to append an `ENDURE_COMMIT` ACP envelope to `memory/session.jsonl` — no ACP roundtrip is required. This is the only Sleep Cycle write to `session.jsonl`; the MIL remains the authoritative writer even during Stage 3.
-8. If the proposal originated from a staged cartridge under `workspace/stage/<name>/`, the SIL deletes that staging directory. Staged cartridges are not retained after promotion.
+8. If the proposal originated from a staged cartridge under `/tmp/fcp-stage/<entity_id>/<name>/`, the SIL deletes that staging directory. Staged cartridges are not retained after promotion.
 
 Proposals without a valid `EVOLUTION_AUTH` record are discarded and logged — they are never executed.
 
@@ -1052,10 +1050,10 @@ Built-in skills are shipped with FCP and present in every entity's Skill Index f
 
 | Skill | Description |
 |---|---|
-| `skill_create` | Stages a new skill cartridge under `workspace/stage/<name>/` for Endure installation; accepts an optional `--base <name>` parameter — when provided, EXEC copies the named skill's files from `skills/<name>/` into the staging directory, giving the CPE a pre-populated cartridge to read and modify via `file_reader` and `file_writer`; does not modify `skills/index.json` directly — the staged files become an Evolution Proposal |
+| `skill_create` | Stages a new skill cartridge under `/tmp/fcp-stage/<entity_id>/<name>/` for Endure installation; accepts an optional `--base <name>` parameter — when provided, EXEC copies the named skill's files from `skills/<name>/` into the staging directory, giving the CPE a pre-populated cartridge to read and modify via `file_reader` and `file_writer`; does not modify `skills/index.json` directly — the staged files become an Evolution Proposal |
 | `skill_audit` | Validates a skill's manifest, executable, and index consistency; read-only — does not modify any files |
-| `file_reader` | Reads a file within `workspace/`; rejects any path outside `workspace/`; delivers content as chunked `SKILL_RESULT` envelopes with no file size limit — the practical limit is the CPE's available context budget |
-| `file_writer` | Writes a file within `workspace/`; rejects any path outside `workspace/`; no file size limit beyond host disk capacity |
+| `file_reader` | Reads a file within `workspace_focus`; rejects any path outside `workspace_focus` |
+| `file_writer` | Writes a file within `workspace_focus`; rejects any path outside `workspace_focus`; no file size limit beyond host disk capacity |
 | `worker_skill` | Instantiates a Worker Skill sub-agent with a provided persona, context, and task |
 | `commit` | Stages and records a version-control checkpoint; requires an explicit path parameter; validates that the path is within the active workspace_focus declared in `state/workspace_focus.json`; accepts `--remote` to push to the remote configured in the workspace repository's git config (conventionally `origin`); rejects execution if workspace_focus is unset or if the path falls outside it |
 | `shell_run` | Executes a shell command within the active `workspace_focus` directory; the set of permitted commands is declared as an allowlist in the skill's manifest — the allowlist is static and immutable without an Endure cycle; rejects execution if `workspace_focus` is unset or if the requested command is not in the allowlist |
@@ -1126,7 +1124,7 @@ At each Vital Check, the SIL writes a `HEARTBEAT` envelope to `state/integrity.l
 | Session Store size | ≥ 80% of `session_store.rotation_threshold_bytes` | Degraded → corrective signal to MIL |
 | Pre-session buffer | At or near `pre_session_buffer.max_entries` | Write to `operator_notifications/`; if `n_channel` failures → Beacon + halt |
 | `io/inbox/` health | `.msg` file present at previous Vital Check still present (stuck), or payload fails ACP parse (malformed) | Corrective signal to MIL |
-| `workspace_focus` path | Present but pointing outside `workspace/` | Critical → revoke token, Sleep Cycle |
+| `workspace_focus` path | Present but pointing inside entity root or ancestor of entity root | Critical → revoke token, Sleep Cycle |
 
 For Degraded conditions — those the SIL can verify independently by observing the component externally — the SIL issues a corrective signal and re-verifies after the component acts. If re-verification fails, the condition escalates to Critical. Conditions not externally verifiable escalate to Critical directly.
 
@@ -1278,7 +1276,7 @@ Platform commands are FCP-native operations that do not pass through the EXEC. M
                                session-scoped, not persisted; if omitted, displays current state
 /doctor [--fix]              — run entity health diagnostics; checks: presence of required
                                volatile directories (io/inbox/, io/spool/,
-                               state/operator_notifications/, workspace/stage/), stale files
+                               state/operator_notifications/, /tmp/fcp-stage/<entity_id>/), stale files
                                in io/spool/, session token state (stale token indicates
                                unreported crash), consecutive crash and skill failure counters,
                                and skill index consistency (all indexed skills have manifest
@@ -1308,7 +1306,7 @@ Platform commands are FCP-native operations that do not pass through the EXEC. M
 /skill list                  — list all skills in the Skill Index
 /skill add <name> [params]   — requires active session; FCP injects a structured task into
                                the cognitive pipeline; CPE uses skill_create to stage the
-                               skill under workspace/stage/<name>/, presents the result to the
+                               skill under /tmp/fcp-stage/<entity_id>/<name>/, presents the result to the
                                Operator, and emits an evolution_proposal; Operator approves
                                via /endure approve <id> or at session close
 /skill remove <name>         — remove a skill from the Skill Index (Operator-exclusive;
@@ -1317,18 +1315,18 @@ Platform commands are FCP-native operations that do not pass through the EXEC. M
 /endure list                 — list pending Evolution Proposals
 /endure approve <id>         — approve a pending proposal (Operator-exclusive; triggers forced close)
 /endure reject <id>          — reject a pending proposal (Operator-exclusive)
-/endure sync [--remote]      — commit entity root structural content to version control
-                               (workspace/ excluded); FCP validates that every staged
-                               change corresponds to a recorded Endure event before
-                               committing; with --remote, also pushes to the configured remote
+/endure sync [--remote]      — commit entity root structural content to version control;
+                               FCP validates that every staged change corresponds to a
+                               recorded Endure event before committing; with --remote,
+                               also pushes to the configured remote
 /inbox list                  — list pending notifications in state/operator_notifications/
 /inbox view <id>             — display full content of a notification
 /inbox dismiss <id>          — remove a notification; dismissal logged to state/integrity.log
 /inbox clear                 — dismiss all pending notifications
-/work set <subdir>           — set workspace_focus to the specified subdirectory of workspace/;
-                               SIL validates the path before writing state/workspace_focus.json;
-                               rejects any path outside workspace/
-/work clone <repo>           — clone a git repository into workspace/ and set workspace_focus
+/work set <path>             — set workspace_focus to the specified path (absolute or relative
+                               to cwd); SIL validates the path before writing
+                               state/workspace_focus.json; rejects paths inside entity root
+/work clone <repo>           — clone a git repository into workspace_focus and set workspace_focus
                                to the cloned directory; SIL validates the resulting path
 /work clear                  — unset workspace_focus; state/workspace_focus.json is removed
 /work status                 — display the active workspace_focus path
@@ -1341,7 +1339,7 @@ Platform commands are FCP-native operations that do not pass through the EXEC. M
                                read-only, does not invoke the CPE or pass through EXEC
 ```
 
-**Endure boundary.** A modification to entity root structural content is an Endure event — it must go through the Endure Protocol to be valid. A modification to `workspace/` is outside the Endure scope and is not tracked by the Integrity Chain. This boundary is enforced at every level: `/endure` and related commands operate on structural content only; the `commit` built-in skill operates on `workspace/` projects only. The two domains never overlap. When the CPE is operating in a workspace project context, it uses `commit` for version control — it has no visibility into `/endure sync` or the Endure domain. This separation is by design: FCP enforces it structurally so neither domain can accidentally operate in the other's scope.
+**Endure boundary.** A modification to entity root structural content is an Endure event — it must go through the Endure Protocol to be valid. Work done in `workspace_focus` (the operator's external project) is outside the Endure scope and is not tracked by the Integrity Chain. This boundary is enforced at every level: `/endure` and related commands operate on structural content only; the `commit` built-in skill operates on `workspace_focus` projects only. The two domains never overlap. When the CPE is operating in a workspace project context, it uses `commit` for version control — it has no visibility into `/endure sync` or the Endure domain. This separation is by design: FCP enforces it structurally so neither domain can accidentally operate in the other's scope.
 
 Commands declared as `"operator_only"` are rejected if issued from any source other than the interactive terminal prompt.
 
@@ -1350,7 +1348,7 @@ Commands declared as `"operator_only"` are rejected if issued from any source ot
 Skill aliases dispatch to a named skill via EXEC. They require an active session and follow session token routing. FCP resolves each alias against the `/command` alias map in `skills/index.json` — a flat lookup table from slash command name to skill name — and dispatches directly to EXEC, bypassing the cognitive pipeline. Action Ledger protection (§9.3) still applies for skills with irreversible side effects. Aliases not present in the map are rejected; they are never forwarded to the CPE.
 
 ```
-/commit [--remote]           — invoke the commit skill on the active workspace/ project;
+/commit [--remote]           — invoke the commit skill on the active workspace_focus project;
                                --remote also pushes to the configured remote
 ```
 
@@ -1373,9 +1371,8 @@ FCP reads `state/operator_notifications/` in timestamp order and displays each e
 A deployment is FCP-Core compliant if and only if it satisfies all requirements below. Each item is non-negotiable — partial compliance is not compliance.
 
 **Entity Layout**
-- [ ] Entity root contains `boot.md`, `persona/`, `skills/`, `hooks/`, `workspace/`, `io/`, `memory/`, `state/` as defined in §2.1; `workspace/stage/` is the skill staging area inside `workspace/`.
+- [ ] Entity root contains `boot.md`, `persona/`, `skills/`, `hooks/`, `io/`, `memory/`, `state/` as defined in §2.1; skill staging lives outside entity root at `/tmp/fcp-stage/<entity_id>/`.
 - [ ] `skills/lib/` contains built-in and operator skill executables; operator-class skills are excluded from the `[SKILLS INDEX]` context block; built-in and custom skills are included.
-- [ ] `workspace/` is excluded from the Endure scope and not tracked by the Integrity Document.
 - [ ] `memory/imprint.json` is present after FAP and never modified thereafter.
 - [ ] `state/integrity_chain.jsonl` is append-only and never compacted or deleted.
 - [ ] `state/sentinels/session.token` is written, revoked, and removed exclusively by the SIL.
@@ -1424,7 +1421,7 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] Each Evolution Proposal executed at Stage 3 only with a matching `EVOLUTION_AUTH` record.
 - [ ] `SLEEP_COMPLETE` written to `state/integrity.log` before session token is removed.
 - [ ] Session token removed by SIL immediately after `SLEEP_COMPLETE`.
-- [ ] Staged cartridge directories in `workspace/stage/` are deleted by the SIL as step 8 of each promoted proposal's Endure execution.
+- [ ] Staged cartridge directories in `/tmp/fcp-stage/<entity_id>/` are deleted by the SIL as step 8 of each promoted proposal's Endure execution.
 
 **Memory Layer**
 - [ ] MIL is the sole writer of mnemonic content to the Session Store and Memory Store.
@@ -1440,8 +1437,8 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] `SEVERANCE_COMMIT` notification written to `state/operator_notifications/` immediately; unacknowledged at session close escalates to `SEVERANCE_PENDING` Critical condition; resolved at Phase 6 via dual-gate: Operator acknowledges + SIL invokes `skill_audit` Worker Skill to confirm index integrity.
 - [ ] Built-in skills (`skill_create`, `skill_audit`, `file_reader`, `file_writer`, `worker_skill`, `commit`) present in Skill Index from genesis; executables in `skills/lib/`.
 - [ ] `commit` skill requires an explicit path parameter; validates path is within the workspace_focus declared in `state/workspace_focus.json`; rejects if workspace_focus is unset or if the path falls outside it.
-- [ ] `file_reader` and `file_writer` operate exclusively within `workspace/`; requests targeting any path outside `workspace/` are rejected.
-- [ ] `skill_create` with `--base <name>` clones an existing skill's files from `skills/<name>/` into `workspace/stage/<name>/`; the clone is deleted by the SIL after Endure promotion.
+- [ ] `file_reader` and `file_writer` operate exclusively within `workspace_focus`; requests targeting any path outside `workspace_focus` are rejected.
+- [ ] `skill_create` with `--base <name>` clones an existing skill's files from `skills/<name>/` into `/tmp/fcp-stage/<entity_id>/<name>/`; the clone is deleted by the SIL after Endure promotion.
 
 **Integrity Layer**
 - [ ] `state/integrity.log` is never compacted, archived, truncated, or deleted; retention is unbounded.
@@ -1459,11 +1456,11 @@ A deployment is FCP-Core compliant if and only if it satisfies all requirements 
 - [ ] Platform commands (§12.3.1) execute natively without EXEC dispatch; available outside active session and during Sleep Cycle.
 - [ ] Skill aliases (§12.3.2) resolved against `skills/index.json` alias map; dispatched directly to EXEC without CPE involvement; require active session.
 - [ ] Operator-exclusive commands (`"operator_only": true`) rejected if issued from any source other than the interactive terminal prompt.
-- [ ] `/skill add` injects a structured task into the cognitive pipeline; CPE stages skill via `skill_create` under `workspace/stage/`; result goes through normal evolution proposal flow.
-- [ ] `/endure sync [--remote]` commits entity root structural content to version control (workspace/ excluded); validates Endure event coverage before committing.
-- [ ] `commit` skill operates on the active project repo inside `workspace/` only; never touches entity root content; CPE in a workspace project context has no visibility into the Endure domain.
-- [ ] `/work set` and `/work clone` write `state/workspace_focus.json` only after SIL validates the resulting path is within `workspace/`; rejected paths produce an error without modifying workspace_focus.
-- [ ] SIL validates `state/workspace_focus.json` path at every Vital Check; path outside `workspace/` triggers Critical escalation.
+- [ ] `/skill add` injects a structured task into the cognitive pipeline; CPE stages skill via `skill_create` under `/tmp/fcp-stage/<entity_id>/`; result goes through normal evolution proposal flow.
+- [ ] `/endure sync [--remote]` commits entity root structural content to version control; validates Endure event coverage before committing.
+- [ ] `commit` skill operates on the active project repo inside `workspace_focus` only; never touches entity root content; CPE in a workspace project context has no visibility into the Endure domain.
+- [ ] `/work set` and `/work clone` write `state/workspace_focus.json` only after SIL validates the resulting path is outside entity root; rejected paths produce an error without modifying workspace_focus.
+- [ ] SIL validates `state/workspace_focus.json` path at every Vital Check; path inside entity root or ancestor of entity root triggers Critical escalation.
 - [ ] Pending notifications presented to Operator before Phase 6 completes at boot.
 - [ ] Terminal prompt used for all synchronous Operator interactions requiring a response.
 - [ ] `state/operator_notifications/` used for all asynchronous notifications not requiring immediate response.
