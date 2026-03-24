@@ -129,185 +129,32 @@ def run_init(fcp_ref_root: Path) -> None:
 
     is_fcp_entity = (entity_root / ".fcp-entity").exists() or (entity_root / "state" / "baseline.json").exists()
 
-    keep_persona = False
-    keep_skills = False
-    keep_boot = False
-    keep_hooks = False
-    keep_tests = False
-    keep_fcp_base = False
-    keep_state = False
-    keep_io = False
-
     if is_fcp_entity:
         print()
         ui.print_warn(f"Existing FCP entity detected at {entity_root}.")
         action_items = [
-            "Reset to FAP  — wipe dynamic state (state/, memory/, io/) and restart",
-            "Update        — selectively overwrite components from templates",
+            "Factory reset — wipe entity_root/ and re-initialise from scratch",
             "Cancel",
         ]
-        choice_label = ui.pick_one("Select an action", action_items, default_idx=0, indent="  ")
+        choice_label = ui.pick_one("Select an action", action_items, default_idx=1, indent="  ")
         choice_idx = action_items.index(choice_label)
 
-        if choice_idx == 2:
+        if choice_idx == 1:
             sys.exit(0)
-        elif choice_idx == 0:
-            for d in ["state", "memory", "io"]:
-                p = entity_root / d
-                if p.exists() and p.is_dir():
-                    for sub in p.iterdir():
-                        if sub.name != "baseline.json":
-                            if sub.is_dir(): shutil.rmtree(sub)
-                            else: sub.unlink()
-            for subdir in ["memory/episodic", "memory/semantic", "memory/active_context"]:
-                (entity_root / subdir).mkdir(parents=True, exist_ok=True)
-            print()
-            ui.print_ok("Dynamic state cleared. Entity is ready for FAP.")
-            print(f"      Run: cd {entity_root} && ./fcp")
-            print()
-            sys.exit(0)
-        else:
-            ui.hr("Update")
 
-            # Version info: installed vs entity
-            _installed_ver = fcp_version
-            try:
-                _entity_marker = json.loads((entity_root / ".fcp-entity").read_text(encoding="utf-8"))
-                _entity_ver = _entity_marker.get("version", "unknown")
-            except Exception:
-                _entity_ver = "unknown"
-            _ver_tag = "up to date" if _entity_ver == _installed_ver else "outdated"
-            print(f"  FCP version:  {_installed_ver} (installed)  ←  {_entity_ver} (entity)  [{_ver_tag}]")
-            print()
-            print("      Checked = keep existing.  Unchecked = overwrite from template.")
-            print()
-
-            update_items = [
-                "boot.md    — operational rules and boot protocol",
-                "fcp_base/  — FCP core engine modules",
-                "hooks/     — event-driven lifecycle scripts",
-                "io/        — inbox and spool (runtime I/O)",
-                "persona/   — personality and operator history",
-                "skills/    — custom tools and reasoning units",
-                "state/     — baseline, integrity, session state",
-                "tests/     — unit and integrated validations",
-            ]
-            update_defaults = [True, True, True, True, True, True, True, True]
-
-            states = ui.pick_many(
-                "Components to KEEP (uncheck to overwrite from template)",
-                update_items,
-                update_defaults,
-                indent="      ",
-            )
-            (keep_boot, keep_fcp_base, keep_hooks, keep_io,
-             keep_persona, keep_skills, keep_state, keep_tests) = states
-
-            entity_marker_path = entity_root / ".fcp-entity"
-            try:
-                _marker = json.loads(entity_marker_path.read_text(encoding="utf-8"))
-                _profile = _marker.get("profile", "haca-core")
-            except Exception:
-                _marker = {}
-                _profile = "haca-core"
-            _profile_dir = fcp_ref_root / ("fcp-core" if _profile == "haca-core" else "fcp-evolve")
-
-            ui.hr("Applying updates")
-            print()
-
-            for _src, _dst_name, _keep in [
-                (fcp_ref_root / "boot.md",    "boot.md",   keep_boot),
-                (fcp_ref_root / "fcp_base",   "fcp_base",  keep_fcp_base),
-                (fcp_ref_root / "hooks",      "hooks",     keep_hooks),
-                (fcp_ref_root / "skills",     "skills",    keep_skills),
-                (fcp_ref_root / "tests",      "tests",     keep_tests),
-                (_profile_dir / "persona",    "persona",   keep_persona),
-            ]:
-                if _keep:
-                    print(f"  [·] Keeping   {_dst_name}")
-                    continue
-                if not _src.exists():
-                    continue
-                _dst = entity_root / _dst_name
-                print(f"  [↓] Updating  {_dst_name}")
-                if _src.is_dir():
-                    if _dst.exists():
-                        shutil.rmtree(_dst)
-                    shutil.copytree(_src, _dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
-                else:
-                    shutil.copy2(_src, _dst)
-
-            _fcp_src = fcp_ref_root / "fcp"
-            if _fcp_src.exists():
-                _fcp_dst = entity_root / "fcp"
-                shutil.copy2(_fcp_src, _fcp_dst)
-                _fcp_dst.chmod(0o755)
-
-            if not keep_state:
-                print(f"  [↓] Wiping    state/")
-                _p = entity_root / "state"
-                if _p.exists():
-                    for _sub in _p.iterdir():
-                        if _sub.name != "baseline.json":
-                            if _sub.is_dir(): shutil.rmtree(_sub)
-                            else: _sub.unlink()
+        # Factory reset: wipe all content, then fall through to profile selection
+        ui.hr("Factory reset")
+        print()
+        print(f"  Wiping {entity_root} ...")
+        for item in entity_root.iterdir():
+            if item.name == ".git":
+                continue
+            if item.is_dir():
+                shutil.rmtree(item)
             else:
-                print(f"  [·] Keeping   state/")
-
-            if not keep_io:
-                print(f"  [↓] Wiping    io/")
-                _p = entity_root / "io"
-                if _p.exists():
-                    shutil.rmtree(_p)
-            else:
-                print(f"  [·] Keeping   io/")
-
-            for _d in [
-                entity_root / "memory" / "episodic",
-                entity_root / "memory" / "semantic",
-                entity_root / "memory" / "active_context",
-                entity_root / "state" / "sentinels",
-                entity_root / "state" / "snapshots",
-                entity_root / "state" / "operator_notifications",
-                entity_root / "io" / "inbox" / "presession",
-                entity_root / "io" / "spool",
-            ]:
-                _d.mkdir(parents=True, exist_ok=True)
-            (Path("/tmp") / "fcp-stage" / entity_root.name).mkdir(parents=True, exist_ok=True)
-
-            _git_init = False
-            if not (entity_root / ".git").exists():
-                print()
-                _git_init = ui.confirm("Initialise a git repository in the entity root?", default=True)
-            if _git_init:
-                _git_ok = False
-                try:
-                    _fcp_ver = read_fcp_version(fcp_ref_root)
-                    subprocess.run(["git", "init", str(entity_root)], check=True, capture_output=True)
-                    write_entity_gitignore(entity_root)
-                    subprocess.run(["git", "-C", str(entity_root), "add", "."], check=True, capture_output=True)
-                    subprocess.run(
-                        ["git", "-C", str(entity_root), "commit", "-m",
-                         f"chore: update entity (fcp v{_fcp_ver})"],
-                        check=True, capture_output=True,
-                    )
-                    _git_ok = True
-                except subprocess.CalledProcessError as _exc:
-                    print(f"  [!] git failed: {_exc.stderr.decode().strip()}")
-                except FileNotFoundError:
-                    print("  [!] git not found — skipping.")
-
-            print()
-            ui.hr()
-            print(f"  Entity updated successfully")
-            ui.hr()
-            print(f"  path:    {entity_root}")
-            print(f"  profile: {_marker.get('haca_profile', _profile)}")
-            if _git_init:
-                print(f"  git:     {'initial commit created' if _git_ok else 'init failed (see above)'}")
-            ui.hr()
-            print()
-            return
+                item.unlink()
+        ui.print_ok("Entity wiped. Re-initialising...")
+        print()
 
     # ── Step 2: Profile ─────────────────────────────────────────────────────
     ui.hr("2. Profile")
@@ -524,14 +371,10 @@ def run_init(fcp_ref_root: Path) -> None:
         except FileNotFoundError:
             print("  [!] git not found — skipping.")
 
-    # ── Step 7: Set as default if first entity ───────────────────────────────
+    # ── Step 7: Set as default if no default is configured ───────────────────
+    if not get_default_entity():
+        set_default_entity(entity_id)
     was_default = get_default_entity() == entity_id
-    if not was_default and not list_entities():
-        set_default_entity(entity_id)
-        was_default = True
-    elif not get_default_entity():
-        set_default_entity(entity_id)
-        was_default = True
 
     # ── Step 8: Summary ──────────────────────────────────────────────────────
     print()
