@@ -214,7 +214,7 @@ def build_tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[
         "name": "evolution_proposal",
         "description": (
             "Propose a structural change to the Entity Store. "
-            "To install a custom skill: use skill_install op with the skill name (must be staged in workspace/stage/<name>/ and validated with skill_audit first). "
+            "To install a custom skill: use skill_install op with the skill name (must be staged in state/stage/<name>/ and validated with skill_audit first). "
             "For other structural changes (persona files, configs): use json_merge, file_write, or file_delete ops. "
             "To propose a scheduled task: use cron_add op. "
             "Requires explicit Operator approval before taking effect."
@@ -232,10 +232,10 @@ def build_tool_declarations(layout: Layout, index: dict[str, Any]) -> list[dict[
                             "op": {
                                 "type": "string",
                                 "enum": ["json_merge", "file_write", "file_delete", "skill_install", "cron_add"],
-                                "description": "Operation: json_merge (partial update to a JSON file), file_write (create/replace a file), file_delete (remove a file), skill_install (promote a staged skill from workspace/stage/<name>/ to skills/<name>/ — use this to install custom skills, never file_write), cron_add (propose a new scheduled task).",
+                                "description": "Operation: json_merge (partial update to a JSON file), file_write (create/replace a file), file_delete (remove a file), skill_install (promote a staged skill from state/stage/<name>/ to skills/<name>/ — use this to install custom skills, never file_write), cron_add (propose a new scheduled task).",
                             },
                             "target": {"type": "string", "description": "Path relative to entity root. Required for json_merge, file_write, file_delete. Not used for skill_install or cron_add."},
-                            "name": {"type": "string", "description": "For skill_install: the skill name as it appears in workspace/stage/<name>/."},
+                            "name": {"type": "string", "description": "For skill_install: the skill name as it appears in state/stage/<name>/."},
                             "patch": {"type": "object", "description": "For json_merge: the fields to merge into the target JSON."},
                             "content": {"type": "string", "description": "For file_write: the full file content to write."},
                             "task": {"type": "string", "description": "For cron_add: clear, verifiable instruction the entity will execute when the schedule fires."},
