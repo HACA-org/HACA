@@ -5,7 +5,7 @@ Public API re-exported for backwards compatibility.
 The 'fcp' console script entry point calls fcp_base.cli:main.
 """
 
-from .dispatch import main, _main, require_entity_root, print_help
+from .dispatch import main, _main, print_help
 from .ui import build_boot_stats, print_boot_header, print_block
 from .init import run_init, read_fcp_version, write_entity_gitignore
 from .commands import (
@@ -41,6 +41,5 @@ __all__ = [
     "run_endure_sync",
     "run_endure_origin",
     "run_endure_chain",
-    "require_entity_root",
     "print_help",
 ]
