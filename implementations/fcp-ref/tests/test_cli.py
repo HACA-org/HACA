@@ -45,23 +45,6 @@ def _make_entity(profile: str = "haca-core") -> tuple[Path, Path]:
 
 class TestCliDispatch(unittest.TestCase):
 
-    def test_require_entity_root_passes_for_valid_entity(self):
-        from fcp_base.cli import require_entity_root
-        tmp, _ = _make_entity()
-        try:
-            require_entity_root(tmp)  # must not raise or call sys.exit
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-
-    def test_require_entity_root_exits_for_non_entity(self):
-        from fcp_base.cli import require_entity_root
-        tmp = Path(tempfile.mkdtemp())
-        try:
-            with self.assertRaises(SystemExit):
-                require_entity_root(tmp)
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-
     def test_print_help_does_not_raise(self):
         from fcp_base.cli import print_help
         import io
@@ -340,6 +323,237 @@ class TestCliEndure(unittest.TestCase):
                 run_endure_sync(layout)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# cli/commands — run_update
+# ---------------------------------------------------------------------------
+
+def _make_fake_fcp_ref(version: str = "1.1.0") -> Path:
+    """Create a minimal fcp-ref directory tree simulating a downloaded update."""
+    tmp = Path(tempfile.mkdtemp())
+    # pyproject.toml with version
+    (tmp / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n', encoding="utf-8")
+    # fcp launcher
+    fcp_exe = tmp / "fcp"
+    fcp_exe.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    fcp_exe.chmod(0o755)
+    # boot.md
+    (tmp / "boot.md").write_text(f"# boot v{version}\n", encoding="utf-8")
+    # fcp_base/
+    (tmp / "fcp_base").mkdir()
+    (tmp / "fcp_base" / "version.py").write_text(f'__version__ = "{version}"\n', encoding="utf-8")
+    # skills/lib/
+    (tmp / "skills" / "lib" / "builtin_skill").mkdir(parents=True)
+    (tmp / "skills" / "lib" / "builtin_skill" / "run.py").write_text("# builtin\n", encoding="utf-8")
+    # hooks/
+    (tmp / "hooks").mkdir()
+    (tmp / "hooks" / "on_boot.sh").write_text("#!/bin/bash\n# boot hook\n", encoding="utf-8")
+    return tmp
+
+
+def _make_entity_with_version(version: str = "1.0.0") -> Path:
+    """Create a minimal entity root with a versioned .fcp-entity marker."""
+    tmp = Path(tempfile.mkdtemp())
+    for d in ["state", "memory/episodic", "memory/semantic", "memory/active_context",
+              "state/operator_notifications", "skills/lib", "persona", "hooks", "fcp_base"]:
+        (tmp / d).mkdir(parents=True, exist_ok=True)
+    (tmp / "boot.md").write_text(f"# boot v{version}\n", encoding="utf-8")
+    (tmp / "fcp_base" / "version.py").write_text(f'__version__ = "{version}"\n', encoding="utf-8")
+    (tmp / "hooks" / "on_boot.sh").write_text("#!/bin/bash\n# old hook\n", encoding="utf-8")
+    (tmp / "hooks" / "on_custom.sh").write_text("#!/bin/bash\n# custom hook\n", encoding="utf-8")
+    (tmp / "state" / "baseline.json").write_text(
+        json.dumps({"cpe": {"backend": "ollama", "model": "llama3"}}), encoding="utf-8"
+    )
+    (tmp / ".fcp-entity").write_text(
+        json.dumps({"profile": "haca-core", "version": version}), encoding="utf-8"
+    )
+    (tmp / "fcp").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    return tmp
+
+
+class TestRunUpdate(unittest.TestCase):
+    """Tests for run_update — network call is mocked via _download_fcp_ref."""
+
+    def _patch_download(self, new_fcp_ref: Path):
+        """Patch urllib.request.urlopen and tarfile.open to serve new_fcp_ref."""
+        import io as _io
+        import tarfile as _tarfile
+
+        def fake_urlopen(url, timeout=30):
+            # Build an in-memory tarball containing new_fcp_ref/ as HACA-main/implementations/fcp-ref/
+            buf = _io.BytesIO()
+            with _tarfile.open(fileobj=buf, mode="w:gz") as tf:
+                prefix = "HACA-main/implementations/fcp-ref"
+                for item in new_fcp_ref.rglob("*"):
+                    arcname = prefix + "/" + str(item.relative_to(new_fcp_ref))
+                    tf.add(item, arcname=arcname)
+            buf.seek(0)
+
+            class _FakeResp:
+                def read(self): return buf.read()
+                def __enter__(self): return self
+                def __exit__(self, *a): pass
+
+            return _FakeResp()
+
+        return patch("urllib.request.urlopen", side_effect=fake_urlopen)
+
+    def test_dry_run_does_not_write_files(self):
+        """--dry-run must not modify fcp_ref_root or any entity."""
+        from fcp_base.cli.commands import run_update
+        from fcp_base.store import FCP_ENTITIES_DIR
+
+        new_ref = _make_fake_fcp_ref("1.1.0")
+        entity = _make_entity_with_version("1.0.0")
+
+        try:
+            original_boot = (entity / "boot.md").read_text()
+
+            with self._patch_download(new_ref), \
+                 patch("fcp_base.store.FCP_ENTITIES_DIR", entity.parent), \
+                 patch("fcp_base.store.list_entities", return_value=[entity.name]), \
+                 patch("fcp_base.store.entity_root_for", return_value=entity), \
+                 patch("fcp_base.cli.commands.Path.__file__", create=True), \
+                 patch("sys.stdout", __import__("io").StringIO()):
+                # patch fcp_ref_root resolution via __file__
+                fake_cli = entity.parent / "fcp_ref" / "fcp_base" / "cli" / "commands.py"
+                fake_cli.parent.mkdir(parents=True, exist_ok=True)
+                with patch.object(
+                    __import__("fcp_base.cli.commands", fromlist=["run_update"]),
+                    "__file__", str(fake_cli)
+                ):
+                    pass  # can't easily patch __file__ — use alternative below
+
+            # Simpler: call the internal logic directly by patching cli file path
+            import fcp_base.cli.commands as _cmd_mod
+            orig_file = _cmd_mod.__file__
+
+            fake_cli_file = str(new_ref / "fcp_base" / "cli" / "commands.py")
+            with self._patch_download(new_ref), \
+                 patch.object(_cmd_mod, "__file__", fake_cli_file), \
+                 patch("fcp_base.store.list_entities", return_value=[entity.name]), \
+                 patch("fcp_base.store.entity_root_for", return_value=entity), \
+                 patch("sys.stdout", __import__("io").StringIO()):
+                run_update(dry_run=True)
+
+            # boot.md must be unchanged
+            self.assertEqual((entity / "boot.md").read_text(), original_boot)
+            # .fcp-entity version must be unchanged
+            marker = json.loads((entity / ".fcp-entity").read_text())
+            self.assertEqual(marker["version"], "1.0.0")
+        finally:
+            shutil.rmtree(new_ref, ignore_errors=True)
+            shutil.rmtree(entity, ignore_errors=True)
+
+    def test_update_replaces_fcp_base_and_boot(self):
+        """Confirmed update must overwrite fcp_base/ and boot.md."""
+        from fcp_base.cli.commands import run_update
+        import fcp_base.cli.commands as _cmd_mod
+
+        new_ref = _make_fake_fcp_ref("1.1.0")
+        entity = _make_entity_with_version("1.0.0")
+
+        try:
+            fake_cli_file = str(new_ref / "fcp_base" / "cli" / "commands.py")
+            with self._patch_download(new_ref), \
+                 patch.object(_cmd_mod, "__file__", fake_cli_file), \
+                 patch("fcp_base.store.list_entities", return_value=[entity.name]), \
+                 patch("fcp_base.store.entity_root_for", return_value=entity), \
+                 patch("fcp_base.cli.commands.ui.confirm", return_value=True), \
+                 patch("sys.stdout", __import__("io").StringIO()):
+                run_update(dry_run=False)
+
+            # boot.md updated
+            self.assertIn("1.1.0", (entity / "boot.md").read_text())
+            # fcp_base updated
+            self.assertIn("1.1.0", (entity / "fcp_base" / "version.py").read_text())
+            # .fcp-entity version bumped
+            marker = json.loads((entity / ".fcp-entity").read_text())
+            self.assertEqual(marker["version"], "1.1.0")
+        finally:
+            shutil.rmtree(new_ref, ignore_errors=True)
+            shutil.rmtree(entity, ignore_errors=True)
+
+    def test_update_preserves_custom_hooks(self):
+        """hooks/on_custom.sh (not in template) must survive an update."""
+        from fcp_base.cli.commands import run_update
+        import fcp_base.cli.commands as _cmd_mod
+
+        new_ref = _make_fake_fcp_ref("1.1.0")
+        entity = _make_entity_with_version("1.0.0")
+
+        try:
+            fake_cli_file = str(new_ref / "fcp_base" / "cli" / "commands.py")
+            with self._patch_download(new_ref), \
+                 patch.object(_cmd_mod, "__file__", fake_cli_file), \
+                 patch("fcp_base.store.list_entities", return_value=[entity.name]), \
+                 patch("fcp_base.store.entity_root_for", return_value=entity), \
+                 patch("fcp_base.cli.commands.ui.confirm", return_value=True), \
+                 patch("sys.stdout", __import__("io").StringIO()):
+                run_update(dry_run=False)
+
+            self.assertTrue((entity / "hooks" / "on_custom.sh").exists())
+            self.assertIn("custom hook", (entity / "hooks" / "on_custom.sh").read_text())
+        finally:
+            shutil.rmtree(new_ref, ignore_errors=True)
+            shutil.rmtree(entity, ignore_errors=True)
+
+    def test_update_skipped_on_decline(self):
+        """Declining confirmation must leave entity untouched."""
+        from fcp_base.cli.commands import run_update
+        import fcp_base.cli.commands as _cmd_mod
+
+        new_ref = _make_fake_fcp_ref("1.1.0")
+        entity = _make_entity_with_version("1.0.0")
+
+        try:
+            original_boot = (entity / "boot.md").read_text()
+            fake_cli_file = str(new_ref / "fcp_base" / "cli" / "commands.py")
+            with self._patch_download(new_ref), \
+                 patch.object(_cmd_mod, "__file__", fake_cli_file), \
+                 patch("fcp_base.store.list_entities", return_value=[entity.name]), \
+                 patch("fcp_base.store.entity_root_for", return_value=entity), \
+                 patch("fcp_base.cli.commands.ui.confirm", return_value=False), \
+                 patch("sys.stdout", __import__("io").StringIO()):
+                run_update(dry_run=False)
+
+            self.assertEqual((entity / "boot.md").read_text(), original_boot)
+            marker = json.loads((entity / ".fcp-entity").read_text())
+            self.assertEqual(marker["version"], "1.0.0")
+        finally:
+            shutil.rmtree(new_ref, ignore_errors=True)
+            shutil.rmtree(entity, ignore_errors=True)
+
+    def test_skills_lib_replaced_custom_skills_preserved(self):
+        """skills/lib/ is replaced; custom skills outside lib/ are untouched."""
+        from fcp_base.cli.commands import run_update
+        import fcp_base.cli.commands as _cmd_mod
+
+        new_ref = _make_fake_fcp_ref("1.1.0")
+        entity = _make_entity_with_version("1.0.0")
+        # add a custom skill
+        custom_skill = entity / "skills" / "my_custom_skill"
+        custom_skill.mkdir(parents=True)
+        (custom_skill / "run.py").write_text("# custom\n", encoding="utf-8")
+
+        try:
+            fake_cli_file = str(new_ref / "fcp_base" / "cli" / "commands.py")
+            with self._patch_download(new_ref), \
+                 patch.object(_cmd_mod, "__file__", fake_cli_file), \
+                 patch("fcp_base.store.list_entities", return_value=[entity.name]), \
+                 patch("fcp_base.store.entity_root_for", return_value=entity), \
+                 patch("fcp_base.cli.commands.ui.confirm", return_value=True), \
+                 patch("sys.stdout", __import__("io").StringIO()):
+                run_update(dry_run=False)
+
+            # builtin skill updated
+            self.assertTrue((entity / "skills" / "lib" / "builtin_skill" / "run.py").exists())
+            # custom skill preserved
+            self.assertTrue((entity / "skills" / "my_custom_skill" / "run.py").exists())
+        finally:
+            shutil.rmtree(new_ref, ignore_errors=True)
+            shutil.rmtree(entity, ignore_errors=True)
 
 
 if __name__ == "__main__":

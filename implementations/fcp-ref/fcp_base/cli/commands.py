@@ -407,14 +407,16 @@ def run_decommission(layout: "Layout", args: list[str]) -> None:
 # Update
 # ---------------------------------------------------------------------------
 
-def run_update() -> None:
+def run_update(dry_run: bool = False) -> None:
+    import hashlib
     import shutil
     import json as _json
+    import tarfile
+    import tempfile
+    import urllib.request
 
     cli_file = Path(__file__).resolve()
     fcp_ref_root = cli_file.parents[2]   # cli/ -> fcp_base/ -> fcp-ref/
-    # fcp-ref/ is the sparse-checkout root — it contains .git directly
-    git_root = fcp_ref_root
 
     # Guard: reject if running from within an entity root
     for ancestor in cli_file.parents:
@@ -422,124 +424,198 @@ def run_update() -> None:
             ui.print_err("fcp update must be run from the global fcp installation.")
             ui.print_err("Use the 'fcp' command in your PATH, not a local copy.")
             sys.exit(1)
-        if ancestor == git_root:
+        if ancestor == fcp_ref_root:
             break
 
-    if not (git_root / ".git").exists():
-        ui.print_err(f"Cannot update: FCP installation at {git_root} is not a git repository.")
-        sys.exit(1)
+    def _sha256(path: Path) -> str:
+        h = hashlib.sha256()
+        h.update(path.read_bytes())
+        return h.hexdigest()
 
-    # ── Step 1: Pull CLI ─────────────────────────────────────────────────────
-    ui.hr("fcp update")
-    ui.print_info(f"Pulling latest fcp-ref from origin/main ...")
-    print()
-
-    r = subprocess.run(
-        ["git", "-C", str(git_root), "pull", "origin", "main", "--rebase"],
-        capture_output=True, text=True
-    )
-
-    if r.returncode != 0:
-        ui.print_err("Pull failed. Check your git configuration or network.")
-        print(r.stderr.strip())
-        sys.exit(1)
-
-    already_current = "Already up to date." in r.stdout or "Current branch main is up to date" in r.stdout
-    if already_current:
-        ui.print_ok("CLI is already up to date.")
-    else:
-        ui.print_ok("CLI updated.")
-        print()
-        print(r.stdout.strip())
-    print()
-
-    # ── Step 2: Read new version ─────────────────────────────────────────────
-    from .init import read_fcp_version
-    new_version = read_fcp_version(fcp_ref_root)
-
-    # ── Step 3: Check installed entities ────────────────────────────────────
-    from ..store import list_entities, entity_root_for
-    entities = list_entities()
-
-    if not entities:
-        ui.print_info("No entities installed.")
-        print()
-        return
-
-    ui.hr("Entities")
-    print()
-
-    outdated: list[tuple[str, str]] = []  # (entity_id, entity_version)
-    for eid in entities:
-        eroot = entity_root_for(eid)
-        try:
-            marker = _json.loads((eroot / ".fcp-entity").read_text(encoding="utf-8"))
-            ev = marker.get("version", "unknown")
-        except Exception:
-            ev = "unknown"
-        status = "up to date" if ev == new_version else "outdated"
-        ui.print_info(f"  {eid}  v{ev}  [{status}]")
-        if ev != new_version:
-            outdated.append((eid, ev))
-
-    print()
-
-    if not outdated:
-        ui.print_ok(f"All entities are on v{new_version}.")
-        print()
-        return
-
-    ui.print_info(f"CLI is now v{new_version}. {len(outdated)} entity(ies) can be updated.")
-    print()
-
-    # ── Step 4: Offer update per entity ─────────────────────────────────────
-    _UPDATE_SRCS = [
-        (fcp_ref_root / "boot.md",   "boot.md"),
-        (fcp_ref_root / "fcp_base",  "fcp_base"),
-        (fcp_ref_root / "hooks",     "hooks"),
-        (fcp_ref_root / "skills",    "skills"),
-        (fcp_ref_root / "tests",     "tests"),
-    ]
-
-    for eid, ev in outdated:
-        eroot = entity_root_for(eid)
-        answer = ui.confirm(f"Update '{eid}'  v{ev} → v{new_version}?", default=True)
-        if not answer:
-            ui.print_info(f"  Skipped {eid}.")
-            print()
-            continue
-
-        for src, dst_name in _UPDATE_SRCS:
-            if not src.exists():
+    def _diff_dir_merge(src: Path, dst: Path) -> list[str]:
+        """Return list of relative paths that differ between src/ and dst/."""
+        changed = []
+        for item in src.rglob("*"):
+            if item.suffix in (".pyc", ".pyo") or "__pycache__" in item.parts:
                 continue
-            dst = eroot / dst_name
-            if src.is_dir():
-                if dst.exists():
-                    shutil.rmtree(dst)
-                shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
+            if item.is_dir():
+                continue
+            rel = item.relative_to(src)
+            dst_item = dst / rel
+            if not dst_item.exists() or _sha256(item) != _sha256(dst_item):
+                changed.append(str(rel))
+        return changed
+
+    def _copy_dir_merge(src: Path, dst: Path) -> list[str]:
+        """Copy src/ into dst/, overwriting matching files. Returns list of updated names."""
+        updated = _diff_dir_merge(src, dst)
+        dst.mkdir(parents=True, exist_ok=True)
+        for rel in updated:
+            src_item = src / rel
+            dst_item = dst / rel
+            dst_item.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_item, dst_item)
+        return updated
+
+    dry_tag = "  [dry-run]" if dry_run else ""
+
+    # ── Step 1: Download latest fcp-ref ─────────────────────────────────────
+    title = "fcp update --dry-run" if dry_run else "fcp update"
+    ui.hr(title)
+    ui.print_info("Downloading latest fcp-ref from github.com/HACA-org/HACA ...")
+    print()
+
+    tarball_url = "https://github.com/HACA-org/HACA/archive/refs/heads/main.tar.gz"
+    _INNER = ("HACA-main", "implementations", "fcp-ref")
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            tarball = tmp_path / "haca-main.tar.gz"
+
+            with urllib.request.urlopen(tarball_url, timeout=30) as resp:
+                tarball.write_bytes(resp.read())
+
+            prefix = "/".join(_INNER) + "/"
+            with tarfile.open(tarball, "r:gz") as tf:
+                members = [m for m in tf.getmembers() if m.name.startswith(prefix)]
+                if not members:
+                    ui.print_err("fcp-ref not found in downloaded archive.")
+                    sys.exit(1)
+                tf.extractall(tmp_path, members=members)
+
+            new_fcp_ref = tmp_path.joinpath(*_INNER)
+
+            from .init import read_fcp_version
+            new_version = read_fcp_version(new_fcp_ref)
+
+            # ── Step 2: Update CLI in-place ──────────────────────────────────
+            if dry_run:
+                ui.print_info(f"  CLI would be updated to v{new_version}{dry_tag}")
             else:
-                shutil.copy2(src, dst)
-            ui.print_info(f"  [↓] {dst_name}")
+                for item in new_fcp_ref.iterdir():
+                    dst = fcp_ref_root / item.name
+                    if item.is_dir():
+                        if dst.exists():
+                            shutil.rmtree(dst)
+                        shutil.copytree(item, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
+                    else:
+                        shutil.copy2(item, dst)
+                fcp_exe = fcp_ref_root / "fcp"
+                if fcp_exe.exists():
+                    fcp_exe.chmod(0o755)
+                ui.print_ok(f"CLI updated to v{new_version}.")
+            print()
 
-        # Update fcp launcher script
-        fcp_src = fcp_ref_root / "fcp"
-        if fcp_src.exists():
-            fcp_dst = eroot / "fcp"
-            shutil.copy2(fcp_src, fcp_dst)
-            fcp_dst.chmod(0o755)
+            # ── Step 3: Check installed entities ────────────────────────────
+            from ..store import list_entities, entity_root_for
+            entities = list_entities()
 
-        # Bump version in .fcp-entity marker
-        marker_path = eroot / ".fcp-entity"
-        try:
-            marker = _json.loads(marker_path.read_text(encoding="utf-8"))
-        except Exception:
-            marker = {}
-        marker["version"] = new_version
-        marker_path.write_text(_json.dumps(marker, indent=2), encoding="utf-8")
+            if not entities:
+                ui.print_info("No entities installed.")
+                print()
+                return
 
-        print()
-        ui.print_ok(f"'{eid}' updated to v{new_version}.")
-        print()
+            ui.hr("Entities")
+            print()
+
+            outdated: list[tuple[str, str]] = []
+            for eid in entities:
+                eroot = entity_root_for(eid)
+                try:
+                    marker = _json.loads((eroot / ".fcp-entity").read_text(encoding="utf-8"))
+                    ev = marker.get("version", "unknown")
+                except Exception:
+                    ev = "unknown"
+                if ev == new_version:
+                    ui.print_info(f"  {eid}  v{ev}  [up to date]")
+                else:
+                    ui.print_info(f"  {eid}  v{ev} → v{new_version}")
+                    outdated.append((eid, ev))
+            print()
+
+            if not outdated:
+                ui.print_ok(f"All entities are on v{new_version}.")
+                print()
+                return
+
+            if dry_run:
+                ui.print_info(f"  {len(outdated)} entity(ies) would be offered update.{dry_tag}")
+                print()
+                return
+
+            # ── Step 4: Per-entity update with confirmation ──────────────────
+            for eid, ev in outdated:
+                eroot = entity_root_for(eid)
+
+                if not ui.confirm(f"Update '{eid}'  v{ev} → v{new_version}?", default=True):
+                    ui.print_info(f"  Skipped.")
+                    print()
+                    continue
+
+                print()
+
+                # Auto: fcp_base/, boot.md
+                for src, dst_name in [
+                    (new_fcp_ref / "fcp_base", "fcp_base"),
+                    (new_fcp_ref / "boot.md",  "boot.md"),
+                ]:
+                    if not src.exists():
+                        continue
+                    dst = eroot / dst_name
+                    if src.is_dir():
+                        if dst.exists():
+                            shutil.rmtree(dst)
+                        shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
+                    else:
+                        shutil.copy2(src, dst)
+                    ui.print_info(f"  [↓] {dst_name}")
+
+                # fcp launcher
+                fcp_src = new_fcp_ref / "fcp"
+                if fcp_src.exists():
+                    fcp_dst = eroot / "fcp"
+                    shutil.copy2(fcp_src, fcp_dst)
+                    fcp_dst.chmod(0o755)
+                    ui.print_info("  [↓] fcp")
+
+                # skills/lib/: full replace
+                skills_lib_src = new_fcp_ref / "skills" / "lib"
+                skills_lib_dst = eroot / "skills" / "lib"
+                if skills_lib_src.exists():
+                    if skills_lib_dst.exists():
+                        shutil.rmtree(skills_lib_dst)
+                    shutil.copytree(skills_lib_src, skills_lib_dst,
+                                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
+                    ui.print_info("  [↓] skills/lib/")
+
+                # hooks/: merge — only update files present in template
+                hooks_src = new_fcp_ref / "hooks"
+                hooks_dst = eroot / "hooks"
+                if hooks_src.exists():
+                    updated_hooks = _copy_dir_merge(hooks_src, hooks_dst)
+                    if updated_hooks:
+                        for h in updated_hooks:
+                            ui.print_info(f"  [↓] hooks/{h}")
+                    else:
+                        ui.print_info("  [·] hooks/  (no changes)")
+
+                # Bump version in .fcp-entity marker
+                marker_path = eroot / ".fcp-entity"
+                try:
+                    marker = _json.loads(marker_path.read_text(encoding="utf-8"))
+                except Exception:
+                    marker = {}
+                marker["version"] = new_version
+                marker_path.write_text(_json.dumps(marker, indent=2), encoding="utf-8")
+
+                print()
+                ui.print_ok(f"'{eid}' updated to v{new_version}.")
+                print()
+
+    except Exception as exc:
+        ui.print_err(f"Update failed: {exc}")
+        sys.exit(1)
 
     ui.hr()
     print()
