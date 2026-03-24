@@ -234,6 +234,7 @@ if [ "$SET_ALIAS" = true ]; then
 fi
 hr ""
 info "Quick Start:"
-info "  1. cd into your project folder"
-info "  2. run: fcp init"
+info "  1. run: fcp init   (creates your entity at ~/.fcp/<entity_id>/)"
+info "  2. cd into your project folder"
+info "  3. run: fcp        (entity boots with that folder as workspace)"
 printf "\n"

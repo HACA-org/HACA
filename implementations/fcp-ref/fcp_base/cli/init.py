@@ -18,7 +18,11 @@ import sys
 import time
 from pathlib import Path
 
-from ..store import API_KEY_ENV, atomic_write, read_json, save_api_key
+from ..store import (
+    API_KEY_ENV, atomic_write, read_json, save_api_key,
+    FCP_HOME, entity_root_for, list_entities,
+    get_default_entity, set_default_entity,
+)
 from .. import ui
 
 
@@ -100,24 +104,30 @@ def run_init(fcp_ref_root: Path) -> None:
     if not ui.confirm("Continue?"):
         sys.exit(0)
 
-    # ── Step 1: Destination ─────────────────────────────────────────────────
-    ui.hr("1. Entity destination")
+    # ── Step 1: Entity ID ────────────────────────────────────────────────────
+    ui.hr("1. Entity ID")
     print()
-    print("  Where should the entity root be created?")
-    print("  Leave blank to use the current directory.")
+    print(f"  Entities are installed at {FCP_HOME}/<entity_id>/")
     print()
-    dest_input = ui.ask("Path", str(Path.cwd()))
-    entity_root = Path(dest_input).expanduser().resolve()
 
-    is_fcp_ref = (entity_root / ".fcp-base").exists()
-    is_fcp_entity = (entity_root / ".fcp-entity").exists() or (entity_root / "state" / "baseline.json").exists()
-    is_nonempty = entity_root.exists() and any(entity_root.iterdir())
-
-    if is_fcp_ref:
+    existing = list_entities()
+    if existing:
+        print("  Existing entities:")
+        default = get_default_entity()
+        for eid in existing:
+            marker = "  (default)" if eid == default else ""
+            print(f"    {eid}{marker}")
         print()
-        ui.print_err(f"{entity_root} is the HACA/FCP source directory (contains .fcp-base).")
-        print("          You cannot install an entity here. Choose another path.")
+
+    entity_id_input = ui.ask("Entity ID", "my-entity")
+    entity_id = entity_id_input.strip().lower().replace(" ", "-")
+    if not entity_id or "/" in entity_id or "\\" in entity_id or ".." in entity_id:
+        ui.print_err("Invalid entity ID. Use a simple identifier (e.g. my-entity).")
         sys.exit(1)
+
+    entity_root = entity_root_for(entity_id)
+
+    is_fcp_entity = (entity_root / ".fcp-entity").exists() or (entity_root / "state" / "baseline.json").exists()
 
     keep_persona = False
     keep_skills = False
@@ -298,14 +308,6 @@ def run_init(fcp_ref_root: Path) -> None:
             ui.hr()
             print()
             return
-
-    elif is_nonempty:
-        print()
-        ui.print_err(f"{entity_root} is not empty and is not an FCP entity.")
-        print("  FCP entities must be initialised in an empty directory.")
-        print("  Choose an empty or non-existing directory and try again.")
-        print()
-        sys.exit(1)
 
     # ── Step 2: Profile ─────────────────────────────────────────────────────
     ui.hr("2. Profile")
@@ -522,11 +524,21 @@ def run_init(fcp_ref_root: Path) -> None:
         except FileNotFoundError:
             print("  [!] git not found — skipping.")
 
-    # ── Step 7: Summary ──────────────────────────────────────────────────────
+    # ── Step 7: Set as default if first entity ───────────────────────────────
+    was_default = get_default_entity() == entity_id
+    if not was_default and not list_entities():
+        set_default_entity(entity_id)
+        was_default = True
+    elif not get_default_entity():
+        set_default_entity(entity_id)
+        was_default = True
+
+    # ── Step 8: Summary ──────────────────────────────────────────────────────
     print()
     ui.hr()
     print(f"  Entity created successfully")
     ui.hr()
+    print(f"  entity:       {entity_id}")
     print(f"  path:         {entity_root}")
     print(f"  profile:      {haca_profile}")
     print(f"  fcp version:  v{fcp_version}")
@@ -546,5 +558,8 @@ def run_init(fcp_ref_root: Path) -> None:
     ui.hr()
     print()
     print(f"  First boot will run FAP (First Activation Protocol).")
-    print(f"  Run:  cd {entity_root} && ./fcp")
+    if was_default:
+        print(f"  Run:  fcp")
+    else:
+        print(f"  Run:  fcp set {entity_id} && fcp")
     print()

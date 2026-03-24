@@ -25,13 +25,25 @@ if TYPE_CHECKING:
 # Normal boot + session loop
 # ---------------------------------------------------------------------------
 
-def run_normal(layout: "Layout") -> None:
+def run_normal(layout: "Layout", workspace_focus: Path | None = None) -> None:
     from ..boot import run as boot_run, BootError
     from ..cpe.base import load_cpe_adapter_from_baseline
     from ..fap import FAPError
     from ..operator import handle_platform_command, present_notifications, present_evolution_proposals
     from ..session import run_session
     from ..sleep import run_sleep_cycle
+    from ..store import atomic_write
+
+    # Auto-set workspace_focus to cwd if provided and not already set to something else
+    if workspace_focus is not None:
+        focus_path = workspace_focus.resolve()
+        # Only set if focus is outside entity root (safety check)
+        try:
+            focus_path.relative_to(layout.root)
+        except ValueError:
+            # Good — focus is outside entity root, safe to set
+            if not layout.workspace_focus.exists():
+                atomic_write(layout.workspace_focus, {"path": str(focus_path)})
 
     try:
         boot_result = boot_run(layout)

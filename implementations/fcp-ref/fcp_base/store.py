@@ -307,6 +307,49 @@ def load_env_file() -> None:
             os.environ[key] = val.strip()
 
 
+# ---------------------------------------------------------------------------
+# Global FCP config  (~/.fcp/config.json)
+# ---------------------------------------------------------------------------
+
+FCP_HOME = Path.home() / ".fcp"
+_FCP_CONFIG = FCP_HOME / "config.json"
+
+
+def get_default_entity() -> str | None:
+    """Return the default entity_id from ~/.fcp/config.json, or None."""
+    try:
+        return read_json(_FCP_CONFIG).get("default")
+    except Exception:
+        return None
+
+
+def set_default_entity(entity_id: str) -> None:
+    """Write entity_id as the default in ~/.fcp/config.json."""
+    FCP_HOME.mkdir(parents=True, exist_ok=True)
+    data: dict[str, Any] = {}
+    try:
+        data = read_json(_FCP_CONFIG)
+    except Exception:
+        pass
+    data["default"] = entity_id
+    atomic_write(_FCP_CONFIG, data)
+
+
+def list_entities() -> list[str]:
+    """Return entity_ids found under ~/.fcp/ (dirs containing .fcp-entity)."""
+    if not FCP_HOME.exists():
+        return []
+    return sorted(
+        d.name for d in FCP_HOME.iterdir()
+        if d.is_dir() and (d / ".fcp-entity").exists()
+    )
+
+
+def entity_root_for(entity_id: str) -> Path:
+    """Return the entity root path for a given entity_id."""
+    return FCP_HOME / entity_id
+
+
 def save_api_key(entity_name: str, env_var: str, api_key: str) -> None:
     """Append or update KEY=value in ~/.fcp.env."""
     env_file = Path.home() / ".fcp.env"
