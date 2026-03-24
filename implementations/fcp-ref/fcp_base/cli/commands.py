@@ -410,11 +410,12 @@ def run_decommission(layout: "Layout", args: list[str]) -> None:
 def run_update() -> None:
     import shutil
     import json as _json
+    import tarfile
+    import tempfile
+    import urllib.request
 
     cli_file = Path(__file__).resolve()
     fcp_ref_root = cli_file.parents[2]   # cli/ -> fcp_base/ -> fcp-ref/
-    # fcp-ref/ is the sparse-checkout root — it contains .git directly
-    git_root = fcp_ref_root
 
     # Guard: reject if running from within an entity root
     for ancestor in cli_file.parents:
@@ -422,48 +423,57 @@ def run_update() -> None:
             ui.print_err("fcp update must be run from the global fcp installation.")
             ui.print_err("Use the 'fcp' command in your PATH, not a local copy.")
             sys.exit(1)
-        if ancestor == git_root:
+        if ancestor == fcp_ref_root:
             break
 
-    if not (git_root / ".git").exists():
-        ui.print_err(f"Cannot update: FCP installation at {git_root} is not a git repository.")
-        sys.exit(1)
-
-    # ── Step 1: Pull CLI ─────────────────────────────────────────────────────
+    # ── Step 1: Download and extract CLI ────────────────────────────────────
     ui.hr("fcp update")
-    ui.print_info(f"Pulling latest fcp-ref from origin/main ...")
+    ui.print_info("Downloading latest fcp-ref from github.com/HACA-org/HACA ...")
     print()
 
-    # Stash any local changes so the pull can proceed cleanly
-    stash_result = subprocess.run(
-        ["git", "-C", str(git_root), "stash"],
-        capture_output=True, text=True
-    )
-    stashed = "No local changes" not in stash_result.stdout
+    tarball_url = "https://github.com/HACA-org/HACA/archive/refs/heads/main.tar.gz"
+    _INNER = "HACA-main/implementations/fcp-ref"
 
-    r = subprocess.run(
-        ["git", "-C", str(git_root), "pull", "origin", "main", "--rebase"],
-        capture_output=True, text=True
-    )
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            tarball = tmp_path / "haca-main.tar.gz"
 
-    if stashed:
-        subprocess.run(
-            ["git", "-C", str(git_root), "stash", "pop"],
-            capture_output=True, text=True
-        )
+            with urllib.request.urlopen(tarball_url, timeout=30) as resp:
+                tarball.write_bytes(resp.read())
 
-    if r.returncode != 0:
-        ui.print_err("Pull failed. Check your git configuration or network.")
-        print(r.stderr.strip())
+            with tarfile.open(tarball, "r:gz") as tf:
+                members = [m for m in tf.getmembers() if m.name.startswith(_INNER + "/")]
+                if not members:
+                    ui.print_err("fcp-ref not found in downloaded archive.")
+                    sys.exit(1)
+                tf.extractall(tmp_path, members=members)
+
+            new_fcp_ref = tmp_path / "HACA-main" / "implementations" / "fcp-ref"
+
+            # Overwrite fcp_ref_root in-place, preserving .git if present
+            for item in new_fcp_ref.iterdir():
+                dst = fcp_ref_root / item.name
+                if dst.exists():
+                    if dst.is_dir():
+                        shutil.rmtree(dst)
+                    else:
+                        dst.unlink()
+                if item.is_dir():
+                    shutil.copytree(item, dst)
+                else:
+                    shutil.copy2(item, dst)
+
+            # Ensure fcp launcher is executable
+            fcp_exe = fcp_ref_root / "fcp"
+            if fcp_exe.exists():
+                fcp_exe.chmod(0o755)
+
+    except Exception as exc:
+        ui.print_err(f"Update failed: {exc}")
         sys.exit(1)
 
-    already_current = "Already up to date." in r.stdout or "Current branch main is up to date" in r.stdout
-    if already_current:
-        ui.print_ok("CLI is already up to date.")
-    else:
-        ui.print_ok("CLI updated.")
-        print()
-        print(r.stdout.strip())
+    ui.print_ok("CLI updated.")
     print()
 
     # ── Step 2: Read new version ─────────────────────────────────────────────
