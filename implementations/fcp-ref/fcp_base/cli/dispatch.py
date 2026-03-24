@@ -67,7 +67,7 @@ def print_help() -> None:
   fcp --auto <cron_id>             — run scheduled task autonomously in auto:session
   fcp --verbose                    — boot entity with verbose mode enabled
   fcp --debugger[=all|chat|boot]   — boot entity with debugger mode enabled
-  fcp update                       — update FCP from the main repository
+  fcp update [--dry-run]           — update FCP from the main repository
 
   fcp help                         — this message
 """)
@@ -194,7 +194,7 @@ def _main() -> None:
         return
 
     if cmd in ("update", "upgrade"):
-        run_update()
+        run_update(dry_run="--dry-run" in rest)
         return
 
     print(f"unknown command: {cmd}")
