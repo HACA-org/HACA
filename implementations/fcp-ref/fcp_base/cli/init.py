@@ -51,13 +51,8 @@ state/distress.beacon
 state/first-stimuli.json
 state/pending-closure.json
 
-# Ignore the dynamic entity workspace completely to prevent nested repository collisions
-workspace/
-
-# (Optional) If you need the workspace folder to exist upon cloning the entity,
-# but want to ignore its contents, use this pattern instead:
-# workspace/*
-# !workspace/.gitkeep
+# Ignore volatile skill staging area
+state/stage/
 
 # Python
 __pycache__/
@@ -269,7 +264,7 @@ def run_init(fcp_ref_root: Path) -> None:
                 entity_root / "state" / "operator_notifications",
                 entity_root / "io" / "inbox" / "presession",
                 entity_root / "io" / "spool",
-                entity_root / "workspace" / "stage",
+                entity_root / "state" / "stage",
             ]:
                 _d.mkdir(parents=True, exist_ok=True)
 
