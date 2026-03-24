@@ -61,13 +61,13 @@ def print_help() -> None:
   fcp endure sync                  — sync entity root with git remote
   fcp endure origin                — set or update git remote origin
   fcp endure chain                 — display integrity chain
+  fcp update                       — update FCP from the main repository
   fcp decommission --archive       — archive entity (reversible)
   fcp decommission --destroy       — destroy entity permanently
-  fcp doctor [--fix]               — check integrity; --fix to repair
   fcp --auto <cron_id>             — run scheduled task autonomously in auto:session
   fcp --verbose                    — boot entity with verbose mode enabled
   fcp --debugger[=all|chat|boot]   — boot entity with debugger mode enabled
-  fcp update [--dry-run]           — update FCP from the main repository
+  fcp doctor [--fix]               — check integrity; --fix to repair
 
   fcp help                         — this message
 """)
@@ -153,6 +153,10 @@ def _main() -> None:
         ui.print_ok(f"Default entity set to '{entity_id}'")
         return
 
+    if cmd in ("update", "upgrade"):
+        run_update(dry_run="--dry-run" in rest)
+        return
+
     entity_root = resolve_entity_root()
 
     if cmd == "status":
@@ -191,10 +195,6 @@ def _main() -> None:
 
     if cmd == "--auto" and rest:
         run_auto(Layout(entity_root), rest[0])
-        return
-
-    if cmd in ("update", "upgrade"):
-        run_update(dry_run="--dry-run" in rest)
         return
 
     print(f"unknown command: {cmd}")
