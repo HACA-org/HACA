@@ -1,0 +1,27 @@
+# Node
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Temp
+*.tmp
+
+# Dev
+DEV-NOTES.md
