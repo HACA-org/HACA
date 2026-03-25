@@ -10,6 +10,8 @@ import { createWebFetchTool } from './tools/webFetch.js'
 import { createFileReadTool } from './tools/fileRead.js'
 import { createFileWriteTool } from './tools/fileWrite.js'
 import { createWorkerSkillTool } from './tools/workerSkill.js'
+import { createSkillCreateTool } from './tools/skillCreate.js'
+import { createSkillAuditTool } from './tools/skillAudit.js'
 
 export { ExecContext }
 
@@ -43,5 +45,7 @@ export function createBuiltinTools(
     createFileReadTool(logger, ctx),
     createFileWriteTool(logger, ctx),
     createWorkerSkillTool(layout, logger, adapter, sessionGrants, requestApproval),
+    createSkillCreateTool(logger, ctx),
+    createSkillAuditTool(logger),
   ]
 }

@@ -267,3 +267,120 @@ describe('workerSkill tool', () => {
     expect(result).toBe('worker result')
   })
 })
+
+describe('skillCreate tool', () => {
+  let tmp: string
+  let workspace: string
+  let ctx: ExecContext
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'fcp-skillcreate-'))
+    workspace = join(tmp, 'workspace')
+    await mkdir(workspace, { recursive: true })
+    ctx = { workspaceFocus: workspace }
+  })
+  afterEach(async () => { await rm(tmp, { recursive: true, force: true }) })
+
+  it('scaffolds a text skill in .tmp/', async () => {
+    const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
+    const layout = createLayout(join(tmp, 'entity'))
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), vi.fn())
+    const skillCreate = tools.find(t => t.definition.name === 'skillCreate')!
+
+    const result = await skillCreate.handle({ name: 'my-skill', execute: 'text', description: 'A test skill', content: 'Do the thing.' })
+    expect(result).toContain('.tmp/my-skill')
+    expect(result).toContain('SKILL.md')
+  })
+
+  it('scaffolds a script skill with boilerplate entry', async () => {
+    const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
+    const layout = createLayout(join(tmp, 'entity'))
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), vi.fn())
+    const skillCreate = tools.find(t => t.definition.name === 'skillCreate')!
+
+    const result = await skillCreate.handle({ name: 'my-script', execute: 'script', description: 'A script skill' })
+    expect(result).toContain('run.js')
+
+    const { existsSync } = await import('node:fs')
+    expect(existsSync(join(workspace, '.tmp', 'my-script', 'run.js'))).toBe(true)
+    expect(existsSync(join(workspace, '.tmp', 'my-script', 'manifest.json'))).toBe(true)
+    expect(existsSync(join(workspace, '.tmp', 'my-script', 'SKILL.md'))).toBe(true)
+  })
+
+  it('rejects invalid skill name', async () => {
+    const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
+    const layout = createLayout(join(tmp, 'entity'))
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), vi.fn())
+    const skillCreate = tools.find(t => t.definition.name === 'skillCreate')!
+
+    const result = await skillCreate.handle({ name: 'My Skill!', execute: 'text', description: 'bad name' })
+    expect(result).toContain('Error')
+  })
+
+  it('errors when stage already exists', async () => {
+    const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
+    const layout = createLayout(join(tmp, 'entity'))
+    await mkdir(join(workspace, '.tmp', 'existing'), { recursive: true })
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), vi.fn())
+    const skillCreate = tools.find(t => t.definition.name === 'skillCreate')!
+
+    const result = await skillCreate.handle({ name: 'existing', execute: 'text', description: 'already there' })
+    expect(result).toContain('already exists')
+  })
+})
+
+describe('skillAudit tool', () => {
+  let tmp: string
+
+  beforeEach(async () => { tmp = await mkdtemp(join(tmpdir(), 'fcp-skillaudit-')) })
+  afterEach(async () => { await rm(tmp, { recursive: true, force: true }) })
+
+  it('passes a valid text skill', async () => {
+    const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
+    const layout = createLayout(join(tmp, 'entity'))
+    const ctx: ExecContext = { workspaceFocus: tmp }
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), vi.fn())
+    const skillAudit = tools.find(t => t.definition.name === 'skillAudit')!
+
+    const skillDir = join(tmp, 'good-skill')
+    await mkdir(skillDir, { recursive: true })
+    await writeJson(join(skillDir, 'manifest.json'), { name: 'good-skill', description: 'ok', execute: 'text', entry: 'SKILL.md' })
+    await writeFile(join(skillDir, 'SKILL.md'), '# Good Skill\nDo stuff.', 'utf8')
+
+    const result = await skillAudit.handle({ path: skillDir })
+    expect(result).toContain('VERDICT: PASS')
+  })
+
+  it('fails when manifest is missing', async () => {
+    const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
+    const layout = createLayout(join(tmp, 'entity'))
+    const ctx: ExecContext = { workspaceFocus: tmp }
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), vi.fn())
+    const skillAudit = tools.find(t => t.definition.name === 'skillAudit')!
+
+    const skillDir = join(tmp, 'bad-skill')
+    await mkdir(skillDir, { recursive: true })
+
+    const result = await skillAudit.handle({ path: skillDir })
+    expect(result).toContain('VERDICT: FAIL')
+    expect(result).toContain('CRITICAL')
+  })
+
+  it('fails when entry file is missing', async () => {
+    const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
+    const layout = createLayout(join(tmp, 'entity'))
+    const ctx: ExecContext = { workspaceFocus: tmp }
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), vi.fn())
+    const skillAudit = tools.find(t => t.definition.name === 'skillAudit')!
+
+    const skillDir = join(tmp, 'no-entry-skill')
+    await mkdir(skillDir, { recursive: true })
+    await writeJson(join(skillDir, 'manifest.json'), { name: 'no-entry', description: 'test', execute: 'script', entry: 'run.js' })
+    await writeFile(join(skillDir, 'SKILL.md'), '# Skill', 'utf8')
+    // run.js intentionally missing
+
+    const result = await skillAudit.handle({ path: skillDir })
+    expect(result).toContain('VERDICT: FAIL')
+    expect(result).toContain('run.js')
+  })
+})
