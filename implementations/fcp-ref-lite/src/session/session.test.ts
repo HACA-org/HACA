@@ -35,6 +35,8 @@ const mockBootResult: BootResult = {
   isFirstBoot: false,
   crashRecovered: false,
   pendingProposals: [],
+  history: [],
+  contextWindowConfig: { warnPct: 0.90, compactPct: 0.95 },
 }
 
 describe('buildContext', () => {

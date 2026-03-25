@@ -15,11 +15,18 @@ export interface ImprintRecord {
   genesisOmega: string       // SHA256 of this imprint (self-referential, computed last)
 }
 
+export interface ContextWindowConfig {
+  warnPct: number    // default 0.90 — show warning in TUI
+  compactPct: number // default 0.95 — SIL triggers compaction
+}
+
 export interface BootResult {
   sessionId: string
   isFirstBoot: boolean
   crashRecovered: boolean
   pendingProposals: EvolutionProposal[]
+  history: import('../cpe/types.js').Message[]
+  contextWindowConfig: ContextWindowConfig
 }
 
 export interface EvolutionProposal {

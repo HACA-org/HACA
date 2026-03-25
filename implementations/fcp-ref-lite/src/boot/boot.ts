@@ -3,8 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import type { Layout } from '../store/layout.js'
-import { readJson, touchFile, removeFile } from '../store/io.js'
-import { BootError, type BootResult, type ImprintRecord } from './types.js'
+import { readJson, readJsonl, touchFile, removeFile } from '../store/io.js'
+import { BootError, type BootResult, type ImprintRecord, type ContextWindowConfig } from './types.js'
+import type { Message } from '../cpe/types.js'
 import { runFAP } from './fap.js'
 import type { Logger } from '../logger/logger.js'
 
@@ -108,6 +109,43 @@ async function phase4(layout: Layout): Promise<void> {
   }
 }
 
+// Reconstruct conversation history from session.jsonl (after last session_reset)
+async function loadHistory(layout: Layout): Promise<Message[]> {
+  if (!existsSync(layout.sessionStore)) return []
+  try {
+    const events = await readJsonl<Record<string, unknown>>(layout.sessionStore)
+    // Find last session_reset marker
+    let startIdx = 0
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i]?.['type'] === 'session_reset') { startIdx = i + 1; break }
+    }
+    const messages: Message[] = []
+    for (const ev of events.slice(startIdx)) {
+      if (ev['type'] === 'message' && (ev['role'] === 'user' || ev['role'] === 'assistant')) {
+        messages.push({ role: ev['role'] as 'user' | 'assistant', content: ev['content'] as Message['content'] })
+      }
+    }
+    return messages
+  } catch {
+    return []
+  }
+}
+
+// Read context window config from baseline.json
+async function loadContextWindowConfig(layout: Layout): Promise<ContextWindowConfig> {
+  const defaults: ContextWindowConfig = { warnPct: 0.90, compactPct: 0.95 }
+  if (!existsSync(layout.baseline)) return defaults
+  try {
+    const baseline = await readJson<{ context_window?: { warn_pct?: number; compact_pct?: number } }>(layout.baseline)
+    return {
+      warnPct: baseline.context_window?.warn_pct ?? defaults.warnPct,
+      compactPct: baseline.context_window?.compact_pct ?? defaults.compactPct,
+    }
+  } catch {
+    return defaults
+  }
+}
+
 // Phase 6: Critical condition check (simplified — full implementation after SIL)
 async function phase6(_layout: Layout): Promise<[]> {
   // TODO: check sil.log for DRIFT_FAULT, IDENTITY_DRIFT, SIL_UNRESPONSIVE, SEVERANCE_PENDING
@@ -130,6 +168,8 @@ export async function runBoot(
   // Detect FAP (cold-start)
   const isFirstBoot = !existsSync(layout.imprint)
 
+  const contextWindowConfig = await loadContextWindowConfig(layout)
+
   if (isFirstBoot) {
     // Profile is embedded in baseline if pre-configured, otherwise default to haca-core
     let profile: 'haca-core' | 'haca-evolve' = 'haca-core'
@@ -141,7 +181,7 @@ export async function runBoot(
     }
     const sessionId = await runFAP(layout, profile, logger)
     await logger.increment('sessions')
-    return { sessionId, isFirstBoot: true, crashRecovered: false, pendingProposals: [] }
+    return { sessionId, isFirstBoot: true, crashRecovered: false, pendingProposals: [], history: [], contextWindowConfig }
   }
 
   // Warm boot
@@ -167,8 +207,10 @@ export async function runBoot(
   await logger.info('boot', 'phase7_start')
   const sessionId = await phase7(layout)
 
-  await logger.info('boot', 'complete', { sessionId })
+  const history = await loadHistory(layout)
+
+  await logger.info('boot', 'complete', { sessionId, historyMessages: history.length })
   await logger.increment('sessions')
 
-  return { sessionId, isFirstBoot: false, crashRecovered, pendingProposals }
+  return { sessionId, isFirstBoot: false, crashRecovered, pendingProposals, history, contextWindowConfig }
 }

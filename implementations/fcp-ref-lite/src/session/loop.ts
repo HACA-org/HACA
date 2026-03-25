@@ -4,7 +4,6 @@ import { readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Layout } from '../store/layout.js'
 import { readJson, writeJson, appendJsonl } from '../store/io.js'
-// writeJson used for allowlist persistence
 import { runSleepCycle } from './sleep.js'
 import type { Logger } from '../logger/logger.js'
 import type { CPEAdapter, Message, ToolUseCall, ToolDefinition } from '../cpe/types.js'
@@ -12,7 +11,6 @@ import type { BootResult } from '../boot/types.js'
 import { buildContext } from './context.js'
 
 const MAX_CYCLES = 50
-const CONTEXT_BUDGET_PCT = 0.80
 
 export interface ToolHandler {
   definition: ToolDefinition
@@ -50,16 +48,6 @@ function estimateTokens(messages: Message[]): number {
   return Math.ceil(text.length / 4)
 }
 
-function trimHistory(messages: Message[], contextWindow: number): Message[] {
-  const budget = Math.floor(contextWindow * CONTEXT_BUDGET_PCT)
-  let trimmed = [...messages]
-  while (trimmed.length > 2 && estimateTokens(trimmed) > budget) {
-    // Remove oldest non-system turn pair (user + assistant)
-    trimmed = trimmed.slice(2)
-  }
-  return trimmed
-}
-
 async function drainInbox(layout: Layout): Promise<string[]> {
   if (!existsSync(layout.inbox)) return []
   const files = await readdir(layout.inbox)
@@ -79,7 +67,6 @@ async function drainInbox(layout: Layout): Promise<string[]> {
   return stimuli
 }
 
-
 export async function runSessionLoop(
   layout: Layout,
   bootResult: BootResult,
@@ -90,22 +77,28 @@ export async function runSessionLoop(
     readInput(): Promise<string | null>
     writeOutput(text: string): void
     requestToolApproval?(name: string, input: Record<string, unknown>): Promise<'once' | 'session' | 'allow' | 'deny'>
+    onContextWarning?(usedPct: number): void
   },
 ): Promise<void> {
   await logger.info('session', 'start', { sessionId: bootResult.sessionId })
 
   const { systemPrompt, preSessionStimuli } = await buildContext(layout)
-  const messages: Message[] = []
+  const { warnPct, compactPct } = bootResult.contextWindowConfig
+
+  // Restore persistent history from boot
+  const messages: Message[] = [...bootResult.history]
   const sessionGrants = new Set<string>()
   const fingerprints: string[] = []
 
   // Inject presession stimuli as first user message
   if (preSessionStimuli.length > 0) {
     const stimulusText = preSessionStimuli.map(s => JSON.stringify(s)).join('\n')
-    messages.push({ role: 'user', content: stimulusText })
+    const msg: Message = { role: 'user', content: stimulusText }
+    messages.push(msg)
+    await appendJsonl(layout.sessionStore, { type: 'message', role: 'user', content: stimulusText, ts: new Date().toISOString() })
   }
 
-  // Notify pending proposals
+  // Notify pending proposals and crash recovery
   if (bootResult.pendingProposals.length > 0) {
     io.writeOutput(`[FCP] ${bootResult.pendingProposals.length} evolution proposal(s) pending review.`)
   }
@@ -122,25 +115,47 @@ export async function runSessionLoop(
     // Drain inbox for async stimuli
     const inboxItems = await drainInbox(layout)
     if (inboxItems.length > 0) {
-      messages.push({ role: 'user', content: inboxItems.join('\n') })
+      const content = inboxItems.join('\n')
+      messages.push({ role: 'user', content })
+      await appendJsonl(layout.sessionStore, { type: 'message', role: 'user', content, ts: new Date().toISOString() })
     }
 
     // Read operator input if no pending messages
     if (messages.length === 0 || messages[messages.length - 1]?.role === 'assistant') {
       const input = await io.readInput()
       if (input === null) break // operator closed session
-      if (input.trim() === '') continue
-      messages.push({ role: 'user', content: input })
-      await appendJsonl(layout.sessionStore, { type: 'user_input', ts: new Date().toISOString(), content: input })
+
+      const trimmed = input.trim()
+      if (trimmed === '') continue
+
+      // Handle slash commands
+      if (trimmed === '/new' || trimmed === '/reset') {
+        messages.length = 0
+        await appendJsonl(layout.sessionStore, { type: 'session_reset', ts: new Date().toISOString() })
+        io.writeOutput('[FCP] History cleared.')
+        continue
+      }
+
+      messages.push({ role: 'user', content: trimmed })
+      await appendJsonl(layout.sessionStore, { type: 'message', role: 'user', content: trimmed, ts: new Date().toISOString() })
     }
 
-    // Trim history to context budget
-    const trimmedMessages = trimHistory(messages, opts.contextWindow)
+    // Check context window usage before invoking CPE
+    const usedTokens = estimateTokens(messages)
+    const usedPct = usedTokens / opts.contextWindow
+    if (usedPct >= compactPct) {
+      // SIL trigger point — for now just warn; SIL will handle compaction
+      await logger.warn('session', 'context_compact_threshold', { usedPct: Math.round(usedPct * 100) })
+      io.writeOutput(`[FCP] Context window at ${Math.round(usedPct * 100)}%. Compaction required.`)
+    } else if (usedPct >= warnPct) {
+      await logger.info('session', 'context_warn_threshold', { usedPct: Math.round(usedPct * 100) })
+      io.onContextWarning?.(usedPct)
+    }
 
     // Invoke CPE
     const response = await adapter.invoke({
       system: systemPrompt,
-      messages: trimmedMessages,
+      messages,
       tools: toolDefs.length > 0 ? toolDefs : undefined,
     })
 
@@ -154,6 +169,7 @@ export async function runSessionLoop(
 
     if (response.content) {
       messages.push({ role: 'assistant', content: response.content })
+      await appendJsonl(layout.sessionStore, { type: 'message', role: 'assistant', content: response.content, ts: new Date().toISOString() })
       io.writeOutput(response.content)
     }
 
@@ -204,7 +220,6 @@ export async function runSessionLoop(
         if (decision === 'session') { sessionGrants.add(toolCall.name); approved = true }
         else if (decision === 'once' || decision === 'allow') { approved = true }
         if (decision === 'allow') {
-          // Persist to allowlist
           const updated = { tools: [...(allowlistData.tools ?? []), toolCall.name] }
           await writeJson(layout.allowlist, updated)
         }
@@ -232,15 +247,16 @@ export async function runSessionLoop(
       }
     }
 
-    // Add tool use + results to history
-    messages.push({
+    // Add tool use + results to history and persist
+    const toolUseMsg: Message = {
       role: 'assistant',
       content: response.toolCalls.map(tc => ({ type: 'tool_use' as const, id: tc.id, name: tc.name, input: tc.input })),
-    })
-    messages.push({
-      role: 'user',
-      content: toolResults,
-    })
+    }
+    const toolResultMsg: Message = { role: 'user', content: toolResults }
+    messages.push(toolUseMsg)
+    messages.push(toolResultMsg)
+    await appendJsonl(layout.sessionStore, { type: 'message', role: 'assistant', content: toolUseMsg.content, ts: new Date().toISOString() })
+    await appendJsonl(layout.sessionStore, { type: 'message', role: 'user', content: toolResultMsg.content, ts: new Date().toISOString() })
   }
 
   await runSleepCycle(layout, bootResult.sessionId, messages, logger)
