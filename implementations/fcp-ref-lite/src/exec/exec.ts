@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import type { Layout } from '../store/layout.js'
 import type { Logger } from '../logger/logger.js'
 import type { ToolHandler } from '../session/loop.js'
+import type { CPEAdapter } from '../cpe/types.js'
 import type { ExecContext } from './types.js'
 import { createShellRunTool } from './tools/shellRun.js'
 import { createWebFetchTool } from './tools/webFetch.js'
@@ -32,6 +33,7 @@ export function createBuiltinTools(
   layout: Layout,
   logger: Logger,
   ctx: ExecContext,
+  adapter: CPEAdapter,
   sessionGrants: Set<string>,
   requestApproval: (prompt: string) => Promise<'once' | 'session' | 'allow' | 'deny'>,
 ): ToolHandler[] {
@@ -40,6 +42,6 @@ export function createBuiltinTools(
     createWebFetchTool(layout, logger, requestApproval),
     createFileReadTool(logger, ctx),
     createFileWriteTool(logger, ctx),
-    createWorkerSkillTool(layout, logger, sessionGrants, requestApproval),
+    createWorkerSkillTool(layout, logger, adapter, sessionGrants, requestApproval),
   ]
 }

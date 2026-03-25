@@ -8,7 +8,18 @@ import { writeJson } from '../store/io.js'
 import { resolveWorkspaceFocus, createBuiltinTools } from './exec.js'
 import { readAllowlist, isCommandAllowed, isDomainAllowed } from './allowlist.js'
 import type { Layout } from '../store/layout.js'
+import type { CPEAdapter } from '../cpe/types.js'
 import type { ExecContext } from './types.js'
+
+const mockAdapter: CPEAdapter = {
+  provider: 'mock',
+  invoke: vi.fn().mockResolvedValue({
+    content: 'worker result',
+    toolCalls: [],
+    usage: { inputTokens: 10, outputTokens: 5 },
+    stopReason: 'end_turn',
+  }),
+}
 
 async function makeFixture(tmp: string): Promise<Layout> {
   const root = join(tmp, 'entity')
@@ -68,7 +79,7 @@ describe('shellRun tool', () => {
     await writeJson(layout.allowlist, { shellRun: ['echo'] })
     const approval = vi.fn().mockResolvedValue('once' as const)
     const sessionGrants = new Set<string>()
-    const tools = createBuiltinTools(layout, logger, ctx, sessionGrants, approval)
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, sessionGrants, approval)
     const shellRun = tools.find(t => t.definition.name === 'shellRun')!
 
     const result = await shellRun.handle({ command: 'echo hello', cwd: workspace })
@@ -80,7 +91,7 @@ describe('shellRun tool', () => {
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const approval = vi.fn().mockResolvedValue('once' as const)
     const sessionGrants = new Set<string>()
-    const tools = createBuiltinTools(layout, logger, ctx, sessionGrants, approval)
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, sessionGrants, approval)
     const shellRun = tools.find(t => t.definition.name === 'shellRun')!
 
     await shellRun.handle({ command: 'echo hello', cwd: workspace })
@@ -91,7 +102,7 @@ describe('shellRun tool', () => {
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const approval = vi.fn().mockResolvedValue('deny' as const)
     const sessionGrants = new Set<string>()
-    const tools = createBuiltinTools(layout, logger, ctx, sessionGrants, approval)
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, sessionGrants, approval)
     const shellRun = tools.find(t => t.definition.name === 'shellRun')!
 
     const result = await shellRun.handle({ command: 'rm -rf /', cwd: workspace })
@@ -102,7 +113,7 @@ describe('shellRun tool', () => {
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const approval = vi.fn().mockResolvedValue('once' as const)
     const sessionGrants = new Set<string>()
-    const tools = createBuiltinTools(layout, logger, ctx, sessionGrants, approval)
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, sessionGrants, approval)
     const shellRun = tools.find(t => t.definition.name === 'shellRun')!
 
     const result = await shellRun.handle({ command: 'ls', cwd: '/tmp' })
@@ -127,7 +138,7 @@ describe('fileRead tool', () => {
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const layout = createLayout(join(tmp, 'entity'))
     await writeFile(join(workspace, 'hello.txt'), 'Hello World', 'utf8')
-    const tools = createBuiltinTools(layout, logger, ctx, new Set(), vi.fn())
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), vi.fn())
     const fileRead = tools.find(t => t.definition.name === 'fileRead')!
 
     const result = await fileRead.handle({ path: 'hello.txt' })
@@ -137,7 +148,7 @@ describe('fileRead tool', () => {
   it('blocks path outside workspace', async () => {
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const layout = createLayout(join(tmp, 'entity'))
-    const tools = createBuiltinTools(layout, logger, ctx, new Set(), vi.fn())
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), vi.fn())
     const fileRead = tools.find(t => t.definition.name === 'fileRead')!
 
     const result = await fileRead.handle({ path: '/etc/passwd' })
@@ -148,7 +159,7 @@ describe('fileRead tool', () => {
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const layout = createLayout(join(tmp, 'entity'))
     const noFocusCtx: ExecContext = { workspaceFocus: null }
-    const tools = createBuiltinTools(layout, logger, noFocusCtx, new Set(), vi.fn())
+    const tools = createBuiltinTools(layout, logger, noFocusCtx, mockAdapter, new Set(), vi.fn())
     const fileRead = tools.find(t => t.definition.name === 'fileRead')!
 
     const result = await fileRead.handle({ path: 'anything.txt' })
@@ -172,7 +183,7 @@ describe('fileWrite tool', () => {
   it('writes a file inside workspace', async () => {
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const layout = createLayout(join(tmp, 'entity'))
-    const tools = createBuiltinTools(layout, logger, ctx, new Set(), vi.fn())
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), vi.fn())
     const fileWrite = tools.find(t => t.definition.name === 'fileWrite')!
 
     const result = await fileWrite.handle({ path: 'output.txt', content: 'test content' })
@@ -183,7 +194,7 @@ describe('fileWrite tool', () => {
   it('blocks write outside workspace', async () => {
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const layout = createLayout(join(tmp, 'entity'))
-    const tools = createBuiltinTools(layout, logger, ctx, new Set(), vi.fn())
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), vi.fn())
     const fileWrite = tools.find(t => t.definition.name === 'fileWrite')!
 
     const result = await fileWrite.handle({ path: '/tmp/evil.txt', content: 'bad' })
@@ -203,46 +214,56 @@ describe('workerSkill tool', () => {
   })
   afterEach(async () => { await rm(tmp, { recursive: true, force: true }) })
 
-  it('returns error for unknown skill', async () => {
+  it('returns error when task is missing', async () => {
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const approval = vi.fn().mockResolvedValue('once' as const)
-    const tools = createBuiltinTools(layout, logger, ctx, new Set(), approval)
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), approval)
     const workerSkill = tools.find(t => t.definition.name === 'workerSkill')!
 
-    const result = await workerSkill.handle({ skill: 'nonexistent' })
-    expect(result).toContain('not found')
+    const result = await workerSkill.handle({})
+    expect(result).toContain('task is required')
   })
 
   it('denies execution when operator denies', async () => {
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
-    // Create a minimal skill
-    const skillDir = join(layout.skills, 'test-skill')
-    await mkdir(skillDir, { recursive: true })
-    await writeJson(layout.skillManifest('test-skill'), { name: 'test-skill', entry: 'index.js' })
-    await writeFile(join(skillDir, 'index.js'), 'console.log("hello")', 'utf8')
-
     const approval = vi.fn().mockResolvedValue('deny' as const)
-    const tools = createBuiltinTools(layout, logger, ctx, new Set(), approval)
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), approval)
     const workerSkill = tools.find(t => t.definition.name === 'workerSkill')!
 
-    const result = await workerSkill.handle({ skill: 'test-skill' })
+    const result = await workerSkill.handle({ task: 'summarize this', persona: 'Summarizer' })
     expect(result).toContain('denied')
+  })
+
+  it('invokes adapter and returns result', async () => {
+    const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
+    const approval = vi.fn().mockResolvedValue('once' as const)
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), approval)
+    const workerSkill = tools.find(t => t.definition.name === 'workerSkill')!
+
+    const result = await workerSkill.handle({ task: 'summarize this', context: 'some content', persona: 'Summarizer' })
+    expect(result).toBe('worker result')
   })
 
   it('uses session grant on second call without re-prompting', async () => {
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
-    const skillDir = join(layout.skills, 'greet-skill')
-    await mkdir(skillDir, { recursive: true })
-    await writeJson(layout.skillManifest('greet-skill'), { name: 'greet-skill', entry: 'index.js' })
-    await writeFile(join(skillDir, 'index.js'), 'console.log("hi")', 'utf8')
-
     const approval = vi.fn().mockResolvedValue('session' as const)
     const sessionGrants = new Set<string>()
-    const tools = createBuiltinTools(layout, logger, ctx, sessionGrants, approval)
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, sessionGrants, approval)
     const workerSkill = tools.find(t => t.definition.name === 'workerSkill')!
 
-    await workerSkill.handle({ skill: 'greet-skill' })
-    await workerSkill.handle({ skill: 'greet-skill' })
-    expect(approval).toHaveBeenCalledTimes(1) // second call uses session grant
+    await workerSkill.handle({ task: 'task 1', persona: 'Analyst' })
+    await workerSkill.handle({ task: 'task 2', persona: 'Analyst' })
+    expect(approval).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads canonical persona from built-in personas dir', async () => {
+    const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
+    const approval = vi.fn().mockResolvedValue('once' as const)
+    const tools = createBuiltinTools(layout, logger, ctx, mockAdapter, new Set(), approval)
+    const workerSkill = tools.find(t => t.definition.name === 'workerSkill')!
+
+    // Should not throw — Summarizer.md exists in built-in personas
+    const result = await workerSkill.handle({ task: 'summarize', persona: 'Summarizer' })
+    expect(result).toBe('worker result')
   })
 })

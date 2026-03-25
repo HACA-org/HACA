@@ -1,89 +1,110 @@
-import { spawn } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Layout } from '../../store/layout.js'
 import type { Logger } from '../../logger/logger.js'
 import type { ToolHandler } from '../../session/loop.js'
-import { readJson } from '../../store/io.js'
+import type { CPEAdapter, Message } from '../../cpe/types.js'
 
-const TIMEOUT_MS = 60_000
+const MAX_WORKER_CYCLES = 10
+const PERSONAS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'worker', 'personas')
 
-interface SkillManifest {
-  name: string
-  entry: string
-  description?: string
+const WORKER_CONSTRAINTS = `
+## Worker Constraints
+- You are a stateless worker agent. You have no memory beyond this conversation.
+- Complete the assigned task and return the result. Do not ask clarifying questions.
+- You must finish within ${MAX_WORKER_CYCLES} cycles.
+- Do not request tools unless explicitly provided.
+- When done, respond with your final result and stop.
+`.trim()
+
+async function resolvePersona(persona: string): Promise<string> {
+  // Try built-in canonical persona first
+  const builtinPath = join(PERSONAS_DIR, `${persona}.md`)
+  if (existsSync(builtinPath)) {
+    const content = await readFile(builtinPath, 'utf8')
+    // Strip frontmatter
+    return content.replace(/^---[\s\S]*?---\n/, '').trim()
+  }
+  // Treat as inline persona string
+  return persona
 }
 
 export function createWorkerSkillTool(
-  layout: Layout,
+  _layout: Layout,
   logger: Logger,
+  adapter: CPEAdapter,
   sessionGrants: Set<string>,
   requestApproval: (prompt: string) => Promise<'once' | 'session' | 'allow' | 'deny'>,
 ): ToolHandler {
   return {
     definition: {
       name: 'workerSkill',
-      description: 'Execute a custom skill as a subprocess. Requires operator approval (session-scoped only).',
+      description: 'Delegate a task to a stateless worker agent that runs in isolation. Use for heavy analysis, summarization, or text skill execution to avoid polluting the main context.',
       input_schema: {
         type: 'object',
         properties: {
-          skill: { type: 'string', description: 'Skill name (must exist in skills/)' },
-          args: { type: 'object', description: 'Arguments to pass to the skill as JSON' },
+          task: { type: 'string', description: 'The task for the worker to complete' },
+          context: { type: 'string', description: 'Relevant content or data the worker needs' },
+          persona: { type: 'string', description: 'Worker persona: Summarizer, Analyst, Auditor, Debugger, Reviewer, Coder — or an inline description' },
         },
-        required: ['skill'],
+        required: ['task'],
       },
     },
     async handle(input) {
-      const skillName = String(input['skill'] ?? '').trim()
-      if (!skillName) return 'Error: skill name is required'
+      const task = String(input['task'] ?? '').trim()
+      if (!task) return 'Error: task is required'
 
-      const manifestPath = layout.skillManifest(skillName)
-      if (!existsSync(manifestPath)) return `Error: skill not found: ${skillName}`
+      const context = input['context'] ? String(input['context']) : undefined
+      const personaArg = input['persona'] ? String(input['persona']) : 'Analyst'
 
-      let manifest: SkillManifest
-      try {
-        manifest = await readJson<SkillManifest>(manifestPath)
-      } catch {
-        return `Error: invalid manifest for skill: ${skillName}`
-      }
-
-      const grantKey = `workerSkill:${skillName}`
+      const grantKey = `workerSkill:${personaArg}`
       if (!sessionGrants.has(grantKey)) {
-        const decision = await requestApproval(`workerSkill: ${skillName}`)
-        if (decision === 'deny') return 'Execution denied by operator.'
-        // session-scoped only — never persists to allowlist
+        const decision = await requestApproval(`workerSkill [${personaArg}]: ${task.slice(0, 80)}`)
+        if (decision === 'deny') return 'Worker execution denied by operator.'
         sessionGrants.add(grantKey)
       }
 
-      const entryPath = layout.skill(skillName) + '/' + manifest.entry
-      if (!existsSync(entryPath)) return `Error: skill entry not found: ${entryPath}`
+      const personaInstructions = await resolvePersona(personaArg)
 
-      const args = input['args'] ? JSON.stringify(input['args']) : '{}'
+      const systemPrompt = [
+        personaInstructions,
+        WORKER_CONSTRAINTS,
+      ].join('\n\n')
 
-      return new Promise(resolve => {
-        const child = spawn('node', [entryPath, args], {
-          cwd: layout.skill(skillName),
-          timeout: TIMEOUT_MS,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        })
+      const userContent = context
+        ? `## Context\n${context}\n\n## Task\n${task}`
+        : `## Task\n${task}`
 
-        const out: string[] = []
-        const err: string[] = []
-        child.stdout?.on('data', (d: Buffer) => out.push(d.toString()))
-        child.stderr?.on('data', (d: Buffer) => err.push(d.toString()))
+      const messages: Message[] = [{ role: 'user', content: userContent }]
 
-        child.on('close', async (code) => {
-          await logger.info('exec', 'worker_skill', { skill: skillName, code })
-          const stdout = out.join('').trim()
-          const stderr = err.join('').trim()
-          const result = [stdout, stderr ? `stderr: ${stderr}` : ''].filter(Boolean).join('\n')
-          resolve(result || `(exited with code ${code})`)
-        })
+      await logger.info('exec', 'worker_start', { persona: personaArg, taskLen: task.length })
 
-        child.on('error', async (e) => {
-          await logger.error('exec', 'worker_skill_error', { skill: skillName, error: e.message })
-          resolve(`Error: ${e.message}`)
-        })
-      })
+      let cycles = 0
+      let lastContent = ''
+
+      while (cycles < MAX_WORKER_CYCLES) {
+        cycles++
+        const response = await adapter.invoke({ system: systemPrompt, messages })
+
+        if (response.content) {
+          lastContent = response.content
+          messages.push({ role: 'assistant', content: response.content })
+        }
+
+        if (response.stopReason === 'end_turn' || response.toolCalls.length === 0) break
+
+        // Worker issued tool calls — not supported, treat as end
+        await logger.warn('exec', 'worker_unexpected_tool_calls', { cycles })
+        break
+      }
+
+      await logger.info('exec', 'worker_complete', { cycles, persona: personaArg })
+
+      if (!lastContent) return 'Worker returned no output.'
+      if (cycles >= MAX_WORKER_CYCLES) return `[Worker reached cycle limit]\n\n${lastContent}`
+      return lastContent
     },
   }
 }
