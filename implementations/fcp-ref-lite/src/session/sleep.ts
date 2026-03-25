@@ -1,20 +1,18 @@
 import type { Layout } from '../store/layout.js'
-import { writeJson, appendJsonl, removeFile } from '../store/io.js'
+import { appendJsonl, removeFile } from '../store/io.js'
 import type { Logger } from '../logger/logger.js'
 import type { Message } from '../cpe/types.js'
+import { createMIL } from '../mil/mil.js'
+import type { ClosurePayload } from '../mil/types.js'
 
-export interface ClosurePayload {
-  ts: string
-  sessionId: string
-  messageCount: number
-  summary: string[]
-}
+export type { ClosurePayload }
 
 export async function runSleepCycle(
   layout: Layout,
   sessionId: string,
   messages: Message[],
   logger: Logger,
+  closurePayload?: Partial<Pick<ClosurePayload, 'workingMemoryUpdates' | 'handoff' | 'promotions'>>,
 ): Promise<void> {
   await logger.info('sleep', 'start', { sessionId })
 
@@ -27,9 +25,15 @@ export async function runSleepCycle(
       .map(m => typeof m.content === 'string' ? m.content.slice(0, 200) : '')
       .filter(Boolean)
       .slice(-3),
+    workingMemoryUpdates: closurePayload?.workingMemoryUpdates ?? [],
+    handoff: closurePayload?.handoff,
+    promotions: closurePayload?.promotions ?? [],
   }
 
-  await writeJson(layout.pendingClosure, closure)
+  // Normal close: process closure immediately via MIL
+  const mil = createMIL(layout, logger)
+  await mil.processClosure(closure)
+
   await appendJsonl(layout.sessionStore, {
     type: 'session_close',
     ts: closure.ts,

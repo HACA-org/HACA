@@ -20,6 +20,8 @@ async function makeFixture(tmp: string): Promise<Layout> {
   await mkdir(join(root, 'io', 'inbox'), { recursive: true })
   await mkdir(join(root, 'io', 'notifications'), { recursive: true })
   await mkdir(join(root, 'memory'), { recursive: true })
+  await mkdir(join(root, 'memory', 'episodic'), { recursive: true })
+  await mkdir(join(root, 'memory', 'semantic'), { recursive: true })
   await writeFile(join(root, 'BOOT.md'), '# Custom Instructions\nBe helpful.', 'utf8')
   await writeFile(join(root, 'persona', 'identity.md'), '# Identity\nI am an AI assistant.', 'utf8')
   await writeFile(join(root, 'persona', 'values.md'), '# Values\nHonesty first.', 'utf8')
@@ -237,7 +239,7 @@ describe('runSessionLoop', () => {
     expect(outputs.some(o => o.includes('recovered from crash'))).toBe(true)
   })
 
-  it('writes pending-closure.json at session end', async () => {
+  it('processes closure via MIL on normal session end (no pending-closure.json left)', async () => {
     const { existsSync } = await import('node:fs')
     const layout = await makeFixture(tmp)
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
@@ -250,6 +252,7 @@ describe('runSessionLoop', () => {
       writeOutput: () => {},
     })
 
-    expect(existsSync(layout.pendingClosure)).toBe(true)
+    // Normal close: MIL processes closure directly, pending-closure.json is not left on disk
+    expect(existsSync(layout.pendingClosure)).toBe(false)
   })
 })
