@@ -7,7 +7,7 @@ import { createLayout } from '../store/layout.js'
 import { writeJson, touchFile } from '../store/io.js'
 import { createLogger } from '../logger/logger.js'
 import {
-  computeHashes, verifyDrift, writeIntegrityDoc, sha256File,
+  computeHashes, verifyDrift, writeIntegrityDoc, sha256File, verifyChainFromImprint,
 } from './integrity.js'
 import {
   logHeartbeat, logEndureCommit, readChain, lastChainSeq,
@@ -334,5 +334,99 @@ describe('endure', () => {
 
     const remaining = await readPendingProposals(layout)
     expect(remaining.some(p => p.id === 'prop-3')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Chain verification from imprint
+// ---------------------------------------------------------------------------
+describe('verifyChainFromImprint', () => {
+  let tmp: string
+  let layout: Layout
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'fcp-sil-chain-verify-'))
+    layout = await makeFixture(tmp)
+  })
+  afterEach(async () => { await rm(tmp, { recursive: true, force: true }) })
+
+  it('valid when no chain exists but imprint is present', async () => {
+    await writeJson(layout.imprint, {
+      version: '1.0', activatedAt: new Date().toISOString(),
+      hacaProfile: 'haca-core',
+      operatorBound: { name: 'Test', email: 'test@test.com', hash: 'abc' },
+      structuralBaseline: 'sha256:aaa', integrityDocument: 'sha256:bbb', skillsIndex: 'sha256:ccc',
+      genesisOmega: 'sha256:genesis',
+    })
+    const result = await verifyChainFromImprint(layout)
+    expect(result.valid).toBe(true)
+  })
+
+  it('invalid when imprint missing', async () => {
+    const result = await verifyChainFromImprint(layout)
+    expect(result.valid).toBe(false)
+    expect(result.reason).toContain('imprint.json')
+  })
+
+  it('valid chain: GENESIS → HEARTBEAT → ENDURE_COMMIT', async () => {
+    const genesisOmega = 'sha256:genesis123'
+    await writeJson(layout.imprint, {
+      version: '1.0', activatedAt: new Date().toISOString(),
+      hacaProfile: 'haca-core',
+      operatorBound: { name: 'Test', email: 'test@test.com', hash: 'abc' },
+      structuralBaseline: 'sha256:aaa', integrityDocument: 'sha256:bbb', skillsIndex: 'sha256:ccc',
+      genesisOmega,
+    })
+
+    const { logGenesis, logHeartbeat: lhb, logEndureCommit: lec } = await import('./chain.js')
+    await logGenesis(layout, genesisOmega)
+    await lhb(layout, 'session-1')
+    await lec(layout, 'installSkill', 'prop-1', 'sha256:authdigest')
+
+    const result = await verifyChainFromImprint(layout)
+    expect(result.valid).toBe(true)
+  })
+
+  it('invalid when GENESIS imprintHash does not match genesisOmega', async () => {
+    await writeJson(layout.imprint, {
+      version: '1.0', activatedAt: new Date().toISOString(),
+      hacaProfile: 'haca-core',
+      operatorBound: { name: 'Test', email: 'test@test.com', hash: 'abc' },
+      structuralBaseline: 'sha256:aaa', integrityDocument: 'sha256:bbb', skillsIndex: 'sha256:ccc',
+      genesisOmega: 'sha256:correct',
+    })
+
+    const { logGenesis } = await import('./chain.js')
+    await logGenesis(layout, 'sha256:WRONG')
+
+    const result = await verifyChainFromImprint(layout)
+    expect(result.valid).toBe(false)
+    expect(result.reason).toContain('genesisOmega')
+  })
+
+  it('invalid when ENDURE_COMMIT missing evolutionAuthDigest', async () => {
+    const genesisOmega = 'sha256:genesis-for-endure'
+    await writeJson(layout.imprint, {
+      version: '1.0', activatedAt: new Date().toISOString(),
+      hacaProfile: 'haca-evolve',
+      operatorBound: { name: 'Test', email: 'test@test.com', hash: 'abc' },
+      structuralBaseline: 'sha256:aaa', integrityDocument: 'sha256:bbb', skillsIndex: 'sha256:ccc',
+      genesisOmega,
+    })
+
+    const { appendJsonl } = await import('../store/io.js')
+    const { sha256Str } = await import('./integrity.js')
+
+    // Write GENESIS manually
+    const genesis = { seq: 1, type: 'GENESIS', ts: new Date().toISOString(), prevHash: null, data: { imprintHash: genesisOmega } }
+    await appendJsonl(layout.integrityChain, genesis)
+
+    // Write ENDURE_COMMIT without evolutionAuthDigest
+    const endure = { seq: 2, type: 'ENDURE_COMMIT', ts: new Date().toISOString(), prevHash: sha256Str(JSON.stringify(genesis)), data: { operation: 'installSkill', proposalId: 'p1' } }
+    await appendJsonl(layout.integrityChain, endure)
+
+    const result = await verifyChainFromImprint(layout)
+    expect(result.valid).toBe(false)
+    expect(result.reason).toContain('evolutionAuthDigest')
   })
 })

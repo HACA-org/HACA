@@ -105,20 +105,77 @@ export async function verifyDrift(layout: Layout): Promise<string[]> {
   return drifts
 }
 
+export interface ChainVerificationResult {
+  valid: boolean
+  reason?: string
+}
+
 /**
- * Verify that the integrity chain traces back to genesis omega in imprint.json.
- * Returns true if chain is valid, false otherwise.
+ * Verify the integrity chain from GENESIS to last entry.
+ *
+ * Rules:
+ * 1. First entry must be GENESIS with imprintHash matching genesisOmega in imprint.json
+ * 2. Each subsequent entry's prevHash must equal sha256Str(JSON.stringify(previousEntry))
+ * 3. Every ENDURE_COMMIT must have a non-empty evolutionAuthDigest
+ *
+ * An empty chain (entity has never evolved) is valid as long as imprint exists.
  */
-export async function verifyChainFromImprint(layout: Layout): Promise<boolean> {
-  if (!existsSync(layout.imprint)) return false
+export async function verifyChainFromImprint(layout: Layout): Promise<ChainVerificationResult> {
+  if (!existsSync(layout.imprint)) {
+    return { valid: false, reason: 'imprint.json not found' }
+  }
 
   const imprint = await readJson<ImprintRecord>(layout.imprint)
-  if (!imprint.genesisOmega) return false
+  if (!imprint.genesisOmega) {
+    return { valid: false, reason: 'imprint.json missing genesisOmega' }
+  }
 
-  // Chain validation: each entry must link to previous via prevHash
-  // ENDURE_COMMIT entries must have evolution_auth_digest
-  // TODO: full chain traversal — for now verify imprint hash matches integrity doc at genesis
-  if (!existsSync(layout.integrity)) return false
+  // No chain yet — entity has not evolved, valid by definition
+  if (!existsSync(layout.integrityChain)) {
+    return { valid: true }
+  }
 
-  return true
+  const { readJsonl } = await import('../store/io.js')
+  const entries = await readJsonl<Record<string, unknown>>(layout.integrityChain)
+
+  if (entries.length === 0) return { valid: true }
+
+  // Rule 1: first entry must be GENESIS with correct imprintHash
+  const first = entries[0]!
+  if (first['type'] !== 'GENESIS') {
+    return { valid: false, reason: `first chain entry is not GENESIS (got ${first['type']})` }
+  }
+  if (first['data'] == null || (first['data'] as Record<string, unknown>)['imprintHash'] !== imprint.genesisOmega) {
+    return { valid: false, reason: 'GENESIS imprintHash does not match genesisOmega' }
+  }
+
+  // Rules 2 & 3: traverse remaining entries
+  let prevEntry = first
+  for (let i = 1; i < entries.length; i++) {
+    const entry = entries[i]!
+    const expectedPrevHash = sha256Str(JSON.stringify(prevEntry))
+
+    // Rule 2: prevHash linkage
+    if (entry['prevHash'] !== expectedPrevHash) {
+      return {
+        valid: false,
+        reason: `chain broken at seq ${entry['seq']}: prevHash mismatch`,
+      }
+    }
+
+    // Rule 3: ENDURE_COMMIT must have evolutionAuthDigest
+    if (entry['type'] === 'ENDURE_COMMIT') {
+      const data = entry['data'] as Record<string, unknown> | undefined
+      if (!data?.['evolutionAuthDigest']) {
+        return {
+          valid: false,
+          reason: `ENDURE_COMMIT at seq ${entry['seq']} missing evolutionAuthDigest`,
+        }
+      }
+    }
+
+    prevEntry = entry
+  }
+
+  return { valid: true }
 }
