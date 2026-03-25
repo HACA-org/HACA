@@ -37,6 +37,7 @@ export function createLayout(root: string) {
     state,
     baseline: join(state, 'baseline.json'),
     integrity: join(state, 'integrity.json'),
+    integrityChain: join(state, 'integrity-chain.jsonl'),
     entityLog: join(state, 'entity.log'),
     sessionToken: join(state, 'session.token'),
     pendingClosure: join(state, 'pending-closure.json'),

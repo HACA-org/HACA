@@ -1,0 +1,5 @@
+export { createVitalCheckState, tick, shouldRun, runVitalChecks, loadHeartbeatConfig, type VitalCheckState } from './heartbeat.js'
+export { trackedFiles, computeHashes, verifyDrift, writeIntegrityDoc, sha256File, sha256Str, type IntegrityDocument } from './integrity.js'
+export { logGenesis, logHeartbeat, logCritical, logSeveranceCommit, logEndureCommit, logSleepComplete, readChain, lastChainSeq } from './chain.js'
+export { runEndureProtocol, readPendingProposals, writePendingProposals } from './endure.js'
+export type { HeartbeatConfig, ChainEntry, ChainEntryType, PendingProposal } from './types.js'
