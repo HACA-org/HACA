@@ -1,4 +1,5 @@
 import { Command } from 'commander'
+import { runFcp } from './run.js'
 import { registerInit } from './commands/init.js'
 import { registerList } from './commands/list.js'
 import { registerStatus } from './commands/status.js'
@@ -27,8 +28,10 @@ export function buildProgram(): Command {
         console.log(`fcp --auto ${opts.auto} — not yet implemented`)
         return
       }
-      // TODO: resolve default entity + boot + TUI session
-      console.log('fcp — boot not yet implemented')
+      await runFcp({
+        ...(opts.verbose !== undefined ? { verbose: opts.verbose } : {}),
+        ...(opts.debug !== undefined ? { debug: opts.debug } : {}),
+      })
     })
 
   registerInit(program)

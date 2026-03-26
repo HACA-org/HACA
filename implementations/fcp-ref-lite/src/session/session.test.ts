@@ -7,9 +7,11 @@ import { writeJson, touchFile } from '../store/io.js'
 import { createLogger } from '../logger/logger.js'
 import { buildContext } from './context.js'
 import { runSessionLoop } from './loop.js'
+import type { SessionIO } from './loop.js'
 import type { CPEAdapter, CPEResponse } from '../cpe/types.js'
 import type { BootResult } from '../boot/types.js'
 import type { Layout } from '../store/layout.js'
+import type { SessionEvent } from '../tui/types.js'
 
 async function makeFixture(tmp: string): Promise<Layout> {
   const root = join(tmp, 'entity')
@@ -37,6 +39,35 @@ const mockBootResult: BootResult = {
   pendingProposals: [],
   history: [],
   contextWindowConfig: { warnPct: 0.90, compactPct: 0.95 },
+}
+
+/** Collect agent text from onEvent stream */
+function collectText(events: SessionEvent[]): string[] {
+  return events
+    .filter((e): e is Extract<SessionEvent, { type: 'agent_end' }> => e.type === 'agent_end')
+    .map(e => e.text)
+    .filter(Boolean)
+}
+
+/** Collect system messages from onEvent stream */
+function collectSystem(events: SessionEvent[]): string[] {
+  return events
+    .filter((e): e is Extract<SessionEvent, { type: 'system_message' }> => e.type === 'system_message')
+    .map(e => e.text)
+}
+
+function makeIO(
+  inputs: Array<string | null>,
+  overrides: Partial<SessionIO> = {},
+): SessionIO & { events: SessionEvent[] } {
+  let idx = 0
+  const events: SessionEvent[] = []
+  return {
+    readInput: async () => inputs[idx++] ?? null,
+    onEvent: (e) => events.push(e),
+    ...overrides,
+    events,
+  }
 }
 
 describe('buildContext', () => {
@@ -112,16 +143,11 @@ describe('runSessionLoop', () => {
     const layout = await makeFixture(tmp)
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const adapter = makeAdapter([{ content: 'Hello there!', stopReason: 'end_turn' }])
-    const outputs: string[] = []
-    const inputs = ['Hello', null]
-    let inputIdx = 0
+    const io = makeIO(['Hello', null])
 
-    await runSessionLoop(layout, mockBootResult, adapter, logger, { contextWindow: 100000 }, {
-      readInput: async () => inputs[inputIdx++] ?? null,
-      writeOutput: (t) => outputs.push(t),
-    })
+    await runSessionLoop(layout, mockBootResult, adapter, logger, { contextWindow: 100000 }, io)
 
-    expect(outputs).toContain('Hello there!')
+    expect(collectText(io.events)).toContain('Hello there!')
   })
 
   it('removes session token after sleep cycle', async () => {
@@ -129,13 +155,9 @@ describe('runSessionLoop', () => {
     const layout = await makeFixture(tmp)
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const adapter = makeAdapter([{ content: 'Bye!', stopReason: 'end_turn' }])
-    const inputs = ['Hi', null]
-    let inputIdx = 0
+    const io = makeIO(['Hi', null])
 
-    await runSessionLoop(layout, mockBootResult, adapter, logger, { contextWindow: 100000 }, {
-      readInput: async () => inputs[inputIdx++] ?? null,
-      writeOutput: () => {},
-    })
+    await runSessionLoop(layout, mockBootResult, adapter, logger, { contextWindow: 100000 }, io)
 
     expect(existsSync(layout.sessionToken)).toBe(false)
   })
@@ -148,8 +170,9 @@ describe('runSessionLoop', () => {
       { toolCalls: [{ id: 't1', name: 'test_tool', input: { x: 1 } }], stopReason: 'tool_use' },
       { content: 'Done!', stopReason: 'end_turn' },
     ])
-    const inputs = ['Run the tool', null]
-    let inputIdx = 0
+    const io = makeIO(['Run the tool', null], {
+      requestToolApproval: async () => 'once',
+    })
 
     await runSessionLoop(layout, mockBootResult, adapter, logger, {
       contextWindow: 100000,
@@ -157,15 +180,11 @@ describe('runSessionLoop', () => {
         definition: { name: 'test_tool', description: 'test', input_schema: {} },
         handle: toolHandler,
       }],
-    }, {
-      readInput: async () => inputs[inputIdx++] ?? null,
-      writeOutput: () => {},
-      requestToolApproval: async () => 'once',
-    })
+    }, io)
 
     expect(toolHandler).toHaveBeenCalledWith({ x: 1 })
     const counters = await logger.getCounters()
-    expect(counters.tool_executions).toBe(1)
+    expect(counters['tool_executions']).toBe(1)
   })
 
   it('denies tool call when operator denies', async () => {
@@ -176,8 +195,9 @@ describe('runSessionLoop', () => {
       { toolCalls: [{ id: 't1', name: 'test_tool', input: {} }], stopReason: 'tool_use' },
       { content: 'Ok', stopReason: 'end_turn' },
     ])
-    const inputs = ['go', null]
-    let inputIdx = 0
+    const io = makeIO(['go', null], {
+      requestToolApproval: async () => 'deny',
+    })
 
     await runSessionLoop(layout, mockBootResult, adapter, logger, {
       contextWindow: 100000,
@@ -185,11 +205,7 @@ describe('runSessionLoop', () => {
         definition: { name: 'test_tool', description: 'test', input_schema: {} },
         handle: toolHandler,
       }],
-    }, {
-      readInput: async () => inputs[inputIdx++] ?? null,
-      writeOutput: () => {},
-      requestToolApproval: async () => 'deny',
-    })
+    }, io)
 
     expect(toolHandler).not.toHaveBeenCalled()
   })
@@ -198,15 +214,14 @@ describe('runSessionLoop', () => {
     const layout = await makeFixture(tmp)
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const toolHandler = vi.fn().mockResolvedValue('result')
-    // Same tool call repeated — triggers loop detection on 2nd occurrence
     const repeatedResponse = {
       toolCalls: [{ id: 't1', name: 'test_tool', input: { x: 1 } }],
       stopReason: 'tool_use' as const,
     }
     const adapter = makeAdapter([repeatedResponse, repeatedResponse, repeatedResponse])
-    const outputs: string[] = []
-    const inputs = ['go', null]
-    let inputIdx = 0
+    const io = makeIO(['go', null], {
+      requestToolApproval: async () => 'once',
+    })
 
     await runSessionLoop(layout, mockBootResult, adapter, logger, {
       contextWindow: 100000,
@@ -214,31 +229,22 @@ describe('runSessionLoop', () => {
         definition: { name: 'test_tool', description: 'test', input_schema: {} },
         handle: toolHandler,
       }],
-    }, {
-      readInput: async () => inputs[inputIdx++] ?? null,
-      writeOutput: (t) => outputs.push(t),
-      requestToolApproval: async () => 'once',
-    })
+    }, io)
 
-    expect(outputs.some(o => o.includes('Loop detected'))).toBe(true)
+    expect(collectSystem(io.events).some(t => t.includes('Loop detected'))).toBe(true)
   })
 
   it('notifies operator of crash recovery', async () => {
     const layout = await makeFixture(tmp)
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const adapter = makeAdapter([{ content: 'ok', stopReason: 'end_turn' }])
-    const outputs: string[] = []
-    const inputs = ['hi', null]
-    let inputIdx = 0
+    const io = makeIO(['hi', null])
 
     await runSessionLoop(layout,
       { ...mockBootResult, crashRecovered: true },
-      adapter, logger, { contextWindow: 100000 }, {
-        readInput: async () => inputs[inputIdx++] ?? null,
-        writeOutput: (t) => outputs.push(t),
-      })
+      adapter, logger, { contextWindow: 100000 }, io)
 
-    expect(outputs.some(o => o.includes('recovered from crash'))).toBe(true)
+    expect(collectSystem(io.events).some(t => t.includes('recovered from crash'))).toBe(true)
   })
 
   it('processes closure via MIL on normal session end (no pending-closure.json left)', async () => {
@@ -246,15 +252,10 @@ describe('runSessionLoop', () => {
     const layout = await makeFixture(tmp)
     const logger = createLogger(join(tmp, 'entity.log'), join(tmp, 'counters.json'))
     const adapter = makeAdapter([{ content: 'Bye', stopReason: 'end_turn' }])
-    const inputs = ['hi', null]
-    let inputIdx = 0
+    const io = makeIO(['hi', null])
 
-    await runSessionLoop(layout, mockBootResult, adapter, logger, { contextWindow: 100000 }, {
-      readInput: async () => inputs[inputIdx++] ?? null,
-      writeOutput: () => {},
-    })
+    await runSessionLoop(layout, mockBootResult, adapter, logger, { contextWindow: 100000 }, io)
 
-    // Normal close: MIL processes closure directly, pending-closure.json is not left on disk
     expect(existsSync(layout.pendingClosure)).toBe(false)
   })
 })

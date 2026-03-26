@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest'
 import { buildProgram } from './dispatch.js'
 
 function run(...args: string[]) {
@@ -22,9 +22,11 @@ describe('CLI dispatch', () => {
     expect(() => program.parse(['node', 'fcp', '--help'])).toThrow() // exitOverride throws on --help
   })
 
-  it('fcp (no args) triggers default action', async () => {
-    await run()
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('boot not yet implemented'))
+  it('fcp (no args) triggers default action — exits with error when no entity found', async () => {
+    // runFcp will fail (no entity configured in test env) and call process.exit(1)
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code) => { throw new Error('exit') })
+    await expect(run()).rejects.toThrow('exit')
+    exitSpy.mockRestore()
   })
 
   it('fcp init', async () => {
