@@ -138,7 +138,8 @@ export async function runEndureProtocol(
       if (!result.ok) {
         await logger.error('sil', 'endure_skill_install_failed', { id: proposal.id, reason: result.reason })
         // Keep proposal as pending (not approved) for retry
-        remaining.push({ ...proposal, approvedAt: undefined })
+        const { approvedAt: _dropped, ...rest } = proposal
+        remaining.push(rest)
         continue
       }
     }

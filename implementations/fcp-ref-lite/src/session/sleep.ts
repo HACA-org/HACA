@@ -30,7 +30,7 @@ export async function runSleepCycle(
       .filter(Boolean)
       .slice(-3),
     workingMemoryUpdates: closurePayload?.workingMemoryUpdates ?? [],
-    handoff: closurePayload?.handoff,
+    ...(closurePayload?.handoff !== undefined ? { handoff: closurePayload.handoff } : {}),
     promotions: closurePayload?.promotions ?? [],
   }
 

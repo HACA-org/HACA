@@ -28,7 +28,7 @@ export function createMIL(layout: Layout, logger: Logger) {
       sessionId,
       ts: new Date().toISOString(),
       content,
-      tags,
+      ...(tags !== undefined ? { tags } : {}),
     }
     const path = join(layout.episodic, `${entry.id}.json`)
     await writeJson(path, entry)
@@ -50,7 +50,7 @@ export function createMIL(layout: Layout, logger: Logger) {
       id: randomUUID(),
       ts: new Date().toISOString(),
       content,
-      tags,
+      ...(tags !== undefined ? { tags } : {}),
       promotedFrom: episodicId,
     }
     const path = join(layout.semantic, `${entry.id}.json`)

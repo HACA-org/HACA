@@ -156,7 +156,7 @@ export async function runSessionLoop(
     const response = await adapter.invoke({
       system: systemPrompt,
       messages,
-      tools: toolDefs.length > 0 ? toolDefs : undefined,
+      ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
     })
 
     await logger.increment('cycles')
