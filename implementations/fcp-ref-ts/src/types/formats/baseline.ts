@@ -55,6 +55,7 @@ export const BaselineSchema = z.object({
 export const ImprintRecordSchema = z.object({
   version:            z.literal('1.0'),
   activatedAt:        z.string().datetime(),
+  fcpVersion:         z.string().min(1),
   hacaArchVersion:    z.string().min(1),
   hacaProfile:        z.string().min(1),
   operatorBound:      OperatorBoundSchema,

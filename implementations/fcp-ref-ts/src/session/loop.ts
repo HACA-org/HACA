@@ -2,12 +2,14 @@
 // Iterates: drain inbox → operator prompt → CPE invoke → tool dispatch → repeat.
 // EXCEPTION: ~170 lines — tool dispatch and message persistence are tightly coupled
 // to the main loop invariant and cannot be split without losing readability.
-import { appendJsonl } from '../store/io.js'
+import { appendJsonl, readJson, fileExists } from '../store/io.js'
 import { drainInbox } from './inbox.js'
 import { buildContext } from './context.js'
 import { estimateTokens, checkBudget } from './budget.js'
 import { makeFingerprint } from './fingerprint.js'
 import { resolveToolApproval } from './approval.js'
+import { SESSION_CLOSE_SIGNAL } from '../sil/sil.js'
+import { ClosurePayloadSchema } from '../types/formats/memory.js'
 import type { SessionOptions, LoopResult, CycleState } from '../types/session.js'
 import type { CPEMessage, ToolResultBlock } from '../types/cpe.js'
 
@@ -43,7 +45,6 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
         const text = await io.prompt()
         const trimmed = text.trim()
         if (!trimmed) continue
-        if (trimmed === '/quit' || trimmed === '/exit') break
 
         messages.push({ role: 'user', content: trimmed })
         await appendJsonl(layout.memory.sessionJsonl, { type: 'message', role: 'user', content: trimmed, ts: new Date().toISOString() })
@@ -101,6 +102,7 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
 
       // Dispatch each tool use
       const results: ToolResultBlock[] = []
+      let sessionCloseTriggered = false
       for (const tu of resp.toolUses) {
         io.emit({ type: 'tool_dispatch', skillName: tu.name, input: tu.input })
         const decision = await resolveToolApproval(tu.name, tu.input, policy, io)
@@ -119,11 +121,16 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
         results.push({ type: 'tool_result', tool_use_id: tu.id, content: result.ok ? result.output : `Error: ${result.error}` })
         io.emit({ type: 'tool_result', skillName: tu.name, result })
         await appendJsonl(layout.memory.sessionJsonl, { type: 'tool_execution', tool: tu.name, approved: decision.tier, ts: new Date().toISOString() })
+        if (result.ok && result.output === SESSION_CLOSE_SIGNAL) {
+          sessionCloseTriggered = true
+        }
       }
 
       // Push tool results as user message
       messages.push({ role: 'user', content: results })
       await appendJsonl(layout.memory.sessionJsonl, { type: 'message', role: 'user', content: results, ts: new Date().toISOString() })
+
+      if (sessionCloseTriggered) break
     }
   } catch (e: unknown) {
     io.emit({ type: 'error', error: e })
@@ -135,16 +142,13 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
   io.emit({ type: 'session_close', reason: 'normal' })
   log.info('session:close', { cycles: cycle.cycleNum })
 
-  const closurePayload = {
-    type: 'closure_payload' as const,
-    consolidation: messages
-      .filter(m => m.role === 'assistant' && typeof m.content === 'string')
-      .map(m => (m.content as string).slice(0, 200))
-      .slice(-3)
-      .join('\n') || '(no output)',
-    promotion:      [],
-    workingMemory:  [],
-    sessionHandoff: { pendingTasks: [], nextSteps: '' },
+  const raw = await fileExists(layout.state.pendingClosure)
+    ? await readJson(layout.state.pendingClosure)
+    : null
+  const parsed = ClosurePayloadSchema.safeParse(raw)
+  if (!parsed.success) {
+    log.warn('session:no-closure-payload')
+    return { closed: 'forced', reason: 'critical_condition' }
   }
-  return { closed: 'normal', closurePayload }
+  return { closed: 'normal', closurePayload: parsed.data }
 }

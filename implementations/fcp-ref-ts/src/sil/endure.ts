@@ -1,11 +1,10 @@
-// SIL Endure — evolution proposal queue and commit protocol.
-// Proposals queue in state/pending-closure.json; runEndureProtocol() processes
-// approved ones during the sleep cycle.
-import { randomUUID } from 'node:crypto'
+// SIL Endure — evolution proposal commit protocol.
+// Proposals are queued by fcp_evolution_proposal (exec tool) in state/pending-proposals.json.
+// runEndureProtocol() processes approved ones during the sleep cycle.
 import { fileExists, readJson, writeJson } from '../store/io.js'
-import { sha256Digest } from '../boot/integrity.js'
 import { refreshIntegrityDoc, currentFileHashes } from './integrity.js'
 import { appendEndureCommit } from './chain.js'
+import { sha256Digest } from '../boot/integrity.js'
 import type { Layout }   from '../types/store.js'
 import type { Logger }   from '../types/logger.js'
 import type { EndureProposal } from '../types/sil.js'
@@ -14,33 +13,19 @@ interface ProposalsFile {
   readonly proposals: (EndureProposal & { approvedAt?: string })[]
 }
 
-// ─── Proposal queue ──────────────────────────────────────────────────────────
-
 export async function readPendingProposals(layout: Layout): Promise<EndureProposal[]> {
-  if (!await fileExists(layout.state.pendingClosure)) return []
+  if (!await fileExists(layout.state.pendingProposals)) return []
   try {
-    const data = await readJson(layout.state.pendingClosure) as ProposalsFile
+    const data = await readJson(layout.state.pendingProposals) as ProposalsFile
     return data.proposals ?? []
   } catch {
     return []
   }
 }
 
-export async function queueProposal(layout: Layout, content: string): Promise<EndureProposal> {
-  const proposal: EndureProposal = {
-    id:       randomUUID(),
-    content,
-    digest:   sha256Digest(content),
-    queuedAt: new Date().toISOString(),
-  }
-
-  const existing = await readPendingProposals(layout)
-  await writeJson(layout.state.pendingClosure, { proposals: [...existing, proposal] })
-  return proposal
-}
-
 export async function approveProposal(layout: Layout, id: string): Promise<boolean> {
-  const file = await readJson(layout.state.pendingClosure) as ProposalsFile
+  if (!await fileExists(layout.state.pendingProposals)) return false
+  const file = await readJson(layout.state.pendingProposals) as ProposalsFile
   const proposals = file.proposals ?? []
   const idx = proposals.findIndex(p => p.id === id)
   if (idx < 0) return false
@@ -48,16 +33,16 @@ export async function approveProposal(layout: Layout, id: string): Promise<boole
   const updated = proposals.map((p, i) =>
     i === idx ? { ...p, approvedAt: new Date().toISOString() } : p,
   )
-  await writeJson(layout.state.pendingClosure, { proposals: updated })
+  await writeJson(layout.state.pendingProposals, { proposals: updated })
   return true
 }
 
 // ─── Endure protocol ─────────────────────────────────────────────────────────
 
 export async function runEndureProtocol(layout: Layout, logger: Logger): Promise<void> {
-  if (!await fileExists(layout.state.pendingClosure)) return
+  if (!await fileExists(layout.state.pendingProposals)) return
 
-  const file = await readJson(layout.state.pendingClosure) as ProposalsFile
+  const file = await readJson(layout.state.pendingProposals) as ProposalsFile
   const proposals  = file.proposals ?? []
   const approved   = proposals.filter(p => p.approvedAt)
   const unapproved = proposals.filter(p => !p.approvedAt)
@@ -66,10 +51,8 @@ export async function runEndureProtocol(layout: Layout, logger: Logger): Promise
   logger.info('sil:endure_start', { count: approved.length })
 
   for (const proposal of approved) {
-    // Integrity digest = sha256Digest(content || id) — a stable per-proposal auth token
     const evolutionAuthDigest = sha256Digest(`${proposal.id}:${proposal.content}`)
 
-    // Update integrity doc and capture new file hashes
     const integrityDocHash = await refreshIntegrityDoc(layout)
     const files = await currentFileHashes(layout)
 
@@ -79,11 +62,10 @@ export async function runEndureProtocol(layout: Layout, logger: Logger): Promise
 
   // Persist only unapproved proposals
   if (unapproved.length > 0) {
-    await writeJson(layout.state.pendingClosure, { proposals: unapproved })
+    await writeJson(layout.state.pendingProposals, { proposals: unapproved })
   } else {
-    // Remove the file if nothing remains
     const { deleteFile } = await import('../store/io.js')
-    await deleteFile(layout.state.pendingClosure).catch(() => undefined)
+    await deleteFile(layout.state.pendingProposals).catch(() => undefined)
   }
 
   logger.info('sil:endure_complete', { processed: approved.length })

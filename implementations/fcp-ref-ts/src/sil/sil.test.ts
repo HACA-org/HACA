@@ -13,7 +13,8 @@ import { focusCheck }    from './checks/focus.js'
 import { inboxCheck }    from './checks/inbox.js'
 import { identityCheck } from './checks/identity.js'
 import { createHeartbeat } from './heartbeat.js'
-import { queueProposal, approveProposal, runEndureProtocol } from './endure.js'
+import { approveProposal, runEndureProtocol } from './endure.js'
+import { evolutionProposalHandler } from './tools/evolution-proposal.js'
 import { runDriftEvaluation } from './drift.js'
 import type { HeartbeatContext } from '../types/sil.js'
 
@@ -264,19 +265,27 @@ describe('SIL — createHeartbeat', () => {
 // ─── Endure ───────────────────────────────────────────────────────────────────
 
 describe('SIL — endure', () => {
-  it('queueProposal creates a pending closure entry', async () => {
+  it('fcp_evolution_proposal queues a pending proposal entry', async () => {
     const layout = createLayout(tmpDir)
     await fs.mkdir(layout.state.dir, { recursive: true })
-    const p = await queueProposal(layout, 'install skill foo')
-    expect(p.id).toBeDefined()
-    expect(p.digest).toMatch(/^sha256:/)
+    const logger = createLogger({ test: true })
+    const execCtx = { layout, baseline: {} as Baseline, logger, sessionId: 'test' }
+    const result = await evolutionProposalHandler.execute({ content: 'install skill foo' }, execCtx)
+    expect(result.ok).toBe(true)
+    expect(result.output).toMatch(/id:/)
+    const data = JSON.parse(await fs.readFile(layout.state.pendingProposals, 'utf8'))
+    expect(data.proposals).toHaveLength(1)
+    expect(data.proposals[0].digest).toMatch(/^sha256:/)
   })
 
   it('approveProposal sets approvedAt', async () => {
     const layout = createLayout(tmpDir)
     await fs.mkdir(layout.state.dir, { recursive: true })
-    const p = await queueProposal(layout, 'some change')
-    const ok = await approveProposal(layout, p.id)
+    const logger = createLogger({ test: true })
+    const execCtx = { layout, baseline: {} as Baseline, logger, sessionId: 'test' }
+    const result = await evolutionProposalHandler.execute({ content: 'some change' }, execCtx)
+    const id = (result.output as string).match(/id: (.+)/)![1]!
+    const ok = await approveProposal(layout, id)
     expect(ok).toBe(true)
   })
 
@@ -293,14 +302,16 @@ describe('SIL — endure', () => {
     await fs.writeFile(layout.bootMd, '# boot', 'utf8')
     await fs.writeFile(layout.state.baseline, JSON.stringify({ version: '1.0' }), 'utf8')
     const logger = createLogger({ test: true })
-    const p = await queueProposal(layout, 'evolve something')
-    await approveProposal(layout, p.id)
+    const execCtx = { layout, baseline: {} as Baseline, logger, sessionId: 'test' }
+    const result = await evolutionProposalHandler.execute({ content: 'evolve something' }, execCtx)
+    const id = (result.output as string).match(/id: (.+)/)![1]!
+    await approveProposal(layout, id)
     await runEndureProtocol(layout, logger)
 
     const chain = await readChain(layout)
     expect(chain.some(e => e.type === 'ENDURE_COMMIT')).toBe(true)
-    // Pending closure should be removed
-    const exists = await fs.access(layout.state.pendingClosure).then(() => true).catch(() => false)
+    // Pending proposals should be removed
+    const exists = await fs.access(layout.state.pendingProposals).then(() => true).catch(() => false)
     expect(exists).toBe(false)
   })
 })

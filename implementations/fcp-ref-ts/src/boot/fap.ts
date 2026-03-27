@@ -4,11 +4,15 @@
 import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
+import { createRequire } from 'node:module'
 import { fileExists, ensureDir, readJson, writeJson, appendJsonl } from '../store/io.js'
 import { parseBaseline } from '../store/parse.js'
 import { sha256Digest, getTrackedFiles, hashTrackedFiles } from './integrity.js'
 import { FAPError } from '../types/boot.js'
 import type { FAPOptions, FAPResult } from '../types/boot.js'
+
+const require = createRequire(import.meta.url)
+const { version: fcpVersion } = require('../../package.json') as { version: string }
 
 export async function runFAP(opts: FAPOptions): Promise<FAPResult> {
   const { layout, operatorName, operatorEmail, logger, io } = opts
@@ -68,11 +72,12 @@ export async function runFAP(opts: FAPOptions): Promise<FAPResult> {
     const integrityDocument  = sha256Digest(await fs.readFile(layout.state.integrity))
     const skillsIndex        = sha256Digest(await fs.readFile(layout.skills.index))
     // Infer profile from topology: opaque topology implies HACA-Evolve.
-    const hacaProfile = baseline.cpe.topology === 'opaque' ? 'haca-evolve' : 'haca-core'
+    const hacaProfile = baseline.cpe.topology === 'opaque' ? 'HACA-Evolve-1.0.0' : 'HACA-Core-1.0.0'
     const now = new Date().toISOString()
     const imprint = {
       version: '1.0' as const,
       activatedAt: now,
+      fcpVersion,
       hacaArchVersion: '1.0.0',
       hacaProfile,
       operatorBound,

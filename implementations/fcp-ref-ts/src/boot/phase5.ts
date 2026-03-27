@@ -28,7 +28,7 @@ export const phase5: BootPhase = {
       const wm = parseWorkingMemory(raw)
       if (wm.entries.length > 0) {
         const body = wm.entries
-          .sort((a, b) => b.priority - a.priority)
+          .sort((a, b) => a.priority - b.priority)
           .map(e => `[${e.priority}] ${e.path}`)
           .join('\n')
         contextMessages.push({ role: 'user', content: `Working memory:\n${body}` })

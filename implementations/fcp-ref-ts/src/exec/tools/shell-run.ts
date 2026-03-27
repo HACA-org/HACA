@@ -1,7 +1,8 @@
-// fcp_shell_run — run a whitelisted shell command.
+// fcp_shell_run — run a whitelisted shell command within workspace_focus.
 // Git is permitted because entity root and workspace are always separate directories.
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { readJson, fileExists } from '../../store/io.js'
 import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
 
 const execFileAsync = promisify(execFile)
@@ -36,6 +37,16 @@ function extractParams(params: unknown): ShellParams | null {
   return { cmd, args, cwd }
 }
 
+async function resolveWorkspace(ctx: ExecContext): Promise<string | null> {
+  if (!await fileExists(ctx.layout.state.workspaceFocus)) return null
+  try {
+    const raw = await readJson(ctx.layout.state.workspaceFocus) as Record<string, unknown>
+    return typeof raw['path'] === 'string' ? raw['path'].trim() : null
+  } catch {
+    return null
+  }
+}
+
 export const shellRunHandler: ToolHandler = {
   name: 'fcp_shell_run',
   async execute(params: unknown, ctx: ExecContext): Promise<ToolResult> {
@@ -45,11 +56,17 @@ export const shellRunHandler: ToolHandler = {
       return { ok: false, error: `command not in allowlist: ${parsed.cmd}` }
     }
 
-    // Resolve working directory — default to entity root
-    let cwd = ctx.layout.root
+    const workspace = await resolveWorkspace(ctx)
+    if (!workspace) return { ok: false, error: 'workspace_focus is not set' }
+
+    // Resolve working directory — default to workspace_focus
+    let cwd = workspace
     if (parsed.cwd) {
-      if (parsed.cwd.includes('..')) return { ok: false, error: 'path traversal not allowed' }
-      cwd = parsed.cwd.startsWith('/') ? parsed.cwd : `${ctx.layout.root}/${parsed.cwd}`
+      const abs = parsed.cwd.startsWith('/') ? parsed.cwd : `${workspace}/${parsed.cwd}`
+      if (!abs.startsWith(workspace + '/') && abs !== workspace) {
+        return { ok: false, error: 'cwd is outside workspace_focus' }
+      }
+      cwd = abs
     }
 
     try {

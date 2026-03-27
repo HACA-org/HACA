@@ -35,7 +35,8 @@ export interface Layout {
     readonly driftProbes: string
     readonly semanticDigest: string
     readonly workspaceFocus: string
-    readonly pendingClosure: string
+    readonly pendingClosure:   string
+    readonly pendingProposals: string
     readonly sentinels: {
       readonly dir: string
       readonly sessionToken: string
@@ -84,6 +85,7 @@ export function createLayout(root: string): Layout {
       semanticDigest:       j('state', 'semantic-digest.json'),
       workspaceFocus:       j('state', 'workspace-focus.json'),
       pendingClosure:       j('state', 'pending-closure.json'),
+      pendingProposals:     j('state', 'pending-proposals.json'),
       sentinels: {
         dir:          j('state', 'sentinels'),
         sessionToken: j('state', 'sentinels', 'session.token'),

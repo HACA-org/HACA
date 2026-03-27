@@ -13,17 +13,13 @@ import { parseBaseline } from '../../store/parse.js'
 import { readJson, fileExists } from '../../store/io.js'
 import { startEntity }   from '../../boot/boot.js'
 import { resolveAdapter } from '../../cpe/resolve.js'
-import { loadAllowlistPolicy } from '../../exec/allowlist.js'
-import { fileReadHandler }    from '../../exec/tools/file-read.js'
-import { fileWriteHandler }   from '../../exec/tools/file-write.js'
-import { webFetchHandler }    from '../../exec/tools/web-fetch.js'
-import { shellRunHandler }    from '../../exec/tools/shell-run.js'
-import { agentRunHandler }    from '../../exec/tools/agent-run.js'
-import { skillCreateHandler } from '../../exec/tools/skill-create.js'
-import { skillAuditHandler }  from '../../exec/tools/skill-audit.js'
+import { loadAllowlistPolicy, fileReadHandler, fileWriteHandler, webFetchHandler,
+         shellRunHandler, agentRunHandler, skillCreateHandler, skillAuditHandler } from '../../exec/exec.js'
+import { processClosure, memoryRecallHandler, memoryWriteHandler,
+         closurePayloadHandler } from '../../mil/mil.js'
+import { evolutionProposalHandler, sessionCloseHandler } from '../../sil/sil.js'
 import { runSessionLoop }    from '../../session/loop.js'
 import { runSleepCycle }     from '../../session/sleep.js'
-import { processClosure }    from '../../mil/recall.js'
 import type { SessionIO, SessionEvent } from '../../types/session.js'
 import { CLIError } from '../../types/cli.js'
 
@@ -143,6 +139,8 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
   const tools  = [
     fileReadHandler, fileWriteHandler, webFetchHandler,
     shellRunHandler, agentRunHandler, skillCreateHandler, skillAuditHandler,
+    memoryRecallHandler, memoryWriteHandler, closurePayloadHandler,
+    evolutionProposalHandler, sessionCloseHandler,
   ]
   const profile = baseline.cpe.topology === 'opaque' ? 'HACA-Evolve' : 'HACA-Core'
 

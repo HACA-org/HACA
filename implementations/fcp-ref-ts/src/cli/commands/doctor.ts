@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs'
 import type { Command } from 'commander'
 import { createLayout } from '../../types/store.js'
 import { fileExists, readJson } from '../../store/io.js'
-import { verifyIntegrityDoc, verifyChainFromImprint } from '../../sil/integrity.js'
+import { verifyIntegrityDoc, verifyChainFromImprint } from '../../sil/sil.js'
 import { CLIError } from '../../types/cli.js'
 
 const ENTITIES_DIR = path.join(os.homedir(), '.fcp', 'entities')

@@ -18,10 +18,20 @@ import { skillAuditHandler }   from './tools/skill-audit.js'
 import type { ExecContext }    from '../types/exec.js'
 import type { ToolUseBlock }   from '../types/cpe.js'
 
-let tmpDir: string
+let tmpDir:   string
+let workspace: string
 
 beforeEach(async () => {
-  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fcp-exec-'))
+  tmpDir    = await fs.mkdtemp(path.join(os.tmpdir(), 'fcp-exec-'))
+  workspace = path.join(tmpDir, 'workspace')
+  await fs.mkdir(workspace, { recursive: true })
+  // Write workspace-focus.json so file/shell tools can resolve the workspace
+  await fs.mkdir(path.join(tmpDir, 'state'), { recursive: true })
+  await fs.writeFile(
+    path.join(tmpDir, 'state', 'workspace-focus.json'),
+    JSON.stringify({ path: workspace }),
+    'utf8',
+  )
 })
 
 afterEach(async () => {
@@ -83,7 +93,7 @@ describe('EXEC — dispatch', () => {
 
   it('delegates to the registered handler', async () => {
     const ctx = makeCtx()
-    const testFile = path.join(tmpDir, 'hello.txt')
+    const testFile = path.join(workspace, 'hello.txt')
     await fs.writeFile(testFile, 'hello world', 'utf8')
 
     const reg = createToolRegistry([fileReadHandler])
@@ -133,18 +143,18 @@ describe('EXEC — allowlist', () => {
 describe('EXEC — fcp_file_read', () => {
   it('reads file content', async () => {
     const ctx  = makeCtx()
-    const file = path.join(tmpDir, 'test.txt')
+    const file = path.join(workspace, 'test.txt')
     await fs.writeFile(file, 'test content', 'utf8')
     const r = await fileReadHandler.execute({ path: file }, ctx)
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.output).toBe('test content')
   })
 
-  it('rejects path traversal', async () => {
+  it('rejects path outside workspace', async () => {
     const ctx = makeCtx()
-    const r   = await fileReadHandler.execute({ path: '../etc/passwd' }, ctx)
+    const r   = await fileReadHandler.execute({ path: path.join(tmpDir, 'outside.txt') }, ctx)
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).toMatch(/traversal/)
+    if (!r.ok) expect(r.error).toMatch(/outside workspace/)
   })
 
   it('returns error for missing path param', async () => {
@@ -155,7 +165,7 @@ describe('EXEC — fcp_file_read', () => {
 
   it('returns error for non-existent file', async () => {
     const ctx = makeCtx()
-    const r   = await fileReadHandler.execute({ path: path.join(tmpDir, 'nonexistent.txt') }, ctx)
+    const r   = await fileReadHandler.execute({ path: path.join(workspace, 'nonexistent.txt') }, ctx)
     expect(r.ok).toBe(false)
   })
 })
@@ -165,7 +175,7 @@ describe('EXEC — fcp_file_read', () => {
 describe('EXEC — fcp_file_write', () => {
   it('writes file and returns ok', async () => {
     const ctx  = makeCtx()
-    const file = path.join(tmpDir, 'out.txt')
+    const file = path.join(workspace, 'out.txt')
     const r    = await fileWriteHandler.execute({ path: file, content: 'hello' }, ctx)
     expect(r.ok).toBe(true)
     expect(await fs.readFile(file, 'utf8')).toBe('hello')
@@ -173,16 +183,16 @@ describe('EXEC — fcp_file_write', () => {
 
   it('creates intermediate directories', async () => {
     const ctx  = makeCtx()
-    const file = path.join(tmpDir, 'deep', 'dir', 'out.txt')
+    const file = path.join(workspace, 'deep', 'dir', 'out.txt')
     const r    = await fileWriteHandler.execute({ path: file, content: 'nested' }, ctx)
     expect(r.ok).toBe(true)
   })
 
-  it('rejects path traversal', async () => {
+  it('rejects path outside workspace', async () => {
     const ctx = makeCtx()
-    const r   = await fileWriteHandler.execute({ path: '../out.txt', content: 'bad' }, ctx)
+    const r   = await fileWriteHandler.execute({ path: path.join(tmpDir, 'out.txt'), content: 'bad' }, ctx)
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).toMatch(/traversal/)
+    if (!r.ok) expect(r.error).toMatch(/outside workspace/)
   })
 
   it('returns error for missing params', async () => {
@@ -254,11 +264,11 @@ describe('EXEC — fcp_shell_run', () => {
     if (r.ok) expect(r.output).toContain('hello world')
   })
 
-  it('rejects path traversal in cwd', async () => {
+  it('rejects cwd outside workspace', async () => {
     const ctx = makeCtx()
-    const r   = await shellRunHandler.execute({ cmd: 'ls', args: [], cwd: '../..' }, ctx)
+    const r   = await shellRunHandler.execute({ cmd: 'ls', args: [], cwd: tmpDir }, ctx)
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).toMatch(/traversal/)
+    if (!r.ok) expect(r.error).toMatch(/outside workspace/)
   })
 })
 
