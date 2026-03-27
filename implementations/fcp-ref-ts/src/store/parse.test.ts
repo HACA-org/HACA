@@ -152,7 +152,7 @@ describe('store/parse', () => {
     it('accepts valid index', () => {
       const idx = {
         version: '1.0',
-        skills: [{ name: 'file_reader', desc: 'reads files', manifest: 'skills/lib/file_reader/manifest.json', class: 'builtin' }],
+        skills: [{ name: 'file_reader', desc: 'reads files', manifest: 'file_reader/manifest.json', class: 'custom' }],
         aliases: {},
       }
       expect(() => parseSkillIndex(idx)).not.toThrow()

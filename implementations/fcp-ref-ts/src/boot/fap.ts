@@ -33,7 +33,6 @@ export async function runFAP(opts: FAPOptions): Promise<FAPResult> {
     // Built-in tools live in exec/tools/ — skills/ contains only operator/entity custom skills.
     // At FAP time there are no custom skills yet; the index starts empty.
     await ensureDir(layout.skills.dir)
-    await ensureDir(layout.skills.lib)
     await track(layout.skills.index, { version: '1.0', skills: [], aliases: {} })
     log.info('fap:step1:ok', { skills: 0 })
 

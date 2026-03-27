@@ -1,5 +1,5 @@
 // fcp_worker_skill — invoke a named skill from the entity's skill library.
-// Looks up the skill in skills/index.json, then executes skills/lib/<name>/run.js
+// Looks up the skill in skills/index.json, then executes skills/<name>/run.js
 // with a 30-second timeout in a child process.
 import { spawn } from 'node:child_process'
 import * as path from 'node:path'
@@ -46,7 +46,7 @@ export const workerSkillHandler: ToolHandler = {
     const entry = index.skills.find(s => s.name === parsed.skill)
     if (!entry) return { ok: false, error: `skill not found: ${parsed.skill}` }
 
-    const scriptPath = path.join(ctx.layout.skills.lib, parsed.skill, 'run.js')
+    const scriptPath = path.join(ctx.layout.skills.dir, parsed.skill, 'run.js')
     if (!await fileExists(scriptPath)) {
       return { ok: false, error: `skill script not found: ${scriptPath}` }
     }

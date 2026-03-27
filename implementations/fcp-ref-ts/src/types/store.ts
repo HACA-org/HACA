@@ -8,7 +8,6 @@ export interface Layout {
   readonly persona: string
   readonly skills: {
     readonly dir: string
-    readonly lib: string
     readonly index: string
   }
   readonly hooks: string
@@ -57,7 +56,6 @@ export function createLayout(root: string): Layout {
     persona: j('persona'),
     skills: {
       dir:   j('skills'),
-      lib:   j('skills', 'lib'),
       index: j('skills', 'index.json'),
     },
     hooks: j('hooks'),

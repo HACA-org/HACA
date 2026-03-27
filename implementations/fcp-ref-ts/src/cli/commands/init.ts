@@ -81,7 +81,7 @@ async function scaffoldEntity(root: string, profile: Profile): Promise<void> {
     path.join(root, 'io', 'inbox', 'presession'),
     path.join(root, 'io', 'spool'),
     path.join(root, 'persona'),
-    path.join(root, 'skills', 'lib'),
+    path.join(root, 'skills'),
     path.join(root, 'hooks'),
   ]
   for (const d of dirs) await ensureDir(d)

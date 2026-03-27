@@ -1,4 +1,4 @@
-// fcp_skill_create — scaffold a new custom skill in skills/lib/<name>/.
+// fcp_skill_create — scaffold a new custom skill in skills/<name>/.
 // Creates: manifest.json + run.js stub + registers in skills/index.json.
 import * as path from 'node:path'
 import { fileExists, readJson, writeJson, ensureDir, atomicWrite } from '../../store/io.js'
@@ -38,7 +38,7 @@ export const skillCreateHandler: ToolHandler = {
       return { ok: false, error: 'name must be lowercase alphanumeric with _ or - separators' }
     }
 
-    const skillDir      = path.join(ctx.layout.skills.lib, parsed.name)
+    const skillDir      = path.join(ctx.layout.skills.dir, parsed.name)
     const manifestPath  = path.join(skillDir, 'manifest.json')
     const runPath       = path.join(skillDir, 'run.js')
 
@@ -82,7 +82,7 @@ export const skillCreateHandler: ToolHandler = {
     index.skills.push({
       name:     parsed.name,
       desc:     parsed.description,
-      manifest: `lib/${parsed.name}/manifest.json`,
+      manifest: `${parsed.name}/manifest.json`,
       class:    'custom',
     })
     await ensureDir(path.dirname(ctx.layout.skills.index))

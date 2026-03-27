@@ -42,13 +42,13 @@ export async function getTrackedFiles(layout: Layout): Promise<string[]> {
     tracked.push('skills/index.json')
   }
 
-  // skills/lib/<name>/manifest.json — custom skills installed by operator or entity.
+  // skills/<name>/manifest.json — custom skills installed by operator or entity.
   // Built-in tools live in exec/tools/ and have no on-disk manifests.
-  for (const entry of await safeReaddir(layout.skills.lib)) {
+  for (const entry of await safeReaddir(layout.skills.dir)) {
     if (!entry.isDirectory()) continue
-    const manifest = path.join(layout.skills.lib, entry.name, 'manifest.json')
+    const manifest = path.join(layout.skills.dir, entry.name, 'manifest.json')
     if (await fileExists(manifest)) {
-      tracked.push(`skills/lib/${entry.name}/manifest.json`)
+      tracked.push(`skills/${entry.name}/manifest.json`)
     }
   }
 

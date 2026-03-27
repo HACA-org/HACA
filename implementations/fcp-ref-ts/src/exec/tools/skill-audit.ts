@@ -44,7 +44,7 @@ export const skillAuditHandler: ToolHandler = {
     if (!entry) return { ok: false, error: `skill not in index: ${skillName}` }
 
     const manifestPath = path.join(ctx.layout.skills.dir, entry.manifest)
-    const runPath      = path.join(ctx.layout.skills.lib, skillName, 'run.js')
+    const runPath      = path.join(ctx.layout.skills.dir, skillName, 'run.js')
     const issues: string[] = []
 
     // Validate manifest

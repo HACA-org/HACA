@@ -308,13 +308,13 @@ describe('EXEC — fcp_worker_skill', () => {
 describe('EXEC — fcp_skill_create', () => {
   it('creates skill scaffold and registers in index', async () => {
     const ctx = makeCtx()
-    await fs.mkdir(ctx.layout.skills.lib, { recursive: true })
+    await fs.mkdir(ctx.layout.skills.dir, { recursive: true })
     const r = await skillCreateHandler.execute(
       { name: 'my_tool', description: 'A test skill' }, ctx)
     expect(r.ok).toBe(true)
 
     // Verify directory and files
-    const skillDir = path.join(ctx.layout.skills.lib, 'my_tool')
+    const skillDir = path.join(ctx.layout.skills.dir, 'my_tool')
     await expect(fs.access(skillDir)).resolves.toBeUndefined()
     await expect(fs.access(path.join(skillDir, 'manifest.json'))).resolves.toBeUndefined()
     await expect(fs.access(path.join(skillDir, 'run.js'))).resolves.toBeUndefined()
@@ -342,7 +342,7 @@ describe('EXEC — fcp_skill_create', () => {
 
   it('refuses to overwrite existing skill', async () => {
     const ctx = makeCtx()
-    await fs.mkdir(path.join(ctx.layout.skills.lib, 'my_tool'), { recursive: true })
+    await fs.mkdir(path.join(ctx.layout.skills.dir, 'my_tool'), { recursive: true })
     const r = await skillCreateHandler.execute(
       { name: 'my_tool', description: 'dupe' }, ctx)
     expect(r.ok).toBe(false)
@@ -354,8 +354,7 @@ describe('EXEC — fcp_skill_create', () => {
 
 describe('EXEC — fcp_skill_audit', () => {
   async function setupSkill(ctx: ExecContext): Promise<void> {
-    await fs.mkdir(ctx.layout.skills.lib, { recursive: true })
-    const skillDir = path.join(ctx.layout.skills.lib, 'test_skill')
+    const skillDir = path.join(ctx.layout.skills.dir, 'test_skill')
     await fs.mkdir(skillDir, { recursive: true })
     const manifest = {
       name: 'test_skill', class: 'custom', version: '1.0.0',
@@ -368,7 +367,7 @@ describe('EXEC — fcp_skill_audit', () => {
     const index = {
       version: '1.0',
       skills: [{ name: 'test_skill', desc: 'A test skill',
-                 manifest: 'lib/test_skill/manifest.json', class: 'custom' }],
+                 manifest: 'test_skill/manifest.json', class: 'custom' }],
       aliases: {},
     }
     await fs.mkdir(ctx.layout.skills.dir, { recursive: true })
@@ -390,7 +389,7 @@ describe('EXEC — fcp_skill_audit', () => {
   it('reports missing run.js in issues', async () => {
     const ctx = makeCtx()
     await setupSkill(ctx)
-    await fs.unlink(path.join(ctx.layout.skills.lib, 'test_skill', 'run.js'))
+    await fs.unlink(path.join(ctx.layout.skills.dir, 'test_skill', 'run.js'))
     const r = await skillAuditHandler.execute({ skill: 'test_skill' }, ctx)
     expect(r.ok).toBe(true)
     if (r.ok) {
