@@ -1,28 +1,45 @@
-import type { Layout }        from './store.js'
+import type { Layout }                  from './store.js'
 import type { Baseline, ImprintRecord } from './formats/baseline.js'
-import type { Logger }         from './logger.js'
-import type { CPEAdapter }     from './cpe.js'
+import type { Logger }                  from './logger.js'
+import type { CPEMessage }              from './cpe.js'
 
 export type BootPhaseId = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
 
-export interface BootContext {
-  readonly layout:   Layout
-  readonly baseline: Baseline
-  readonly imprint:  ImprintRecord
-  readonly cpe:      CPEAdapter
-  readonly logger:   Logger
+// Interface for operator interaction during boot and FAP.
+export interface BootIO {
+  prompt(question: string): Promise<string>
+  write(text: string): void
 }
 
-// A BootPhase is a pure function that mutates nothing outside its contract:
-// it reads state, validates it, and throws BootError on failure.
+// Injected sleep cycle — phases that need it (Phase 2 crash recovery) call this.
+// Not available until Session Loop (Phase 4 build) is implemented.
+export type SleepCycleFn = (layout: Layout, baseline: Baseline, logger: Logger) => Promise<void>
+
+export interface BootContext {
+  readonly layout:      Layout
+  readonly baseline:    Baseline
+  readonly imprint:     ImprintRecord
+  readonly logger:      Logger
+  readonly io:          BootIO
+  readonly sleepCycle?: SleepCycleFn
+}
+
+// Phase 5 returns contextMessages; Phase 7 returns sessionId.
+export interface BootPhasePayload {
+  contextMessages?: CPEMessage[]
+  sessionId?: string
+}
+
+// A BootPhase reads state, validates it, and throws BootError on failure.
+// It does not mutate anything outside its documented contract.
 export interface BootPhase {
   readonly id:   BootPhaseId
   readonly name: string
-  run(ctx: BootContext): Promise<void>
+  run(ctx: BootContext): Promise<BootPhasePayload | void>
 }
 
 export type BootResult =
-  | { ok: true;  sessionId: string }
+  | { ok: true;  sessionId: string; contextMessages: CPEMessage[] }
   | { ok: false; phase: BootPhaseId; reason: string }
 
 export interface FAPOptions {
@@ -30,6 +47,18 @@ export interface FAPOptions {
   readonly operatorName:  string
   readonly operatorEmail: string
   readonly logger:        Logger
+  readonly io:            BootIO
+}
+
+// Options for the boot orchestrator (startEntity).
+// operatorName/operatorEmail are only required for cold-start (FAP).
+export interface StartEntityOptions {
+  readonly layout:         Layout
+  readonly logger:         Logger
+  readonly io:             BootIO
+  readonly sleepCycle?:    SleepCycleFn
+  readonly operatorName?:  string
+  readonly operatorEmail?: string
 }
 
 export type FAPResult =
