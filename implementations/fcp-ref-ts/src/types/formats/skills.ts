@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const SkillClassSchema = z.enum(['builtin', 'custom', 'operator'])
+export const SkillClassSchema = z.enum(['custom', 'operator'])
 
 const SkillEntrySchema = z.object({
   name:     z.string().min(1),

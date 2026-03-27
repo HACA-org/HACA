@@ -63,7 +63,7 @@ Where this document defines profile-specific behavior, sections are annotated **
    - 9.2 [Dispatch](#92-dispatch)
    - 9.3 [Action Ledger](#93-action-ledger)
    - 9.4 [Worker Skills](#94-worker-skills)
-   - 9.5 [Built-in Skills](#95-built-in-skills)
+   - 9.5 [Native Exec Tools](#95-native-exec-tools)
    - 9.6 [Operator Skills](#96-operator-skills)
    - 9.7 [Lifecycle Hooks](#97-lifecycle-hooks)
    - 9.8 [Session Approval Model](#98-session-approval-model)
@@ -112,7 +112,6 @@ An FCP entity is a single directory. Its location on the host filesystem is the 
 ├── persona/                    — structural identity files
 ├── skills/
 │   ├── index.json              — skill index
-│   ├── lib/                    — built-in skill executables (not exposed to CPE context)
 │   └── <name>/
 │       ├── manifest.json       — skill manifest
 │       └── ...                 — skill executables
@@ -443,15 +442,9 @@ Stage 0 checks both the current cycle's per-probe scores and the aggregate trend
       "class": "custom"
     },
     {
-      "name": "file_reader",
-      "desc": "Reads files within the workspace",
-      "manifest": "skills/lib/file_reader/manifest.json",
-      "class": "builtin"
-    },
-    {
       "name": "endure_invoke",
       "desc": "Triggers the Endure Protocol",
-      "manifest": "skills/lib/endure_invoke/manifest.json",
+      "manifest": "skills/endure_invoke/manifest.json",
       "class": "operator"
     }
   ],
@@ -467,18 +460,16 @@ Stage 0 checks both the current cycle's per-probe scores and the aggregate trend
 | `version` | string | Schema version; must be `"1.0"` |
 | `skills[]` | array | All skills the entity is authorized to invoke |
 | `skills[].name` | string | Skill name; must match the directory name under `skills/` and the `name` field in its `manifest.json` |
-| `skills[].desc` | string | Brief human-readable description of the skill's purpose; included in the `[SKILLS INDEX]` context block for `"builtin"` and `"custom"` skills |
+| `skills[].desc` | string | Brief human-readable description of the skill's purpose; included in the `[SKILLS INDEX]` context block for `"custom"` skills; `"operator"` skills are excluded |
 | `skills[].manifest` | string | Path to the skill's `manifest.json`, relative to entity root |
-| `skills[].class` | string | `"builtin"` for skills shipped with FCP (executables in `skills/lib/`); `"custom"` for skills installed via Endure (executables in `skills/<name>/`); `"operator"` for system-control skills invokable exclusively by the Operator Channel (executables in `skills/lib/`); `"builtin"` and `"custom"` skills are included in the `[SKILLS INDEX]` context block; `"operator"` skills are excluded |
+| `skills[].class` | string | `"custom"` for skills installed via Endure (executables in `skills/<name>/`); `"operator"` for system-control skills invokable exclusively by the Operator Channel (executables in `skills/<name>/`); `"custom"` skills are included in the `[SKILLS INDEX]` context block; `"operator"` skills are excluded |
 | `aliases` | object | Map from slash command string (with leading `/`) to alias record; defines the alias dispatch table used by §12.3.2 |
 | `aliases[key].skill` | string | Target skill name; must reference a name present in `skills[]` |
 | `aliases[key].operator_only` | boolean | If `true`, this alias is rejected when issued from any source other than the interactive terminal prompt; default `false` |
 
-All eight built-in skills (§9.5) must be present in `skills[]` at every point after FAP completion.
-
 ### 3.10 Skill Manifest
 
-Each skill's `manifest.json`, located at `skills/<name>/manifest.json` (or `skills/lib/<name>/manifest.json` for built-in skills), declares the skill's identity and execution constraints. The SIL validates this file at boot during Skill Index construction; a skill that fails validation is excluded from `skills/index.json`.
+Each skill's `manifest.json`, located at `skills/<name>/manifest.json`, declares the skill's identity and execution constraints. The SIL validates this file at boot during Skill Index construction; a skill that fails validation is excluded from `skills/index.json`.
 
 ```json
 {
@@ -497,7 +488,7 @@ Each skill's `manifest.json`, located at `skills/<name>/manifest.json` (or `skil
 | Field | Type | Description |
 |---|---|---|
 | `name` | string | Skill name; must match the skill's directory name and its entry in `skills/index.json` |
-| `class` | string | `"builtin"` for skills shipped with FCP; `"custom"` for skills installed via Endure; `"operator"` for system-control skills invokable exclusively by the Operator Channel; the SIL copies this value into `skills/index.json` when building the Skill Index |
+| `class` | string | `"custom"` for skills installed via Endure; `"operator"` for system-control skills invokable exclusively by the Operator Channel; the SIL copies this value into `skills/index.json` when building the Skill Index |
 | `version` | string | Semver string |
 | `description` | string | Human-readable description of the skill's purpose |
 | `timeout_seconds` | integer | Execution timeout in seconds; monitored by the SIL skill timeout watchdog (§10.4) |
@@ -1056,28 +1047,28 @@ Worker Skills are for isolated, single-agent specialized execution. When the CPE
 
 Worker skills are declared in `skills/index.json` and authorized at boot like any other skill. SIL-invoked workers return their results directly to the SIL; CPE-invoked workers route results through `io/inbox/`.
 
-### 9.5 Built-in Skills
+### 9.5 Native Exec Tools
 
-Built-in skills are shipped with FCP and present in every entity's Skill Index from genesis. They are regular skills — declared in `skills/index.json` with `class: "builtin"`, authorized at boot, invokable by the CPE via `skill_request`, and included in the `[SKILLS INDEX]` context block. Their executables reside in `skills/lib/`.
+FCP ships eight tools hardcoded into the EXEC layer. These tools live in `exec/tools/` inside the FCP runtime — they are not declared in `skills/index.json`, not tracked by the Integrity Document, and carry no manifest. They are always available to the CPE regardless of the entity's skill configuration.
 
-| Skill | Description |
+| Tool | Description |
 |---|---|
-| `skill_create` | Stages a new skill cartridge under `/tmp/fcp-stage/<entity_id>/<name>/` for Endure installation; accepts an optional `--base <name>` parameter — when provided, EXEC copies the named skill's files from `skills/<name>/` into the staging directory, giving the CPE a pre-populated cartridge to read and modify via `file_reader` and `file_writer`; does not modify `skills/index.json` directly — the staged files become an Evolution Proposal |
+| `skill_create` | Stages a new skill cartridge under `/tmp/fcp-stage/<entity_id>/<name>/` for Endure installation; accepts an optional `--base <name>` parameter — when provided, EXEC copies the named skill's files from `skills/<name>/` into the staging directory, giving the CPE a pre-populated cartridge to read and modify via `file_read` and `file_write`; does not modify `skills/index.json` directly — the staged files become an Evolution Proposal |
 | `skill_audit` | Validates a skill's manifest, executable, and index consistency; read-only — does not modify any files |
-| `file_reader` | Reads a file within `workspace_focus`; rejects any path outside `workspace_focus` |
-| `file_writer` | Writes a file within `workspace_focus`; rejects any path outside `workspace_focus`; no file size limit beyond host disk capacity |
+| `file_read` | Reads a file within `workspace_focus`; rejects any path outside `workspace_focus` |
+| `file_write` | Writes a file within `workspace_focus`; rejects any path outside `workspace_focus`; no file size limit beyond host disk capacity |
 | `worker_skill` | Instantiates a Worker Skill sub-agent with a provided persona, context, and task |
 | `commit` | Stages and records a version-control checkpoint; requires an explicit path parameter; validates that the path is within the active workspace_focus declared in `state/workspace_focus.json`; accepts `--remote` to push to the remote configured in the workspace repository's git config (conventionally `origin`); rejects execution if workspace_focus is unset or if the path falls outside it |
-| `shell_run` | Executes a shell command within the active `workspace_focus` directory; the set of permitted commands is declared as an allowlist in the skill's manifest — the allowlist is static and immutable without an Endure cycle; rejects execution if `workspace_focus` is unset or if the requested command is not in the allowlist |
-| `web_fetch` | Fetches the content of a URL and returns it as text; the set of permitted URL prefixes is declared as an allowlist in the skill's manifest — the allowlist is static and immutable without an Endure cycle; rejects any URL not matched by the allowlist; content is delivered as chunked `SKILL_RESULT` envelopes; timeout is declared in the manifest and enforced by the SIL watchdog (§10.4) |
+| `shell_run` | Executes a shell command within the active `workspace_focus` directory; the set of permitted commands is a static allowlist hardcoded in the EXEC layer — immutable without a runtime update; rejects execution if `workspace_focus` is unset or if the requested command is not in the allowlist |
+| `web_fetch` | Fetches the content of a URL and returns it as text; blocks loopback and RFC-1918 addresses; content is delivered as chunked `SKILL_RESULT` envelopes; timeout enforced by the SIL watchdog (§10.4) |
 
-`skill_audit` has three invocation paths: CPE dispatches it via `skill_request` to validate skills under development; the SIL invokes it as a read-only Worker Skill for `SEVERANCE_PENDING` resolution (§10.8); and the Operator invokes it via the `/skill audit` platform command (§12.3).
+`skill_audit` has three invocation paths: CPE dispatches it via `skill_request` to validate skills under development; the SIL invokes it as a read-only operation for `SEVERANCE_PENDING` resolution (§10.8); and the Operator invokes it via the `/skill audit` platform command (§12.3).
 
 ### 9.6 Operator Skills
 
 Operator skills are system-control capabilities invokable exclusively by the Operator. They carry `class: "operator"` in `skills/index.json` and are excluded from the `[SKILLS INDEX]` context block — the CPE has no awareness of their existence. The EXEC rejects any `skill_request` referencing an operator-class skill regardless of origin.
 
-Operator skills are dispatched directly by the Operator Channel (§10.6). Their executables reside in `skills/lib/` alongside built-in executables.
+Operator skills are dispatched directly by the Operator Channel (§10.6). Their executables reside in `skills/<name>/` alongside custom skills.
 
 The slash commands defined in §12.3 are the interactive surface over operator skills and FCP internal operations. Some platform commands map directly to operator skill invocations; others execute FCP logic internally without dispatching a skill.
 
@@ -1099,7 +1090,7 @@ Recursion is structurally prohibited. FCP sets a hook-execution guard before inv
 
 ### 9.8 Session Approval Model
 
-The static allowlists in skill manifests (§9.5) define which commands or URLs a skill is permitted to invoke — they do not gate whether the Operator authorizes the skill to run at all within the current session. FCP provides a three-tier runtime approval system layered above the static manifest gates.
+The static allowlists in native exec tool implementations (§9.5) and custom skill manifests define which commands or URLs a tool or skill is permitted to invoke — they do not gate whether the Operator authorizes the skill to run at all within the current session. FCP provides a three-tier runtime approval system layered above the static manifest gates.
 
 **Approval tiers:**
 
@@ -1416,7 +1407,7 @@ A deployment is FCP-compliant if and only if it satisfies all requirements below
 
 **Entity Layout**
 - [ ] Entity root contains `boot.md`, `persona/`, `skills/`, `hooks/`, `io/`, `memory/`, `state/` as defined in §2.1; skill staging lives outside entity root at `/tmp/fcp-stage/<entity_id>/`.
-- [ ] `skills/lib/` contains built-in and operator skill executables; operator-class skills are excluded from the `[SKILLS INDEX]` context block; built-in and custom skills are included.
+- [ ] `skills/<name>/` contains custom and operator skill executables; operator-class skills are excluded from the `[SKILLS INDEX]` context block; custom skills are included.
 - [ ] `memory/imprint.json` is present after FAP and never modified thereafter.
 - [ ] `state/integrity_chain.jsonl` is append-only and never compacted or deleted.
 - [ ] `state/sentinels/session.token` is written, revoked, and removed exclusively by the SIL.
@@ -1479,7 +1470,7 @@ A deployment is FCP-compliant if and only if it satisfies all requirements below
 - [ ] CPE-invoked Worker Skills receive all three fields: persona, context, and task.
 - [ ] SIL-invoked Worker Skills are read-only; Action Ledger (§9.3) does not apply.
 - [ ] `SEVERANCE_COMMIT` notification written to `state/operator_notifications/` immediately; unacknowledged at session close escalates to `SEVERANCE_PENDING` Critical condition; resolved at Phase 6 via dual-gate: Operator acknowledges + SIL invokes `skill_audit` Worker Skill to confirm index integrity.
-- [ ] Built-in skills (`skill_create`, `skill_audit`, `file_reader`, `file_writer`, `worker_skill`, `commit`) present in Skill Index from genesis; executables in `skills/lib/`.
+- [ ] Native exec tools (`skill_create`, `skill_audit`, `file_read`, `file_write`, `worker_skill`, `commit`, `shell_run`, `web_fetch`) are hardcoded in the EXEC layer; they require no entry in `skills/index.json` and are always available to the CPE.
 - [ ] `commit` skill requires an explicit path parameter; validates path is within the workspace_focus declared in `state/workspace_focus.json`; rejects if workspace_focus is unset or if the path falls outside it.
 - [ ] `file_reader` and `file_writer` operate exclusively within `workspace_focus`; requests targeting any path outside `workspace_focus` are rejected.
 - [ ] `skill_create` with `--base <name>` clones an existing skill's files from `skills/<name>/` into `/tmp/fcp-stage/<entity_id>/<name>/`; the clone is deleted by the SIL after Endure promotion.

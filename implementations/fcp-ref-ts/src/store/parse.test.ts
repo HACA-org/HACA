@@ -166,7 +166,7 @@ describe('store/parse', () => {
   describe('parseSkillManifest', () => {
     it('accepts manifest with null ttl_seconds when background=false', () => {
       const m = {
-        name: 'shell_run', class: 'builtin', version: '1.0.0',
+        name: 'shell_run', class: 'custom', version: '1.0.0',
         description: 'runs shell commands', timeout_seconds: 30,
         background: false, ttl_seconds: null, permissions: [], dependencies: [],
       }
