@@ -208,16 +208,22 @@ describe('store/parse', () => {
   })
 
   describe('parseAllowlistData', () => {
-    it('accepts record of true values', () => {
-      expect(() => parseAllowlistData({ fcp_file_read: true, fcp_shell_run: true })).not.toThrow()
+    it('accepts valid 3-namespace structure', () => {
+      expect(() => parseAllowlistData({
+        commands: ['ls', 'echo'], domains: ['example.com'], skills: ['my_skill'],
+      })).not.toThrow()
     })
 
-    it('accepts empty record', () => {
-      expect(() => parseAllowlistData({})).not.toThrow()
+    it('accepts empty arrays', () => {
+      expect(() => parseAllowlistData({ commands: [], domains: [], skills: [] })).not.toThrow()
     })
 
-    it('rejects non-true values', () => {
-      expect(() => parseAllowlistData({ fcp_file_read: false })).toThrow(ParseError)
+    it('rejects old flat record format', () => {
+      expect(() => parseAllowlistData({ fcp_file_read: true })).toThrow(ParseError)
+    })
+
+    it('rejects missing namespaces', () => {
+      expect(() => parseAllowlistData({ commands: ['ls'] })).toThrow(ParseError)
     })
 
     it('rejects non-object', () => {

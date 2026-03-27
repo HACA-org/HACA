@@ -6,24 +6,39 @@ export type ToolResult =
   | { ok: true;  output: string }
   | { ok: false; error: string }
 
-export interface ExecContext {
-  readonly layout:    Layout
-  readonly baseline:  Baseline
-  readonly logger:    Logger
-  readonly sessionId: string
+// Minimal IO surface needed by exec tools for approval gating.
+// Structural subset of SessionIO — avoids circular import with session.ts.
+export interface GateIO {
+  prompt(): Promise<string>
+  write(text: string): void
 }
 
-// A ToolHandler is a pure, stateless handler for one named skill.
+// Three-namespace allowlist policy (§9.8).
+// Backed by state/allowlist.json; mutable during session via add* methods.
+export interface AllowlistPolicy {
+  readonly commands: string[]
+  readonly domains:  string[]
+  readonly skills:   string[]
+  addCommand(cmd: string,    tier: 'session' | 'persistent'): Promise<void>
+  addDomain(domain: string,  tier: 'session' | 'persistent'): Promise<void>
+  addSkill(skill: string,    tier: 'session' | 'persistent'): Promise<void>
+}
+
+export interface ExecContext {
+  readonly layout:         Layout
+  readonly baseline:       Baseline
+  readonly logger:         Logger
+  readonly sessionId:      string
+  readonly policy:         AllowlistPolicy
+  readonly io:             GateIO
+  readonly firstWriteDone: { value: boolean }
+}
+
+// A ToolHandler is a pure, stateless handler for one named tool.
 // It receives raw params (validated internally) and returns a ToolResult.
 export interface ToolHandler {
   readonly name: string
   execute(params: unknown, ctx: ExecContext): Promise<ToolResult>
-}
-
-// Three-tier session approval policy (§9.8).
-export interface AllowlistPolicy {
-  isAllowed(skillName: string): boolean
-  grant(skillName: string, tier: 'session' | 'persistent'): Promise<void>
 }
 
 export class ExecError extends Error {

@@ -17,6 +17,21 @@ import { approveProposal, runEndureProtocol } from './endure.js'
 import { evolutionProposalHandler } from './tools/evolution-proposal.js'
 import { runDriftEvaluation } from './drift.js'
 import type { HeartbeatContext } from '../types/sil.js'
+import type { ExecContext } from '../types/exec.js'
+
+// Minimal ExecContext stub for SIL tool tests — policy/io/firstWriteDone unused by SIL tools.
+function makeSilExecCtx(layout: ReturnType<typeof createLayout>, logger: ReturnType<typeof createLogger>): ExecContext {
+  return {
+    layout,
+    baseline: {} as Baseline,
+    logger,
+    sessionId: 'test',
+    policy: { commands: [], domains: [], skills: [],
+      async addCommand() {}, async addDomain() {}, async addSkill() {} },
+    io: { async prompt() { return '' }, write() {} },
+    firstWriteDone: { value: false },
+  }
+}
 
 let tmpDir: string
 
@@ -269,10 +284,10 @@ describe('SIL — endure', () => {
     const layout = createLayout(tmpDir)
     await fs.mkdir(layout.state.dir, { recursive: true })
     const logger = createLogger({ test: true })
-    const execCtx = { layout, baseline: {} as Baseline, logger, sessionId: 'test' }
+    const execCtx = makeSilExecCtx(layout, logger)
     const result = await evolutionProposalHandler.execute({ content: 'install skill foo' }, execCtx)
     expect(result.ok).toBe(true)
-    expect(result.output).toMatch(/id:/)
+    if (result.ok) expect(result.output).toMatch(/id:/)
     const data = JSON.parse(await fs.readFile(layout.state.pendingProposals, 'utf8'))
     expect(data.proposals).toHaveLength(1)
     expect(data.proposals[0].digest).toMatch(/^sha256:/)
@@ -282,9 +297,10 @@ describe('SIL — endure', () => {
     const layout = createLayout(tmpDir)
     await fs.mkdir(layout.state.dir, { recursive: true })
     const logger = createLogger({ test: true })
-    const execCtx = { layout, baseline: {} as Baseline, logger, sessionId: 'test' }
+    const execCtx = makeSilExecCtx(layout, logger)
     const result = await evolutionProposalHandler.execute({ content: 'some change' }, execCtx)
-    const id = (result.output as string).match(/id: (.+)/)![1]!
+    if (!result.ok) throw new Error(result.error)
+    const id = result.output.match(/id: (.+)/)![1]!
     const ok = await approveProposal(layout, id)
     expect(ok).toBe(true)
   })
@@ -302,9 +318,10 @@ describe('SIL — endure', () => {
     await fs.writeFile(layout.bootMd, '# boot', 'utf8')
     await fs.writeFile(layout.state.baseline, JSON.stringify({ version: '1.0' }), 'utf8')
     const logger = createLogger({ test: true })
-    const execCtx = { layout, baseline: {} as Baseline, logger, sessionId: 'test' }
+    const execCtx = makeSilExecCtx(layout, logger)
     const result = await evolutionProposalHandler.execute({ content: 'evolve something' }, execCtx)
-    const id = (result.output as string).match(/id: (.+)/)![1]!
+    if (!result.ok) throw new Error(result.error)
+    const id = result.output.match(/id: (.+)/)![1]!
     await approveProposal(layout, id)
     await runEndureProtocol(layout, logger)
 

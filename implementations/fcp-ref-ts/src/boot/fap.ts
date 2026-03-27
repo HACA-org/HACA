@@ -38,6 +38,20 @@ export async function runFAP(opts: FAPOptions): Promise<FAPResult> {
     // At FAP time there are no custom skills yet; the index starts empty.
     await ensureDir(layout.skills.dir)
     await track(layout.skills.index, { version: '1.0', skills: [], aliases: {} })
+
+    // Pre-populate allowlist with safe read-only commands.
+    // Excludes: cat (duplicates fcp_file_read), git (potentially destructive),
+    // rm/mv/cp/mkdir/touch (conflict with fcp_file_write).
+    await ensureDir(layout.state.dir)
+    await track(layout.state.allowlist, {
+      commands: [
+        'ls', 'find', 'wc', 'grep', 'head', 'tail', 'echo', 'pwd', 'date',
+        'env', 'printenv', 'uname', 'which', 'stat', 'file', 'diff', 'sort',
+        'uniq', 'tr', 'cut', 'awk', 'sed', 'jq',
+      ],
+      domains: [],
+      skills:  [],
+    })
     log.info('fap:step1:ok', { skills: 0 })
 
     // ── Step 2: Host Environment Capture ───────────────────────────────────

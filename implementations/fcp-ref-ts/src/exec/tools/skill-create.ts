@@ -3,6 +3,7 @@
 import * as path from 'node:path'
 import { fileExists, readJson, writeJson, ensureDir, atomicWrite } from '../../store/io.js'
 import { SkillIndexSchema, SkillManifestSchema } from '../../types/formats/skills.js'
+import { resolveToolApproval } from '../../session/approval.js'
 import type { SkillIndex, SkillManifest } from '../../types/formats/skills.js'
 import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
 
@@ -37,6 +38,16 @@ export const skillCreateHandler: ToolHandler = {
     if (!/^[a-z][a-z0-9_-]*$/.test(parsed.name)) {
       return { ok: false, error: 'name must be lowercase alphanumeric with _ or - separators' }
     }
+
+    // Gate: always ask for skill creation
+    const decision = await resolveToolApproval(
+      `Create new skill: ${parsed.name}`,
+      'once-session-allowlist-deny',
+      ctx.io,
+    )
+    if (!decision.granted) return { ok: false, error: 'Denied by operator.' }
+    if (decision.tier === 'session')    await ctx.policy.addSkill(parsed.name, 'session')
+    if (decision.tier === 'persistent') await ctx.policy.addSkill(parsed.name, 'persistent')
 
     const skillDir      = path.join(ctx.layout.skills.dir, parsed.name)
     const manifestPath  = path.join(skillDir, 'manifest.json')

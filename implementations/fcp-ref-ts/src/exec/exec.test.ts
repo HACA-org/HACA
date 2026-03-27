@@ -1,5 +1,5 @@
 // EXEC unit tests — registry, dispatch, allowlist, and all tool handlers.
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as os from 'node:os'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
@@ -15,7 +15,7 @@ import { shellRunHandler }     from './tools/shell-run.js'
 import { agentRunHandler }     from './tools/agent-run.js'
 import { skillCreateHandler }  from './tools/skill-create.js'
 import { skillAuditHandler }   from './tools/skill-audit.js'
-import type { ExecContext }    from '../types/exec.js'
+import type { ExecContext, AllowlistPolicy, GateIO } from '../types/exec.js'
 import type { ToolUseBlock }   from '../types/cpe.js'
 
 let tmpDir:   string
@@ -38,7 +38,40 @@ afterEach(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true })
 })
 
-function makeCtx(): ExecContext {
+// Stub policy — pre-populated with safe shell commands, empty domains/skills.
+function makePolicy(
+  commands: string[] = ['ls', 'echo', 'grep', 'find', 'wc', 'head', 'tail'],
+  domains: string[] = [],
+  skills: string[] = [],
+): AllowlistPolicy {
+  const cmds = new Set(commands)
+  const doms = new Set(domains)
+  const skls = new Set(skills)
+  return {
+    get commands() { return [...cmds] },
+    get domains()  { return [...doms] },
+    get skills()   { return [...skls] },
+    async addCommand(cmd, _tier) { cmds.add(cmd) },
+    async addDomain(d, _tier)   { doms.add(d) },
+    async addSkill(s, _tier)    { skls.add(s) },
+  }
+}
+
+// Stub IO — auto-approves with 'o' (once) by default; override prompt for specific tests.
+function makeIO(answer = 'o'): GateIO & { writes: string[] } {
+  const writes: string[] = []
+  return {
+    writes,
+    async prompt() { return answer },
+    write(text) { writes.push(text) },
+  }
+}
+
+function makeCtx(opts: {
+  policy?: AllowlistPolicy
+  io?: GateIO
+  firstWriteDone?: { value: boolean }
+} = {}): ExecContext {
   const layout  = createLayout(tmpDir)
   const logger  = createLogger({ test: true })
   const baseline = {
@@ -56,7 +89,15 @@ function makeCtx(): ExecContext {
     operatorChannel:  { notificationsDir: 'state/operator-notifications' },
     fault:            { nBoot: 3, nChannel: 3, nRetry: 3 },
   } as import('../types/formats/baseline.js').Baseline
-  return { layout, baseline, logger, sessionId: 'test-session-id' }
+  return {
+    layout,
+    baseline,
+    logger,
+    sessionId:      'test-session-id',
+    policy:         opts.policy ?? makePolicy(),
+    io:             opts.io     ?? makeIO(),
+    firstWriteDone: opts.firstWriteDone ?? { value: false },
+  }
 }
 
 // ─── Registry ───────────────────────────────────────────────────────────────
@@ -107,62 +148,81 @@ describe('EXEC — dispatch', () => {
 // ─── Allowlist ───────────────────────────────────────────────────────────────
 
 describe('EXEC — allowlist', () => {
-  it('isAllowed returns false for new skill', async () => {
-    const ctx    = makeCtx()
-    const policy = await loadAllowlistPolicy(ctx.layout)
-    expect(policy.isAllowed('my_skill')).toBe(false)
+  it('commands not in file return empty list on fresh load', async () => {
+    const layout = createLayout(tmpDir)
+    const policy = await loadAllowlistPolicy(layout)
+    expect(policy.commands).toHaveLength(0)
+    expect(policy.domains).toHaveLength(0)
+    expect(policy.skills).toHaveLength(0)
   })
 
-  it('session grant is reflected in isAllowed', async () => {
-    const ctx    = makeCtx()
-    const policy = await loadAllowlistPolicy(ctx.layout)
-    await policy.grant('my_skill', 'session')
-    expect(policy.isAllowed('my_skill')).toBe(true)
+  it('addCommand session reflects in commands list', async () => {
+    const layout = createLayout(tmpDir)
+    const policy = await loadAllowlistPolicy(layout)
+    await policy.addCommand('git', 'session')
+    expect(policy.commands).toContain('git')
   })
 
-  it('persistent grant writes allowlist.json', async () => {
-    const ctx    = makeCtx()
-    await fs.mkdir(ctx.layout.state.dir, { recursive: true })
-    const policy = await loadAllowlistPolicy(ctx.layout)
-    await policy.grant('my_skill', 'persistent')
-    const raw  = JSON.parse(await fs.readFile(ctx.layout.state.allowlist, 'utf8')) as Record<string, unknown>
-    expect(raw['my_skill']).toBe(true)
+  it('addDomain persistent writes allowlist.json', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    const policy = await loadAllowlistPolicy(layout)
+    await policy.addDomain('api.example.com', 'persistent')
+    const raw = JSON.parse(await fs.readFile(layout.state.allowlist, 'utf8')) as {
+      domains: string[]
+    }
+    expect(raw.domains).toContain('api.example.com')
   })
 
-  it('loads existing persistent allowlist on startup', async () => {
-    const ctx = makeCtx()
-    await fs.mkdir(ctx.layout.state.dir, { recursive: true })
-    await fs.writeFile(ctx.layout.state.allowlist, JSON.stringify({ pre_loaded: true }), 'utf8')
-    const policy = await loadAllowlistPolicy(ctx.layout)
-    expect(policy.isAllowed('pre_loaded')).toBe(true)
+  it('loads existing allowlist.json on startup', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    await fs.writeFile(layout.state.allowlist, JSON.stringify({
+      commands: ['git'], domains: ['github.com'], skills: ['my_skill'],
+    }), 'utf8')
+    const policy = await loadAllowlistPolicy(layout)
+    expect(policy.commands).toContain('git')
+    expect(policy.domains).toContain('github.com')
+    expect(policy.skills).toContain('my_skill')
   })
 
-  it('starts with empty grants when allowlist.json is malformed', async () => {
-    const ctx = makeCtx()
-    await fs.mkdir(ctx.layout.state.dir, { recursive: true })
-    await fs.writeFile(ctx.layout.state.allowlist, 'not-valid-json{{{', 'utf8')
-    const policy = await loadAllowlistPolicy(ctx.layout)
-    expect(policy.isAllowed('any_skill')).toBe(false)
+  it('starts empty when allowlist.json is malformed', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    await fs.writeFile(layout.state.allowlist, 'not-valid-json{{{', 'utf8')
+    const policy = await loadAllowlistPolicy(layout)
+    expect(policy.commands).toHaveLength(0)
   })
 })
 
 // ─── fcp_file_read ────────────────────────────────────────────────────────────
 
 describe('EXEC — fcp_file_read', () => {
-  it('reads file content', async () => {
-    const ctx  = makeCtx()
+  it('reads file inside workspace without prompting', async () => {
+    const io  = makeIO()
+    const ctx = makeCtx({ io })
     const file = path.join(workspace, 'test.txt')
     await fs.writeFile(file, 'test content', 'utf8')
     const r = await fileReadHandler.execute({ path: file }, ctx)
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.output).toBe('test content')
+    expect(io.writes).toHaveLength(0)  // no gate prompt
   })
 
-  it('rejects path outside workspace', async () => {
-    const ctx = makeCtx()
+  it('prompts operator when path is outside workspace — approved once', async () => {
+    const outside = path.join(tmpDir, 'outside.txt')
+    await fs.writeFile(outside, 'secret', 'utf8')
+    const ctx = makeCtx({ io: makeIO('o') })
+    const r = await fileReadHandler.execute({ path: outside }, ctx)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.output).toBe('secret')
+  })
+
+  it('denies read outside workspace when operator says deny', async () => {
+    const ctx = makeCtx({ io: makeIO('d') })
     const r   = await fileReadHandler.execute({ path: path.join(tmpDir, 'outside.txt') }, ctx)
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).toMatch(/outside workspace/)
+    if (!r.ok) expect(r.error).toMatch(/[Dd]enied/)
   })
 
   it('returns error for missing path param', async () => {
@@ -181,26 +241,53 @@ describe('EXEC — fcp_file_read', () => {
 // ─── fcp_file_write ───────────────────────────────────────────────────────────
 
 describe('EXEC — fcp_file_write', () => {
-  it('writes file and returns ok', async () => {
-    const ctx  = makeCtx()
+  it('prompts on first write inside workspace — session approval skips subsequent writes', async () => {
+    const io  = makeIO('s')  // 'session' → mark firstWriteDone
+    const firstWriteDone = { value: false }
+    const ctx = makeCtx({ io, firstWriteDone })
+
     const file = path.join(workspace, 'out.txt')
-    const r    = await fileWriteHandler.execute({ path: file, content: 'hello' }, ctx)
+    const r1 = await fileWriteHandler.execute({ path: file, content: 'first' }, ctx)
+    expect(r1.ok).toBe(true)
+    expect(io.writes.length).toBeGreaterThan(0)
+
+    // Second write: firstWriteDone is true, no prompt
+    const writes1 = io.writes.length
+    const r2 = await fileWriteHandler.execute({ path: file, content: 'second' }, ctx)
+    expect(r2.ok).toBe(true)
+    expect(io.writes.length).toBe(writes1)  // no new prompt
+  })
+
+  it('prompts on first write — once approval asks again on next write', async () => {
+    const io  = makeIO('o')  // 'once' → don't mark firstWriteDone
+    const firstWriteDone = { value: false }
+    const ctx = makeCtx({ io, firstWriteDone })
+
+    const file = path.join(workspace, 'out.txt')
+    await fileWriteHandler.execute({ path: file, content: 'first' }, ctx)
+    const writes1 = io.writes.length
+    await fileWriteHandler.execute({ path: file, content: 'second' }, ctx)
+    expect(io.writes.length).toBeGreaterThan(writes1)  // prompted again
+  })
+
+  it('prompts when writing outside workspace — denied', async () => {
+    const ctx = makeCtx({ io: makeIO('d') })
+    const r   = await fileWriteHandler.execute({ path: path.join(tmpDir, 'out.txt'), content: 'bad' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/[Dd]enied/)
+  })
+
+  it('prompts when writing outside workspace — approved once', async () => {
+    const ctx = makeCtx({ io: makeIO('o') })
+    const r   = await fileWriteHandler.execute({ path: path.join(tmpDir, 'out.txt'), content: 'ok' }, ctx)
     expect(r.ok).toBe(true)
-    expect(await fs.readFile(file, 'utf8')).toBe('hello')
   })
 
   it('creates intermediate directories', async () => {
-    const ctx  = makeCtx()
+    const ctx  = makeCtx({ io: makeIO('s') })
     const file = path.join(workspace, 'deep', 'dir', 'out.txt')
     const r    = await fileWriteHandler.execute({ path: file, content: 'nested' }, ctx)
     expect(r.ok).toBe(true)
-  })
-
-  it('rejects path outside workspace', async () => {
-    const ctx = makeCtx()
-    const r   = await fileWriteHandler.execute({ path: path.join(tmpDir, 'out.txt'), content: 'bad' }, ctx)
-    expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).toMatch(/outside workspace/)
   })
 
   it('returns error for missing params', async () => {
@@ -227,53 +314,73 @@ describe('EXEC — fcp_web_fetch', () => {
     if (!r.ok) expect(r.error).toMatch(/http/)
   })
 
-  it('blocks loopback address', async () => {
-    const ctx = makeCtx()
+  it('blocks loopback address — hard error, no gate', async () => {
+    const io  = makeIO('d')  // if gate fires, it would deny — but it shouldn't fire
+    const ctx = makeCtx({ io })
     const r   = await webFetchHandler.execute({ url: 'http://127.0.0.1/secret' }, ctx)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/blocked/)
+    expect(io.writes).toHaveLength(0)  // no gate prompt
   })
 
-  it('blocks localhost', async () => {
+  it('blocks localhost — hard error', async () => {
     const ctx = makeCtx()
     const r   = await webFetchHandler.execute({ url: 'http://localhost/secret' }, ctx)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/blocked/)
   })
 
-  it('blocks private RFC-1918 address', async () => {
+  it('blocks private RFC-1918 192.168.x', async () => {
     const ctx = makeCtx()
     const r   = await webFetchHandler.execute({ url: 'http://192.168.1.100/internal' }, ctx)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/blocked/)
   })
 
-  it('blocks 10.x RFC-1918 address', async () => {
+  it('blocks 10.x RFC-1918', async () => {
     const ctx = makeCtx()
     const r   = await webFetchHandler.execute({ url: 'http://10.0.0.1/internal' }, ctx)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/blocked/)
   })
 
-  it('blocks 172.16.x RFC-1918 address', async () => {
+  it('blocks 172.16.x RFC-1918', async () => {
     const ctx = makeCtx()
     const r   = await webFetchHandler.execute({ url: 'http://172.16.0.1/internal' }, ctx)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/blocked/)
   })
 
-  it('blocks 172.31.x RFC-1918 address', async () => {
+  it('blocks 172.31.x RFC-1918', async () => {
     const ctx = makeCtx()
     const r   = await webFetchHandler.execute({ url: 'http://172.31.255.254/internal' }, ctx)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/blocked/)
   })
 
-  it('blocks IPv6 loopback', async () => {
+  it('blocks IPv6 loopback — hard error', async () => {
     const ctx = makeCtx()
     const r   = await webFetchHandler.execute({ url: 'http://[::1]/secret' }, ctx)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/blocked/)
+  })
+
+  it('prompts operator when domain not in allowlist — denied', async () => {
+    const ctx = makeCtx({ io: makeIO('d') })
+    const r   = await webFetchHandler.execute({ url: 'https://example.com/data' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/[Dd]enied/)
+  })
+
+  it('skips gate when domain is in allowlist', async () => {
+    const io     = makeIO('d')  // if gate fires, it would deny
+    const policy = makePolicy([], ['example.com'])
+    const ctx    = makeCtx({ io, policy })
+    // Domain is allowlisted — gate should not fire; fetch proceeds (will fail with network error in test)
+    const r = await webFetchHandler.execute({ url: 'https://example.com/data' }, ctx)
+    expect(io.writes).toHaveLength(0)  // no gate prompt shown
+    // Result may be ok or error depending on network, but it was not denied by gate
+    if (!r.ok) expect(r.error).not.toMatch(/[Dd]enied/)
   })
 })
 
@@ -286,22 +393,38 @@ describe('EXEC — fcp_shell_run', () => {
     expect(r.ok).toBe(false)
   })
 
-  it('rejects disallowed command', async () => {
-    const ctx = makeCtx()
+  it('runs command in allowlist without prompting', async () => {
+    const io  = makeIO('d')  // if gate fires, it would deny
+    const ctx = makeCtx({ io, policy: makePolicy(['echo']) })
+    const r   = await shellRunHandler.execute({ cmd: 'echo', args: ['hello'] }, ctx)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.output).toContain('hello')
+    expect(io.writes).toHaveLength(0)  // no gate prompt
+  })
+
+  it('prompts when command not in allowlist — approved once', async () => {
+    const ctx = makeCtx({ io: makeIO('o'), policy: makePolicy([]) })
+    const r   = await shellRunHandler.execute({ cmd: 'echo', args: ['hello'] }, ctx)
+    expect(r.ok).toBe(true)
+  })
+
+  it('prompts when command not in allowlist — denied', async () => {
+    const ctx = makeCtx({ io: makeIO('d'), policy: makePolicy([]) })
     const r   = await shellRunHandler.execute({ cmd: 'rm', args: ['-rf', '/'] }, ctx)
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).toMatch(/allowlist/)
+    if (!r.ok) expect(r.error).toMatch(/[Dd]enied/)
   })
 
-  it('runs whitelisted command', async () => {
-    const ctx = makeCtx()
-    const r   = await shellRunHandler.execute({ cmd: 'echo', args: ['hello', 'world'] }, ctx)
-    expect(r.ok).toBe(true)
-    if (r.ok) expect(r.output).toContain('hello world')
+  it('add-to-allowlist persists command in policy', async () => {
+    const policy = makePolicy([])
+    const ctx    = makeCtx({ io: makeIO('a'), policy })
+    await shellRunHandler.execute({ cmd: 'echo', args: ['hi'] }, ctx)
+    expect(policy.commands).toContain('echo')
   })
 
-  it('rejects cwd outside workspace', async () => {
-    const ctx = makeCtx()
+  it('rejects cwd outside workspace — hard error, no gate', async () => {
+    const io  = makeIO('o')
+    const ctx = makeCtx({ io })
     const r   = await shellRunHandler.execute({ cmd: 'ls', args: [], cwd: tmpDir }, ctx)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/outside workspace/)
@@ -311,15 +434,35 @@ describe('EXEC — fcp_shell_run', () => {
 // ─── fcp_agent_run ───────────────────────────────────────────────────────────
 
 describe('EXEC — fcp_agent_run', () => {
-  it('returns error when skill index missing', async () => {
+  it('requires skill param', async () => {
     const ctx = makeCtx()
+    const r   = await agentRunHandler.execute({}, ctx)
+    expect(r.ok).toBe(false)
+  })
+
+  it('rejects invalid skill name format before gate', async () => {
+    const ctx = makeCtx()
+    const r   = await agentRunHandler.execute({ skill: 'INVALID SKILL' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/invalid skill name/)
+  })
+
+  it('denies when operator says deny', async () => {
+    const ctx = makeCtx({ io: makeIO('d') })
+    const r   = await agentRunHandler.execute({ skill: 'my_skill' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/[Dd]enied/)
+  })
+
+  it('returns error when skill index missing — after gate approval', async () => {
+    const ctx = makeCtx({ io: makeIO('o') })
     const r   = await agentRunHandler.execute({ skill: 'my_skill' }, ctx)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/index.json/)
   })
 
   it('returns error when skill not in index', async () => {
-    const ctx = makeCtx()
+    const ctx = makeCtx({ io: makeIO('o') })
     await fs.mkdir(ctx.layout.skills.dir, { recursive: true })
     await fs.writeFile(ctx.layout.skills.index,
       JSON.stringify({ version: '1.0', skills: [], aliases: {} }), 'utf8')
@@ -327,46 +470,38 @@ describe('EXEC — fcp_agent_run', () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/not found/)
   })
-
-  it('rejects invalid skill name format', async () => {
-    const ctx = makeCtx()
-    const r   = await agentRunHandler.execute({ skill: 'INVALID SKILL' }, ctx)
-    expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).toMatch(/invalid skill name/)
-  })
-
-  it('requires skill param', async () => {
-    const ctx = makeCtx()
-    const r   = await agentRunHandler.execute({}, ctx)
-    expect(r.ok).toBe(false)
-  })
 })
 
 // ─── fcp_skill_create ────────────────────────────────────────────────────────
 
 describe('EXEC — fcp_skill_create', () => {
   it('creates skill scaffold and registers in index', async () => {
-    const ctx = makeCtx()
+    const ctx = makeCtx({ io: makeIO('o') })
     await fs.mkdir(ctx.layout.skills.dir, { recursive: true })
     const r = await skillCreateHandler.execute(
       { name: 'my_tool', description: 'A test skill' }, ctx)
     expect(r.ok).toBe(true)
 
-    // Verify directory and files
     const skillDir = path.join(ctx.layout.skills.dir, 'my_tool')
     await expect(fs.access(skillDir)).resolves.toBeUndefined()
     await expect(fs.access(path.join(skillDir, 'manifest.json'))).resolves.toBeUndefined()
     await expect(fs.access(path.join(skillDir, 'run.js'))).resolves.toBeUndefined()
 
-    // Verify index entry
     const index = JSON.parse(await fs.readFile(ctx.layout.skills.index, 'utf8')) as {
       skills: Array<{ name: string }>
     }
     expect(index.skills.some(s => s.name === 'my_tool')).toBe(true)
   })
 
-  it('rejects invalid name format', async () => {
-    const ctx = makeCtx()
+  it('denied by operator', async () => {
+    const ctx = makeCtx({ io: makeIO('d') })
+    const r   = await skillCreateHandler.execute({ name: 'my_tool', description: 'test' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/[Dd]enied/)
+  })
+
+  it('rejects invalid name format before gate', async () => {
+    const ctx = makeCtx({ io: makeIO('d') })
     const r   = await skillCreateHandler.execute(
       { name: 'Bad Name!', description: 'test' }, ctx)
     expect(r.ok).toBe(false)
@@ -379,8 +514,8 @@ describe('EXEC — fcp_skill_create', () => {
     expect(r.ok).toBe(false)
   })
 
-  it('refuses to overwrite existing skill', async () => {
-    const ctx = makeCtx()
+  it('refuses to overwrite existing skill — after gate', async () => {
+    const ctx = makeCtx({ io: makeIO('o') })
     await fs.mkdir(path.join(ctx.layout.skills.dir, 'my_tool'), { recursive: true })
     const r = await skillCreateHandler.execute(
       { name: 'my_tool', description: 'dupe' }, ctx)

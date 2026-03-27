@@ -1,7 +1,9 @@
 // fcp_file_read — read a file from disk within workspace_focus.
+// Gate: asks operator only if the path is outside the workspace.
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { resolveWorkspace, checkInsideWorkspace } from '../workspace.js'
+import { resolveToolApproval } from '../../session/approval.js'
 import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
 
 const MAX_BYTES = 512 * 1024  // 512 KB
@@ -24,8 +26,16 @@ export const fileReadHandler: ToolHandler = {
     if (!workspace) return { ok: false, error: 'workspace_focus is not set' }
 
     const abs = path.isAbsolute(filePath) ? filePath : path.join(workspace, filePath)
-    const err = checkInsideWorkspace(abs, workspace)
-    if (err) return { ok: false, error: err }
+    const outsideWorkspace = checkInsideWorkspace(abs, workspace) !== null
+
+    if (outsideWorkspace) {
+      const decision = await resolveToolApproval(
+        `Read file outside workspace: ${abs}`,
+        'once-session-deny',
+        ctx.io,
+      )
+      if (!decision.granted) return { ok: false, error: 'Denied by operator.' }
+    }
 
     try {
       const buf = await fs.readFile(abs)

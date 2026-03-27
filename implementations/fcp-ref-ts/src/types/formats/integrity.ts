@@ -59,7 +59,11 @@ export const IntegrityChainEntrySchema = z.discriminatedUnion('type', [
   ChainModelChangeSchema,
 ])
 
-export const AllowlistDataSchema = z.record(z.string(), z.literal(true))
+export const AllowlistDataSchema = z.object({
+  commands: z.array(z.string()),
+  domains:  z.array(z.string()),
+  skills:   z.array(z.string()),
+})
 
 export type IntegrityDocument   = z.infer<typeof IntegrityDocumentSchema>
 export type ChainGenesis         = z.infer<typeof ChainGenesisSchema>

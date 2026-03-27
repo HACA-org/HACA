@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process'
 import * as path from 'node:path'
 import { fileExists, readJson } from '../../store/io.js'
 import { SkillIndexSchema } from '../../types/formats/skills.js'
+import { resolveToolApproval } from '../../session/approval.js'
 import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
 
 const DEFAULT_TIMEOUT_MS = 30_000
@@ -31,6 +32,14 @@ export const agentRunHandler: ToolHandler = {
     if (!/^[a-z][a-z0-9_-]*$/.test(parsed.skill)) {
       return { ok: false, error: 'invalid skill name format' }
     }
+
+    // Gate: always ask for agent execution (once/session/deny — no allowlist option)
+    const decision = await resolveToolApproval(
+      `Run agent skill: ${parsed.skill}`,
+      'once-session-deny',
+      ctx.io,
+    )
+    if (!decision.granted) return { ok: false, error: 'Denied by operator.' }
 
     // Load and validate skill index
     if (!await fileExists(ctx.layout.skills.index)) {

@@ -7,7 +7,6 @@ import { drainInbox } from './inbox.js'
 import { buildContext } from './context.js'
 import { estimateTokens, checkBudget } from './budget.js'
 import { makeFingerprint } from './fingerprint.js'
-import { resolveToolApproval } from './approval.js'
 import { SESSION_CLOSE_SIGNAL } from '../sil/sil.js'
 import { ClosurePayloadSchema } from '../types/formats/memory.js'
 import type { SessionOptions, LoopResult, CycleState } from '../types/session.js'
@@ -20,8 +19,15 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
   const log = logger.child({ module: 'session', sessionId })
 
   const toolMap = new Map(tools.map(t => [t.name, t]))
-  const execCtx = { layout, baseline, logger, sessionId }
+  const firstWriteDone: { value: boolean } = { value: false }
+  const execCtx = { layout, baseline, logger, sessionId, policy, io, firstWriteDone }
   const { system } = await buildContext(layout)
+
+  // MIL/SIL tools bypass the operator gate — they are fundamental to system operation.
+  const MIL_SIL_TOOLS = new Set([
+    'fcp_memory_recall', 'fcp_memory_write', 'fcp_closure_payload',
+    'fcp_evolution_proposal', 'fcp_session_close',
+  ])
 
   const messages: CPEMessage[] = [...(contextMessages ?? [])]
   const fingerprints: string[] = []
@@ -105,22 +111,18 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
       let sessionCloseTriggered = false
       for (const tu of resp.toolUses) {
         io.emit({ type: 'tool_dispatch', skillName: tu.name, input: tu.input })
-        const decision = await resolveToolApproval(tu.name, tu.input, policy, io)
-        if (!decision.granted) {
-          results.push({ type: 'tool_result', tool_use_id: tu.id, content: 'Denied by operator.' })
-          io.emit({ type: 'tool_result', skillName: tu.name, result: { ok: false, error: 'denied' } })
-          continue
-        }
         const handler = toolMap.get(tu.name)
         if (!handler) {
           results.push({ type: 'tool_result', tool_use_id: tu.id, content: `Unknown tool: ${tu.name}` })
           io.emit({ type: 'tool_result', skillName: tu.name, result: { ok: false, error: 'unknown' } })
           continue
         }
+        // MIL/SIL tools bypass the operator gate — gate is owned by EXEC tool handlers.
+        const approved = MIL_SIL_TOOLS.has(tu.name) ? 'bypass' : 'exec'
         const result = await handler.execute(tu.input, execCtx)
         results.push({ type: 'tool_result', tool_use_id: tu.id, content: result.ok ? result.output : `Error: ${result.error}` })
         io.emit({ type: 'tool_result', skillName: tu.name, result })
-        await appendJsonl(layout.memory.sessionJsonl, { type: 'tool_execution', tool: tu.name, approved: decision.tier, ts: new Date().toISOString() })
+        await appendJsonl(layout.memory.sessionJsonl, { type: 'tool_execution', tool: tu.name, approved, ts: new Date().toISOString() })
         if (result.ok && result.output === SESSION_CLOSE_SIGNAL) {
           sessionCloseTriggered = true
         }

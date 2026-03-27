@@ -107,7 +107,8 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
 
   // Boot — FAP on cold start, 8-phase sequence on warm start
   const io: import('../../types/boot.js').BootIO = {
-    write: (msg) => process.stdout.write(msg + '\n'),
+    write:  (msg) => process.stdout.write(msg + '\n'),
+    prompt: (_question) => Promise.resolve(''),  // boot prompts not used in CLI run
   }
 
   // Read operator credentials from staging file (if present — set during `fcp init`)

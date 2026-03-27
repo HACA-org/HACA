@@ -1,29 +1,23 @@
-// fcp_shell_run — run a whitelisted shell command within workspace_focus.
-// Git is permitted because entity root and workspace are always separate directories.
+// fcp_shell_run — run a shell command within workspace_focus.
+// Allowed commands come from state/allowlist.json (no hardcoded list).
+// Gate: asks if command not in allowlist (once/session/add-to-allowlist/deny).
+// cwd outside workspace is a hard error — no gate.
 import * as path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { resolveWorkspace, checkInsideWorkspace } from '../workspace.js'
+import { resolveToolApproval } from '../../session/approval.js'
 import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
 
 const execFileAsync = promisify(execFile)
 
-const TIMEOUT_MS   = 10_000
+const TIMEOUT_MS    = 10_000
 const MAX_OUT_BYTES = 256 * 1024  // 256 KB
-
-// Read-only/info utilities plus git. No destructive ops, no network.
-const SAFE_COMMANDS = new Set([
-  'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'find',
-  'echo', 'pwd', 'date', 'env', 'printenv', 'uname',
-  'which', 'stat', 'file', 'diff', 'sort', 'uniq', 'tr',
-  'cut', 'awk', 'sed', 'jq',
-  'git',
-])
 
 interface ShellParams {
   cmd:  string
   args: string[]
-  cwd?: string
+  cwd:  string | undefined
 }
 
 function extractParams(params: unknown): ShellParams | null {
@@ -43,20 +37,30 @@ export const shellRunHandler: ToolHandler = {
   async execute(params: unknown, ctx: ExecContext): Promise<ToolResult> {
     const parsed = extractParams(params)
     if (!parsed) return { ok: false, error: 'cmd is required' }
-    if (!SAFE_COMMANDS.has(parsed.cmd)) {
-      return { ok: false, error: `command not in allowlist: ${parsed.cmd}` }
-    }
 
     const workspace = await resolveWorkspace(ctx)
     if (!workspace) return { ok: false, error: 'workspace_focus is not set' }
 
-    // Resolve working directory — default to workspace_focus
+    // Resolve working directory — cwd outside workspace is a hard error
     let cwd = workspace
     if (parsed.cwd) {
       const abs = path.isAbsolute(parsed.cwd) ? parsed.cwd : path.join(workspace, parsed.cwd)
       const cwdErr = checkInsideWorkspace(abs, workspace)
-      if (cwdErr) return { ok: false, error: cwdErr }
+      if (cwdErr) return { ok: false, error: `cwd outside workspace is not allowed: ${abs}` }
       cwd = abs
+    }
+
+    // Gate: command not in allowlist
+    if (!ctx.policy.commands.includes(parsed.cmd)) {
+      const decision = await resolveToolApproval(
+        `Run command not in allowlist: ${parsed.cmd}`,
+        'once-session-allowlist-deny',
+        ctx.io,
+      )
+      if (!decision.granted) return { ok: false, error: 'Denied by operator.' }
+      if (decision.tier === 'session')    await ctx.policy.addCommand(parsed.cmd, 'session')
+      if (decision.tier === 'persistent') await ctx.policy.addCommand(parsed.cmd, 'persistent')
+      // tier === 'one-time': run once without adding to policy
     }
 
     try {
