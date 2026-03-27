@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Layout } from '../store/layout.js'
 import { readJson, readJsonl } from '../store/io.js'
@@ -41,9 +41,11 @@ async function drainPresessionInbox(layout: Layout): Promise<unknown[]> {
   const stimuli: unknown[] = []
   for (const file of files) {
     if (!file.endsWith('.json')) continue
+    const path = join(layout.inboxPresession, file)
     try {
-      const data = await readJson(join(layout.inboxPresession, file))
+      const data = await readJson(path)
       stimuli.push(data)
+      await unlink(path)
     } catch {
       // skip malformed files
     }

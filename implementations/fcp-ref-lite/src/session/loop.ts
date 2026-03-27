@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { readdir, unlink } from 'node:fs/promises'
+
 import { join } from 'node:path'
 import type { Layout } from '../store/layout.js'
-import { readJson, writeJson, appendJsonl } from '../store/io.js'
+import { readJson, appendJsonl } from '../store/io.js'
 import { runSleepCycle } from './sleep.js'
 import type { Logger } from '../logger/logger.js'
 import type { CPEAdapter, Message, ToolUseCall, ToolDefinition } from '../cpe/types.js'
@@ -303,24 +304,15 @@ export async function runSessionLoop(
         continue
       }
 
-      // Approval check
+      // Approval: delegate entirely to io.requestToolApproval (single authority).
+      // Session grants and persistent allowlist are managed by the TUI/exec layer.
       let approved = false
-      const allowlistData = existsSync(layout.allowlist)
-        ? await readJson<{ tools?: string[] }>(layout.allowlist).catch(() => ({ tools: [] }))
-        : { tools: [] }
-      const persistentAllowed = (allowlistData.tools ?? []).includes(toolCall.name)
-
-      if (persistentAllowed || sessionGrants.has(toolCall.name)) {
+      if (sessionGrants.has(toolCall.name)) {
         approved = true
       } else if (io.requestToolApproval) {
-        io.onEvent({ type: 'tool_done', entryId: agentId, eventId: toolEventId, patch: { status: 'pending' } })
         const decision = await io.requestToolApproval(toolCall.name, toolCall.input)
         if (decision === 'session') { sessionGrants.add(toolCall.name); approved = true }
         else if (decision === 'once' || decision === 'allow') { approved = true }
-        if (decision === 'allow') {
-          const updated = { tools: [...(allowlistData.tools ?? []), toolCall.name] }
-          await writeJson(layout.allowlist, updated)
-        }
       }
 
       if (!approved) {

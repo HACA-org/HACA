@@ -40,13 +40,14 @@ async function makeEntityFixture(tmp: string, opts: {
   const { readFile } = await import('node:fs/promises')
   const hash = (data: string) => 'sha256:' + createHash('sha256').update(data, 'utf8').digest('hex')
 
-  const vitals: Record<string, string> = {
-    baseline: hash(await readFile(layout.baseline, 'utf8')),
-    bootMd: hash(await readFile(layout.bootMd, 'utf8')),
-    skillsIndex: hash(await readFile(layout.skillsIndex, 'utf8')),
+  // Canonical schema: { version, algorithm, files: { 'relative/path' -> hash } }
+  const toRel = (abs: string) => abs.startsWith(root + '/') ? abs.slice(root.length + 1) : abs
+  const files: Record<string, string> = {
+    [toRel(layout.baseline)]:    hash(await readFile(layout.baseline, 'utf8')),
+    [toRel(layout.bootMd)]:      hash(await readFile(layout.bootMd, 'utf8')),
+    [toRel(layout.skillsIndex)]: hash(await readFile(layout.skillsIndex, 'utf8')),
   }
-  // Note: hashes are of raw file contents (not JSON.stringify) — must match fap.ts behavior
-  await writeJson(layout.integrity, { version: '1.0', vitals, createdAt: new Date().toISOString() })
+  await writeJson(layout.integrity, { version: '1.0', algorithm: 'sha256', files })
 
   if (opts.withImprint) {
     await writeJson(layout.imprint, {

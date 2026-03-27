@@ -16,19 +16,20 @@ function sha256File(content: string): string {
   return sha256(content)
 }
 
-/** Tracks files created during FAP for rollback */
-const created: string[] = []
-
-async function safeWrite(path: string, data: unknown): Promise<void> {
-  await writeJson(path, data)
-  created.push(path)
-}
-
-async function rollback(): Promise<void> {
-  for (const path of created.reverse()) {
-    await removeFile(path)
+function makeRollbackContext() {
+  const created: string[] = []
+  return {
+    async safeWrite(path: string, data: unknown): Promise<void> {
+      await writeJson(path, data)
+      created.push(path)
+    },
+    async rollback(): Promise<void> {
+      for (const path of [...created].reverse()) {
+        await removeFile(path)
+      }
+      created.length = 0
+    },
   }
-  created.length = 0
 }
 
 // Step 1: Validate structural prerequisites
@@ -104,7 +105,10 @@ async function enrollOperator(): Promise<OperatorBound> {
 }
 
 // Step 5: Build skill index + integrity document
-async function buildIndexAndIntegrity(layout: Layout): Promise<{ skillsIndexHash: string; integrityHash: string }> {
+async function buildIndexAndIntegrity(
+  layout: Layout,
+  sw: (path: string, data: unknown) => Promise<void>,
+): Promise<{ skillsIndexHash: string; integrityHash: string }> {
   // Skill index — scan skills/ for manifests
   const skillsIndex: Record<string, unknown> = { skills: [] }
   if (existsSync(layout.skills)) {
@@ -119,23 +123,24 @@ async function buildIndexAndIntegrity(layout: Layout): Promise<{ skillsIndexHash
     }
     skillsIndex['skills'] = skills
   }
-  await safeWrite(layout.skillsIndex, skillsIndex)
+  await sw(layout.skillsIndex, skillsIndex)
 
-  // Integrity document — hash vital files
-  const vitals: Record<string, string> = {}
-  const vitalPaths: Array<[string, string]> = [
-    ['baseline', layout.baseline],
-    ['bootMd', layout.bootMd],
-    ['skillsIndex', layout.skillsIndex],
+  // Integrity document — hash vital files using relative paths as keys (canonical schema)
+  const files: Record<string, string> = {}
+  const vitalPaths: Array<string> = [
+    layout.baseline,
+    layout.bootMd,
+    layout.skillsIndex,
   ]
-  for (const [key, path] of vitalPaths) {
-    if (existsSync(path)) {
-      const raw = await readFile(path, 'utf8')
-      vitals[key] = sha256File(raw)
+  for (const absPath of vitalPaths) {
+    if (existsSync(absPath)) {
+      const rel = absPath.startsWith(layout.root + '/') ? absPath.slice(layout.root.length + 1) : absPath
+      const raw = await readFile(absPath, 'utf8')
+      files[rel] = sha256File(raw)
     }
   }
-  const integrity = { version: '1.0', vitals, createdAt: new Date().toISOString() }
-  await safeWrite(layout.integrity, integrity)
+  const integrity = { version: '1.0', algorithm: 'sha256', files }
+  await sw(layout.integrity, integrity)
 
   return {
     skillsIndexHash: sha256File(JSON.stringify(skillsIndex)),
@@ -151,6 +156,7 @@ async function sealImprint(
   baselineHash: string,
   integrityHash: string,
   skillsIndexHash: string,
+  sw: (path: string, data: unknown) => Promise<void>,
 ): Promise<ImprintRecord> {
   const partial = {
     version: '1.0' as const,
@@ -164,7 +170,7 @@ async function sealImprint(
   // Genesis Omega = SHA256 of the imprint itself
   const genesisOmega = sha256(JSON.stringify(partial))
   const imprint: ImprintRecord = { ...partial, genesisOmega }
-  await safeWrite(layout.imprint, imprint)
+  await sw(layout.imprint, imprint)
   return imprint
 }
 
@@ -197,6 +203,8 @@ export async function runFAP(
 ): Promise<string> {
   await logger.info('fap', 'start', { profile })
 
+  const { safeWrite, rollback } = makeRollbackContext()
+
   try {
     // Step 1
     await validateStructure(layout)
@@ -217,11 +225,11 @@ export async function runFAP(
     // Step 5
     const baselineRaw = JSON.stringify(await readJson(layout.baseline))
     const baselineHash = sha256File(baselineRaw)
-    const { skillsIndexHash, integrityHash } = await buildIndexAndIntegrity(layout)
+    const { skillsIndexHash, integrityHash } = await buildIndexAndIntegrity(layout, safeWrite)
     await logger.info('fap', 'step5_index_integrity_built')
 
     // Step 6
-    await sealImprint(layout, profile, operatorBound, baselineHash, integrityHash, skillsIndexHash)
+    await sealImprint(layout, profile, operatorBound, baselineHash, integrityHash, skillsIndexHash, safeWrite)
     await logger.info('fap', 'step6_imprint_sealed')
 
     // Step 7

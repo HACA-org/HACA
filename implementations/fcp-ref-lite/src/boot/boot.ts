@@ -77,22 +77,16 @@ async function phase3(layout: Layout): Promise<void> {
     throw new BootError('state/integrity.json not found', 'phase3')
   }
 
-  const doc = await readJson<{
-    vitals: Record<string, string>
-  }>(layout.integrity)
+  // Canonical schema: { version, algorithm, files: { 'relative/path' -> hash } }
+  const doc = await readJson<{ files?: Record<string, string> }>(layout.integrity)
+  const files = doc.files ?? {}
 
-  const pathMap: Record<string, string> = {
-    baseline: layout.baseline,
-    bootMd: layout.bootMd,
-    skillsIndex: layout.skillsIndex,
-  }
-
-  for (const [key, expectedHash] of Object.entries(doc.vitals)) {
-    const path = pathMap[key]
-    if (!path || !existsSync(path)) continue
-    const actualHash = await hashFile(path)
+  for (const [rel, expectedHash] of Object.entries(files)) {
+    const absPath = rel.startsWith('/') ? rel : `${layout.root}/${rel}`
+    if (!existsSync(absPath)) continue
+    const actualHash = await hashFile(absPath)
     if (actualHash !== expectedHash) {
-      throw new BootError(`Identity drift detected in ${key}`, 'phase3')
+      throw new BootError(`Identity drift detected in ${rel}`, 'phase3')
     }
   }
 }

@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest'
 import { buildProgram } from './dispatch.js'
 
+// Prevent startTui from actually rendering — it requires a real TTY
+vi.mock('./run.js', () => ({
+  runFcp: async () => { throw Object.assign(new Error('exit'), { code: 1 }) },
+}))
+
 function run(...args: string[]) {
   const program = buildProgram()
   program.exitOverride() // prevent process.exit in tests
@@ -22,11 +27,9 @@ describe('CLI dispatch', () => {
     expect(() => program.parse(['node', 'fcp', '--help'])).toThrow() // exitOverride throws on --help
   })
 
-  it('fcp (no args) triggers default action — exits with error when no entity found', async () => {
-    // runFcp will fail (no entity configured in test env) and call process.exit(1)
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((_code) => { throw new Error('exit') })
-    await expect(run()).rejects.toThrow('exit')
-    exitSpy.mockRestore()
+  it('fcp (no args) triggers default action — runFcp is called', async () => {
+    // runFcp is mocked to throw — the action propagates the error
+    await expect(run()).rejects.toThrow()
   })
 
   it('fcp init', async () => {

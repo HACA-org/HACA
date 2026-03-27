@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import type { Layout } from '../store/layout.js'
-import { readJson, writeJson, appendJsonl } from '../store/io.js'
+import { readJson, writeJson } from '../store/io.js'
 import type { Logger } from '../logger/logger.js'
 import type { ImprintRecord } from '../boot/types.js'
 import { verifyDrift } from './integrity.js'
@@ -118,8 +118,8 @@ async function _checkContextBudget(
     const detail = { tokensUsed, contextWindow, pct: Math.round(pct * 100) }
     await logCritical(layout, 'CONTEXT_BUDGET_CRITICAL', detail)
     await logger.warn('sil', 'context_budget_critical', detail)
-    // Signal CPE to close session via inbox
-    await appendJsonl(join(layout.inbox, `sil-compact-${Date.now()}.json`), {
+    // Signal CPE to close session via inbox (one JSON file per request)
+    await writeJson(join(layout.inbox, `sil-compact-${Date.now()}.json`), {
       type: 'sil_compact_request',
       ts: new Date().toISOString(),
       reason: 'CONTEXT_BUDGET_CRITICAL',

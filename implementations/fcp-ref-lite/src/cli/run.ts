@@ -13,10 +13,12 @@ const FCP_ENTITIES_DIR = join(homedir(), '.fcp', 'entities')
 const FCP_DEFAULT_FILE = join(homedir(), '.fcp', 'default')
 
 interface BaselineConfig {
-  provider?: string
-  model?: string
-  context_window?: number
-  haca_profile?: 'haca-core' | 'haca-evolve'
+  profile?: 'haca-core' | 'haca-evolve'
+  cpe?: {
+    backend?: string
+    model?: string
+  }
+  context_window?: number | { warn_pct?: number; compact_pct?: number }
 }
 
 async function resolveEntityRoot(): Promise<string> {
@@ -42,11 +44,13 @@ async function resolveEntityRoot(): Promise<string> {
 }
 
 async function resolveModel(baseline: BaselineConfig): Promise<{ provider: string; model: string; contextWindow: number }> {
-  const provider = baseline.provider
-  const model = baseline.model
+  const provider = baseline.cpe?.backend
+  const model    = baseline.cpe?.model
+  const ctxRaw   = baseline.context_window
+  const contextWindow = typeof ctxRaw === 'number' ? ctxRaw : 200000
 
   if (provider && model) {
-    return { provider, model, contextWindow: baseline.context_window ?? 200000 }
+    return { provider, model, contextWindow }
   }
 
   const available = await detectAvailableModels()
@@ -79,16 +83,16 @@ export async function runFcp(opts: { verbose?: boolean; debug?: boolean }): Prom
     process.exit(1)
   }
 
-  const profile = baseline.haca_profile ?? 'haca-core'
+  const profile = baseline.profile ?? 'haca-core'
   const adapter = resolveAdapter({ provider, model, profile })
   const workspaceFocus = resolveWorkspaceFocus(process.cwd())
   const sessionGrants = new Set<string>()
   const ctx = { workspaceFocus }
 
-  // Delegating approval — wired to TUI after startTui binds io
-  // Tool-level approval (string prompt) maps to a simple deny-safe default;
-  // loop-level approval (name + input) is handled by SessionIO.requestToolApproval
-  let toolLevelApproval: (prompt: string) => Promise<'once' | 'session' | 'allow' | 'deny'> =
+  // Tool-level approval: wired to TUI once it starts.
+  // The TUI's requestToolApproval (name + input) is the single approval authority.
+  // Exec handlers receive a thin wrapper that asks the TUI by tool name.
+  let approvalFn: (name: string, input: Record<string, unknown>) => Promise<'once' | 'session' | 'allow' | 'deny'> =
     async () => 'deny'
 
   const tools = createBuiltinTools(
@@ -97,7 +101,7 @@ export async function runFcp(opts: { verbose?: boolean; debug?: boolean }): Prom
     ctx,
     adapter,
     sessionGrants,
-    (prompt) => toolLevelApproval(prompt),
+    (name) => approvalFn(name, {}),
   )
 
   await startTui({
@@ -112,6 +116,6 @@ export async function runFcp(opts: { verbose?: boolean; debug?: boolean }): Prom
     ...(opts.verbose !== undefined ? { verbose: opts.verbose } : {}),
     ...(opts.debug !== undefined ? { debug: opts.debug } : {}),
     version: '0.1.0',
-    onToolLevelApproval: (fn) => { toolLevelApproval = fn },
+    onToolLevelApproval: (fn) => { approvalFn = fn },
   })
 }

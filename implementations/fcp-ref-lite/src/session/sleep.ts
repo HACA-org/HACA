@@ -58,5 +58,4 @@ export async function runSleepCycle(
   await logSleepComplete(layout, sessionId)
   await removeFile(layout.sessionToken)
   await logger.info('sleep', 'complete', { sessionId })
-  await logger.increment('cycles')
 }

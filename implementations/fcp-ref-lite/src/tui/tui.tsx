@@ -1,5 +1,6 @@
 import { render } from 'ink'
 import { App, makeInitialState } from './App.js'
+import type { AppState } from './App.js'
 import type { SessionEvent, AllowDecision, AllowlistPrompt } from './types.js'
 import type { BootResult } from '../boot/types.js'
 import type { CPEAdapter } from '../cpe/types.js'
@@ -20,8 +21,7 @@ export interface TuiOptions {
   verbose?: boolean
   debug?: boolean
   version?: string
-  /** Called once with a function the caller can assign to tool-level approval */
-  onToolLevelApproval?: (fn: (prompt: string) => Promise<'once' | 'session' | 'allow' | 'deny'>) => void
+  onToolLevelApproval?: (fn: (name: string, input: Record<string, unknown>) => Promise<'once' | 'session' | 'allow' | 'deny'>) => void
 }
 
 export async function startTui(opts: TuiOptions): Promise<void> {
@@ -32,51 +32,34 @@ export async function startTui(opts: TuiOptions): Promise<void> {
     onToolLevelApproval,
   } = opts
 
+  // Read profile from imprint (source of truth)
   let profile: 'haca-core' | 'haca-evolve' = 'haca-core'
   try {
     const { readJson } = await import('../store/io.js')
     const { existsSync } = await import('node:fs')
     if (existsSync(layout.imprint)) {
-      const imp = await readJson<{ hacaProfile: 'haca-core' | 'haca-evolve' }>(layout.imprint)
-      profile = imp.hacaProfile
+      const imp = await readJson<{ hacaProfile?: 'haca-core' | 'haca-evolve' }>(layout.imprint)
+      if (imp.hacaProfile) profile = imp.hacaProfile
     }
-  } catch { /* use default */ }
+  } catch { /* default to haca-core */ }
 
-  const initial = makeInitialState({
+  const initial: AppState = makeInitialState({
     sessionId: bootResult.sessionId,
-    profile,
-    version,
-    verbose,
-    debug,
-    model,
-    provider,
+    profile, version, verbose, debug,
+    model, provider,
     contextWindow: sessionOpts.contextWindow,
     workspaceFocus,
   })
 
-  // Channels between TUI and session loop
+  // ── Event/input bridges ───────────────────────────────────────────────────
   let dispatchEvent: ((e: SessionEvent) => void) | null = null
-  let setAllowlistPromptFn: ((p: AllowlistPrompt | null) => void) | null = null
+  let setAllowlistFn: ((p: AllowlistPrompt | null) => void) | null = null
   const inputQueue: Array<string | null> = []
   let inputResolve: ((v: string | null) => void) | null = null
 
-  function promptApproval(name: string, input: Record<string, unknown>): Promise<'once' | 'session' | 'allow' | 'deny'> {
-    return new Promise(resolve => {
-      const prompt: AllowlistPrompt = {
-        toolName: name,
-        toolInput: input,
-        resolve: (decision: AllowDecision) => {
-          setAllowlistPromptFn?.(null)
-          const mapped = decision === 'persist' ? 'allow' : decision
-          resolve(mapped as 'once' | 'session' | 'allow' | 'deny')
-        },
-      }
-      setAllowlistPromptFn?.(prompt)
-    })
-  }
-
-  // Wire tool-level approval (used by shellRun/webFetch internally) to the same TUI prompt
-  onToolLevelApproval?.((toolPrompt) => promptApproval(toolPrompt, {}))
+  // Ready gate: resolves when onReady fires (React first render complete)
+  let resolveReady!: () => void
+  const readyGate = new Promise<void>(r => { resolveReady = r })
 
   function pushInput(text: string | null) {
     if (inputResolve) {
@@ -88,14 +71,29 @@ export async function startTui(opts: TuiOptions): Promise<void> {
     }
   }
 
+  function promptApproval(name: string, input: Record<string, unknown>): Promise<'once' | 'session' | 'allow' | 'deny'> {
+    return new Promise(resolve => {
+      const prompt: AllowlistPrompt = {
+        toolName: name,
+        toolInput: input,
+        resolve: (decision: AllowDecision) => {
+          setAllowlistFn?.(null)
+          resolve(decision === 'persist' ? 'allow' : decision as 'once' | 'session' | 'deny')
+        },
+      }
+      setAllowlistFn?.(prompt)
+    })
+  }
+
+  // Wire up tool-level approval from exec handlers
+  onToolLevelApproval?.((name, input) => promptApproval(name, input))
+
+  // ── SessionIO: interface consumed by the session loop ─────────────────────
   const io: SessionIO = {
     readInput(): Promise<string | null> {
       return new Promise(resolve => {
-        if (inputQueue.length > 0) {
-          resolve(inputQueue.shift()!)
-        } else {
-          inputResolve = resolve
-        }
+        if (inputQueue.length > 0) resolve(inputQueue.shift()!)
+        else inputResolve = resolve
       })
     },
 
@@ -103,11 +101,11 @@ export async function startTui(opts: TuiOptions): Promise<void> {
       dispatchEvent?.(event)
     },
 
-    requestToolApproval(name: string, input: Record<string, unknown>): Promise<'once' | 'session' | 'allow' | 'deny'> {
+    requestToolApproval(name, input) {
       return promptApproval(name, input)
     },
 
-    onContextWarning(usedPct: number) {
+    onContextWarning(usedPct) {
       dispatchEvent?.({
         type: 'system_message',
         id: `ctx-warn-${Date.now()}`,
@@ -117,39 +115,53 @@ export async function startTui(opts: TuiOptions): Promise<void> {
     },
   }
 
+  // ── Render ────────────────────────────────────────────────────────────────
   const { unmount, waitUntilExit } = render(
     <App
       initial={initial}
       onReady={(dispatch, setAllowlist) => {
-        dispatchEvent = dispatch
-        setAllowlistPromptFn = setAllowlist
+        dispatchEvent  = dispatch
+        setAllowlistFn = setAllowlist
+        resolveReady()
       }}
       onUserMessage={(text) => {
-        pushInput(text)
-        // user_message is emitted by the loop after reading input,
-        // but we also emit here so the TUI shows it immediately
+        // Dispatch display event first, then unblock the loop
         dispatchEvent?.({
           type: 'user_message',
           id: Math.random().toString(36).slice(2),
           text,
           ts: new Date().toISOString(),
         })
+        pushInput(text)
       }}
       onStop={() => {
         dispatchEvent?.({ type: 'stop_requested' })
       }}
       onExit={async (withPayload) => {
         if (!withPayload) pushInput(null)
-        // with payload: loop handles sleep cycle via /exit slash command
-      }}
-      onReset={() => {
-        pushInput('/reset')
+        // withPayload=true: sleep cycle runs inside loop, loop exits naturally
       }}
     />,
   )
 
-  await runSessionLoop(layout, bootResult, adapter, logger, sessionOpts, io)
+  // Wait for React to mount and expose dispatch before starting the loop
+  await readyGate
 
+  try {
+    await runSessionLoop(layout, bootResult, adapter, logger, sessionOpts, io)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await logger.error('session', 'loop_crash', { error: msg })
+    // Emit error to TUI before closing
+    io.onEvent({
+      type: 'system_message',
+      id: `crash-${Date.now()}`,
+      text: `⚠ session error: ${msg}`,
+      ts: new Date().toISOString(),
+    })
+    // Give TUI time to render the error before unmounting
+    await new Promise(r => setTimeout(r, 2000))
+  }
   unmount()
   await waitUntilExit()
 }
