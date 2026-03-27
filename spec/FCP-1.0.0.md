@@ -449,8 +449,7 @@ Stage 0 checks both the current cycle's per-probe scores and the aggregate trend
     }
   ],
   "aliases": {
-    "/snapshot": {"skill": "snapshot_create"},
-    "/commit": {"skill": "commit"}
+    "/snapshot": {"skill": "snapshot_create"}
   }
 }
 ```
@@ -1058,8 +1057,7 @@ FCP ships eight tools hardcoded into the EXEC layer. These tools live in `exec/t
 | `file_read` | Reads a file within `workspace_focus`; rejects any path outside `workspace_focus` |
 | `file_write` | Writes a file within `workspace_focus`; rejects any path outside `workspace_focus`; no file size limit beyond host disk capacity |
 | `worker_skill` | Instantiates a Worker Skill sub-agent with a provided persona, context, and task |
-| `commit` | Stages and records a version-control checkpoint; requires an explicit path parameter; validates that the path is within the active workspace_focus declared in `state/workspace_focus.json`; accepts `--remote` to push to the remote configured in the workspace repository's git config (conventionally `origin`); rejects execution if workspace_focus is unset or if the path falls outside it |
-| `shell_run` | Executes a shell command within the active `workspace_focus` directory; the set of permitted commands is a static allowlist hardcoded in the EXEC layer — immutable without a runtime update; rejects execution if `workspace_focus` is unset or if the requested command is not in the allowlist |
+| `shell_run` | Executes a shell command within the active `workspace_focus` directory; the permitted command set is a static allowlist hardcoded in the EXEC layer — includes standard read-only utilities and `git`; entity root and workspace are always separate directory trees, so git operations carry no risk of touching entity structural files; rejects if `workspace_focus` is unset or if the requested command is not in the allowlist |
 | `web_fetch` | Fetches the content of a URL and returns it as text; blocks loopback and RFC-1918 addresses; content is delivered as chunked `SKILL_RESULT` envelopes; timeout enforced by the SIL watchdog (§10.4) |
 
 `skill_audit` has three invocation paths: CPE dispatches it via `skill_request` to validate skills under development; the SIL invokes it as a read-only operation for `SEVERANCE_PENDING` resolution (§10.8); and the Operator invokes it via the `/skill audit` platform command (§12.3).
@@ -1382,11 +1380,6 @@ Commands declared as `"operator_only"` are rejected if issued from any source ot
 
 Skill aliases dispatch to a named skill via EXEC. They require an active session and follow session token routing. FCP resolves each alias against the `/command` alias map in `skills/index.json` — a flat lookup table from slash command name to skill name — and dispatches directly to EXEC, bypassing the cognitive pipeline. Action Ledger protection (§9.3) still applies for skills with irreversible side effects. Aliases not present in the map are rejected; they are never forwarded to the CPE.
 
-```
-/commit [--remote]           — invoke the commit skill on the active workspace_focus project;
-                               --remote also pushes to the configured remote
-```
-
 The slash command registry is declared in `skills/index.json` as a `/command` alias map. Commands declared as `"operator_only": true` in the alias map are rejected if issued from any source other than the interactive terminal prompt.
 
 ### 12.4 Notifications
@@ -1470,9 +1463,8 @@ A deployment is FCP-compliant if and only if it satisfies all requirements below
 - [ ] CPE-invoked Worker Skills receive all three fields: persona, context, and task.
 - [ ] SIL-invoked Worker Skills are read-only; Action Ledger (§9.3) does not apply.
 - [ ] `SEVERANCE_COMMIT` notification written to `state/operator_notifications/` immediately; unacknowledged at session close escalates to `SEVERANCE_PENDING` Critical condition; resolved at Phase 6 via dual-gate: Operator acknowledges + SIL invokes `skill_audit` Worker Skill to confirm index integrity.
-- [ ] Native exec tools (`skill_create`, `skill_audit`, `file_read`, `file_write`, `worker_skill`, `commit`, `shell_run`, `web_fetch`) are hardcoded in the EXEC layer; they require no entry in `skills/index.json` and are always available to the CPE.
-- [ ] `commit` skill requires an explicit path parameter; validates path is within the workspace_focus declared in `state/workspace_focus.json`; rejects if workspace_focus is unset or if the path falls outside it.
-- [ ] `file_reader` and `file_writer` operate exclusively within `workspace_focus`; requests targeting any path outside `workspace_focus` are rejected.
+- [ ] Native exec tools (`skill_create`, `skill_audit`, `file_read`, `file_write`, `worker_skill`, `shell_run`, `web_fetch`) are hardcoded in the EXEC layer; they require no entry in `skills/index.json` and are always available to the CPE.
+- [ ] `file_read` and `file_write` operate exclusively within `workspace_focus`; requests targeting any path outside `workspace_focus` are rejected.
 - [ ] `skill_create` with `--base <name>` clones an existing skill's files from `skills/<name>/` into `/tmp/fcp-stage/<entity_id>/<name>/`; the clone is deleted by the SIL after Endure promotion.
 
 **Integrity Layer**
@@ -1493,7 +1485,6 @@ A deployment is FCP-compliant if and only if it satisfies all requirements below
 - [ ] Operator-exclusive commands (`"operator_only": true`) rejected if issued from any source other than the interactive terminal prompt.
 - [ ] `/skill add` injects a structured task into the cognitive pipeline; CPE stages skill via `skill_create` under `/tmp/fcp-stage/<entity_id>/`; result goes through normal evolution proposal flow.
 - [ ] `/endure sync [--remote]` commits entity root structural content to version control; validates Endure event coverage before committing.
-- [ ] `commit` skill operates on the active project repo inside `workspace_focus` only; never touches entity root content; CPE in a workspace project context has no visibility into the Endure domain.
 - [ ] `/work set` and `/work clone` write `state/workspace_focus.json` only after SIL validates the resulting path is outside entity root; rejected paths produce an error without modifying workspace_focus.
 - [ ] SIL validates `state/workspace_focus.json` path at every Vital Check; path inside entity root or ancestor of entity root triggers Critical escalation.
 - [ ] Pending notifications presented to Operator before Phase 6 completes at boot.

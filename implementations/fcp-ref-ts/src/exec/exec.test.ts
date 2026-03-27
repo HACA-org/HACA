@@ -247,13 +247,6 @@ describe('EXEC — fcp_shell_run', () => {
     if (!r.ok) expect(r.error).toMatch(/allowlist/)
   })
 
-  it('rejects git command', async () => {
-    const ctx = makeCtx()
-    const r   = await shellRunHandler.execute({ cmd: 'git', args: ['status'] }, ctx)
-    expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).toMatch(/allowlist/)
-  })
-
   it('runs whitelisted command', async () => {
     const ctx = makeCtx()
     const r   = await shellRunHandler.execute({ cmd: 'echo', args: ['hello', 'world'] }, ctx)

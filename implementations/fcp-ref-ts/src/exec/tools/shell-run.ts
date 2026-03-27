@@ -1,5 +1,5 @@
-// fcp_shell_run — run a whitelisted shell command inside the entity root.
-// Only stateless, non-destructive, non-git commands are permitted (§ feedback: shell_run allowlist).
+// fcp_shell_run — run a whitelisted shell command.
+// Git is permitted because entity root and workspace are always separate directories.
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
@@ -9,12 +9,13 @@ const execFileAsync = promisify(execFile)
 const TIMEOUT_MS   = 10_000
 const MAX_OUT_BYTES = 256 * 1024  // 256 KB
 
-// Only basic read-only/info commands. No git, no destructive ops, no network.
+// Read-only/info utilities plus git. No destructive ops, no network.
 const SAFE_COMMANDS = new Set([
   'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'find',
   'echo', 'pwd', 'date', 'env', 'printenv', 'uname',
   'which', 'stat', 'file', 'diff', 'sort', 'uniq', 'tr',
   'cut', 'awk', 'sed', 'jq',
+  'git',
 ])
 
 interface ShellParams {
