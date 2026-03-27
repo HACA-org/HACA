@@ -1,0 +1,342 @@
+// SIL unit tests — chain, integrity, heartbeat checks, endure, drift.
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import * as os from 'node:os'
+import * as fs from 'node:fs/promises'
+import * as path from 'node:path'
+import { createLayout } from '../types/store.js'
+import { createLogger }  from '../logger/logger.js'
+import type { Baseline } from '../types/formats/baseline.js'
+import { readChain, appendEndureCommit, appendModelChange } from './chain.js'
+import { verifyIntegrityDoc, verifyChainFromImprint, refreshIntegrityDoc } from './integrity.js'
+import { budgetCheck }   from './checks/budget.js'
+import { focusCheck }    from './checks/focus.js'
+import { inboxCheck }    from './checks/inbox.js'
+import { identityCheck } from './checks/identity.js'
+import { createHeartbeat } from './heartbeat.js'
+import { queueProposal, approveProposal, runEndureProtocol } from './endure.js'
+import { runDriftEvaluation } from './drift.js'
+import type { HeartbeatContext } from '../types/sil.js'
+
+let tmpDir: string
+
+beforeEach(async () => {
+  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fcp-sil-'))
+})
+
+afterEach(async () => {
+  await fs.rm(tmpDir, { recursive: true, force: true })
+})
+
+function makeBaseline(): Baseline {
+  return {
+    version:   '1.0',
+    entity_id: 'test',
+    cpe:       { topology: 'transparent', backend: 'test' },
+    heartbeat: { cycle_threshold: 5, interval_seconds: 60 },
+    watchdog:  { sil_threshold_seconds: 300 },
+    context_window: { budget_tokens: 10000, critical_pct: 80 },
+    drift:     { comparison_mechanism: 'ncd-gzip-v1', threshold: 0.5 },
+    session_store: { rotation_threshold_bytes: 1048576 },
+    working_memory: { max_entries: 20 },
+    integrity_chain: { checkpoint_interval: 5 },
+    pre_session_buffer: { max_entries: 3 },
+    operator_channel: { notifications_dir: 'state/op' },
+    fault: { n_boot: 3, n_channel: 3, n_retry: 3 },
+  }
+}
+
+function makeCtx(layout = createLayout(tmpDir)): HeartbeatContext {
+  return {
+    layout,
+    baseline:        makeBaseline(),
+    logger:          createLogger({ test: true }),
+    cycleCount:      0,
+    lastHeartbeatTs: new Date().toISOString(),
+    inputTokens:     0,
+  }
+}
+
+// ─── Chain ───────────────────────────────────────────────────────────────────
+
+describe('SIL — chain', () => {
+  it('readChain returns empty when file does not exist', async () => {
+    const layout = createLayout(tmpDir)
+    expect(await readChain(layout)).toHaveLength(0)
+  })
+
+  it('appendEndureCommit creates a linked entry after genesis', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(path.dirname(layout.state.integrityChain), { recursive: true })
+    // Write a genesis entry manually (as FAP would)
+    const genesis = { seq: 0, ts: new Date().toISOString(), type: 'genesis', imprint_hash: 'sha256:abc', prev_hash: null }
+    await fs.appendFile(layout.state.integrityChain, JSON.stringify(genesis) + '\n', 'utf8')
+
+    await appendEndureCommit(layout, {
+      evolution_auth_digest: 'sha256:' + 'a'.repeat(64),
+      files:                 { 'boot.md': 'sha256:' + 'b'.repeat(64) },
+      integrity_doc_hash:    'sha256:' + 'c'.repeat(64),
+    })
+
+    const chain = await readChain(layout)
+    expect(chain).toHaveLength(2)
+    expect(chain[1]!.type).toBe('ENDURE_COMMIT')
+    expect(chain[1]!.seq).toBe(1)
+  })
+
+  it('appendModelChange creates a linked MODEL_CHANGE entry', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(path.dirname(layout.state.integrityChain), { recursive: true })
+    const genesis = { seq: 0, ts: new Date().toISOString(), type: 'genesis', imprint_hash: 'sha256:abc', prev_hash: null }
+    await fs.appendFile(layout.state.integrityChain, JSON.stringify(genesis) + '\n', 'utf8')
+
+    await appendModelChange(layout, {
+      from: 'claude-3', to: 'claude-4',
+      files: {}, integrity_doc_hash: 'sha256:' + 'd'.repeat(64),
+    })
+
+    const chain = await readChain(layout)
+    expect(chain[1]!.type).toBe('MODEL_CHANGE')
+  })
+})
+
+// ─── Integrity verification ───────────────────────────────────────────────────
+
+describe('SIL — integrity verification', () => {
+  it('verifyIntegrityDoc returns missing when integrity.json absent', async () => {
+    const layout = createLayout(tmpDir)
+    const result = await verifyIntegrityDoc(layout)
+    expect(result.clean).toBe(false)
+    expect(result.mismatches[0]!.reason).toBe('missing')
+  })
+
+  it('verifyIntegrityDoc reports clean when all hashes match', async () => {
+    const layout = createLayout(tmpDir)
+    // Create all required tracked files
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    await fs.writeFile(layout.bootMd, '# boot', 'utf8')
+    await fs.writeFile(layout.state.baseline, JSON.stringify({ version: '1.0' }), 'utf8')
+    await refreshIntegrityDoc(layout)
+
+    const result = await verifyIntegrityDoc(layout)
+    expect(result.clean).toBe(true)
+  })
+
+  it('verifyIntegrityDoc reports hash_mismatch when file changes', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    await fs.writeFile(layout.bootMd, '# original', 'utf8')
+    await fs.writeFile(layout.state.baseline, JSON.stringify({ version: '1.0' }), 'utf8')
+    await refreshIntegrityDoc(layout)
+
+    // Mutate the file
+    await fs.writeFile(layout.bootMd, '# tampered', 'utf8')
+    const result = await verifyIntegrityDoc(layout)
+    expect(result.clean).toBe(false)
+    expect(result.mismatches[0]!.reason).toBe('hash_mismatch')
+  })
+
+  it('verifyChainFromImprint returns invalid when imprint.json is absent', async () => {
+    const layout = createLayout(tmpDir)
+    const result = await verifyChainFromImprint(layout)
+    expect(result.valid).toBe(false)
+  })
+})
+
+// ─── Vital checks ─────────────────────────────────────────────────────────────
+
+describe('SIL — budgetCheck', () => {
+  it('returns ok when usage is low', async () => {
+    const ctx = makeCtx()
+    const r = await budgetCheck.run({ ...ctx, inputTokens: 1000 })
+    expect(r.ok).toBe(true)
+  })
+
+  it('returns degraded when usage is in warn band', async () => {
+    const ctx = makeCtx()
+    // critical=80, warn=70; 75% usage
+    const r = await budgetCheck.run({ ...ctx, inputTokens: 7500 })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.severity).toBe('degraded')
+  })
+
+  it('returns critical when usage exceeds threshold', async () => {
+    const ctx = makeCtx()
+    const r = await budgetCheck.run({ ...ctx, inputTokens: 9000 })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.severity).toBe('critical')
+  })
+})
+
+describe('SIL — focusCheck', () => {
+  it('returns ok when workspace_focus.json is absent', async () => {
+    const ctx = makeCtx()
+    expect((await focusCheck.run(ctx)).ok).toBe(true)
+  })
+
+  it('returns critical when focus is inside entity root', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    const focusPath = path.join(tmpDir, 'workspace')
+    await fs.mkdir(focusPath, { recursive: true })
+    // Set focus INSIDE entity root
+    await fs.writeFile(layout.state.workspaceFocus, JSON.stringify({ path: path.join(tmpDir, 'src') }), 'utf8')
+    const r = await focusCheck.run(makeCtx(layout))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.severity).toBe('critical')
+  })
+})
+
+describe('SIL — inboxCheck', () => {
+  it('returns ok when presession dir is absent', async () => {
+    const r = await inboxCheck.run(makeCtx())
+    expect(r.ok).toBe(true)
+  })
+
+  it('returns degraded when presession dir exceeds max_entries', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.io.presession, { recursive: true })
+    for (let i = 0; i < 5; i++) {
+      await fs.writeFile(path.join(layout.io.presession, `${i}.msg`), '{}', 'utf8')
+    }
+    const r = await inboxCheck.run(makeCtx(layout))
+    // baseline.pre_session_buffer.max_entries = 3
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.severity).toBe('degraded')
+  })
+})
+
+describe('SIL — identityCheck', () => {
+  it('returns ok when integrity.json is clean', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    await fs.writeFile(layout.bootMd, '# boot', 'utf8')
+    await fs.writeFile(layout.state.baseline, JSON.stringify({ version: '1.0' }), 'utf8')
+    await refreshIntegrityDoc(layout)
+    const r = await identityCheck.run(makeCtx(layout))
+    expect(r.ok).toBe(true)
+  })
+
+  it('returns critical when a tracked file is modified', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    await fs.writeFile(layout.bootMd, '# original', 'utf8')
+    await fs.writeFile(layout.state.baseline, JSON.stringify({ version: '1.0' }), 'utf8')
+    await refreshIntegrityDoc(layout)
+    await fs.writeFile(layout.bootMd, '# tampered', 'utf8')
+    const r = await identityCheck.run(makeCtx(layout))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.severity).toBe('critical')
+  })
+})
+
+// ─── Heartbeat ────────────────────────────────────────────────────────────────
+
+describe('SIL — createHeartbeat', () => {
+  it('shouldRun is true when cycleCount exceeds threshold', () => {
+    const layout   = createLayout(tmpDir)
+    const baseline = makeBaseline()
+    const logger   = createLogger({ test: true })
+    const hb = createHeartbeat(layout, baseline, logger, [])
+    const old = new Date(Date.now() - 1000).toISOString()
+    expect(hb.shouldRun(5, old)).toBe(true)
+  })
+
+  it('shouldRun is false when cycle and time thresholds are not met', () => {
+    const layout   = createLayout(tmpDir)
+    const baseline = makeBaseline()
+    const logger   = createLogger({ test: true })
+    const hb = createHeartbeat(layout, baseline, logger, [])
+    const now = new Date().toISOString()
+    expect(hb.shouldRun(0, now)).toBe(false)
+  })
+
+  it('run returns all vital results', async () => {
+    const layout   = createLayout(tmpDir)
+    const baseline = makeBaseline()
+    const logger   = createLogger({ test: true })
+    const hb = createHeartbeat(layout, baseline, logger, [budgetCheck])
+    const result = await hb.run(3, 100, new Date().toISOString())
+    expect(result.vitals).toHaveLength(1)
+    expect(result.vitals[0]!.check).toBe('context_budget')
+  })
+})
+
+// ─── Endure ───────────────────────────────────────────────────────────────────
+
+describe('SIL — endure', () => {
+  it('queueProposal creates a pending closure entry', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    const p = await queueProposal(layout, 'install skill foo')
+    expect(p.id).toBeDefined()
+    expect(p.digest).toMatch(/^sha256:/)
+  })
+
+  it('approveProposal sets approvedAt', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    const p = await queueProposal(layout, 'some change')
+    const ok = await approveProposal(layout, p.id)
+    expect(ok).toBe(true)
+  })
+
+  it('runEndureProtocol writes ENDURE_COMMIT and removes approved proposals', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    await fs.mkdir(layout.memory.dir, { recursive: true })
+    // Set up a genesis entry in the chain
+    await fs.mkdir(path.dirname(layout.state.integrityChain), { recursive: true })
+    const genesis = { seq: 0, ts: new Date().toISOString(), type: 'genesis', imprint_hash: 'sha256:abc', prev_hash: null }
+    await fs.appendFile(layout.state.integrityChain, JSON.stringify(genesis) + '\n', 'utf8')
+
+    // Create required tracked files
+    await fs.writeFile(layout.bootMd, '# boot', 'utf8')
+    await fs.writeFile(layout.state.baseline, JSON.stringify({ version: '1.0' }), 'utf8')
+    const logger = createLogger({ test: true })
+    const p = await queueProposal(layout, 'evolve something')
+    await approveProposal(layout, p.id)
+    await runEndureProtocol(layout, logger)
+
+    const chain = await readChain(layout)
+    expect(chain.some(e => e.type === 'ENDURE_COMMIT')).toBe(true)
+    // Pending closure should be removed
+    const exists = await fs.access(layout.state.pendingClosure).then(() => true).catch(() => false)
+    expect(exists).toBe(false)
+  })
+})
+
+// ─── Drift ────────────────────────────────────────────────────────────────────
+
+describe('SIL — drift', () => {
+  it('runDriftEvaluation returns empty when no probes', async () => {
+    const layout  = createLayout(tmpDir)
+    const logger  = createLogger({ test: true })
+    const reports = await runDriftEvaluation(layout, logger)
+    expect(reports).toHaveLength(0)
+  })
+
+  it('evaluates hash probe: mismatch when content changes', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    await fs.mkdir(layout.memory.dir, { recursive: true })
+    const logger  = createLogger({ test: true })
+    // Create a target memory file
+    await fs.mkdir(layout.memory.dir, { recursive: true })
+    const target = path.join(layout.memory.dir, 'concept.md')
+    await fs.writeFile(target, 'original content', 'utf8')
+
+    // Write a probe with a hash that does NOT match current content
+    const probe = {
+      id:            'probe-1',
+      description:   'test probe',
+      target:        'memory/concept.md',
+      deterministic: { type: 'hash', value: 'wronghash' },
+      reference:     null,
+    }
+    await fs.appendFile(layout.state.driftProbes, JSON.stringify(probe) + '\n', 'utf8')
+
+    const reports = await runDriftEvaluation(layout, logger)
+    expect(reports).toHaveLength(1)
+    expect(reports[0]!.exceeds).toBe(true)
+  })
+})
