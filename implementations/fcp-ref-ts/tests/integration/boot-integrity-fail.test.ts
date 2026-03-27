@@ -92,4 +92,35 @@ describe('boot — integrity failure', () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.phase).toBe(3)
   })
+
+  it('fails Phase 3 when a tracked file is deleted after FAP', async () => {
+    const { layout, logger } = await initEntity(tmpDir)
+
+    // Delete a tracked file — absence is drift
+    await fs.unlink(layout.bootMd)
+
+    const result = await startEntity({ layout, logger, io: testIO })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.phase).toBe(3)
+  })
+
+  it('fails Phase 1 when HACA-Core imprint has opaque topology in baseline', async () => {
+    const { layout, logger } = await initEntity(tmpDir)
+
+    // Patch baseline to opaque topology
+    const raw = JSON.parse(await fs.readFile(layout.state.baseline, 'utf8')) as Record<string, unknown>
+    raw['cpe'] = { topology: 'opaque', backend: 'anthropic:claude-sonnet-4-6' }
+    const baselineStr = JSON.stringify(raw)
+    await fs.writeFile(layout.state.baseline, baselineStr)
+
+    // Update integrity.json so Phase 3 passes
+    const { createHash } = await import('node:crypto')
+    const intRaw = JSON.parse(await fs.readFile(layout.state.integrity, 'utf8')) as { files: Record<string, string> }
+    intRaw.files['state/baseline.json'] = createHash('sha256').update(baselineStr).digest('hex')
+    await fs.writeFile(layout.state.integrity, JSON.stringify(intRaw))
+
+    const result = await startEntity({ layout, logger, io: testIO })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.phase).toBe(1)
+  })
 })

@@ -7,7 +7,7 @@ export const phase1: BootPhase = {
   name: 'host-introspection',
   async run(ctx: BootContext): Promise<void> {
     const { baseline, imprint, logger } = ctx
-    if (imprint.hacaProfile === 'haca-core' && baseline.cpe.topology !== 'transparent') {
+    if (imprint.hacaProfile === 'HACA-Core-1.0.0' && baseline.cpe.topology !== 'transparent') {
       throw new BootError(1, `HACA-Core requires transparent topology, got: ${baseline.cpe.topology}`)
     }
     logger.info('boot:phase1:ok', { topology: baseline.cpe.topology, profile: imprint.hacaProfile })

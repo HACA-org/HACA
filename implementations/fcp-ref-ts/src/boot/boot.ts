@@ -47,7 +47,7 @@ export async function startEntity(opts: StartEntityOptions): Promise<BootResult>
   }
 
   let contextMessages: CPEMessage[] = []
-  let sessionId = ''
+  let sessionId: string | undefined
 
   for (const phase of BOOT_PHASES) {
     try {
@@ -60,6 +60,10 @@ export async function startEntity(opts: StartEntityOptions): Promise<BootResult>
       }
       return { ok: false, phase: phase.id, reason: String(e) }
     }
+  }
+
+  if (!sessionId) {
+    return { ok: false, phase: 7, reason: 'Boot complete but no session token was issued' }
   }
 
   log.info('boot:complete', { sessionId })

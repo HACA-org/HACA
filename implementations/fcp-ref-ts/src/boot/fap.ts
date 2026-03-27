@@ -117,10 +117,3 @@ export async function runFAP(opts: FAPOptions): Promise<FAPResult> {
   }
 }
 
-async function safeReaddir(dirPath: string): Promise<import('node:fs').Dirent[]> {
-  try {
-    return await fs.readdir(dirPath, { withFileTypes: true })
-  } catch {
-    return []
-  }
-}

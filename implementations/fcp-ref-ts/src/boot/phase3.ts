@@ -22,7 +22,11 @@ export const phase3: BootPhase = {
     const drifted: string[] = []
     for (const [rel, expected] of Object.entries(doc.files)) {
       const abs = path.join(layout.root, rel)
-      if (!await fileExists(abs)) continue
+      if (!await fileExists(abs)) {
+        logger.error('boot:phase3:file-missing', { file: rel })
+        drifted.push(rel)
+        continue
+      }
       const actual = await sha256File(abs)
       if (actual !== expected) {
         logger.error('boot:phase3:hash-mismatch', { file: rel })
