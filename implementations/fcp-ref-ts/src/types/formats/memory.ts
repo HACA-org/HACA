@@ -1,9 +1,9 @@
 import { z } from 'zod'
 
 export const SessionTokenSchema = z.object({
-  session_id: z.string().uuid(),
-  issued_at:  z.string().datetime(),
-  revoked_at: z.string().datetime().optional(),
+  sessionId: z.string().uuid(),
+  issuedAt:  z.string().datetime(),
+  revokedAt: z.string().datetime().optional(),
 })
 
 export const WorkingMemoryEntrySchema = z.object({
@@ -17,16 +17,16 @@ export const WorkingMemorySchema = z.object({
 })
 
 const SessionHandoffSchema = z.object({
-  pending_tasks: z.array(z.string()),
-  next_steps:    z.string(),
+  pendingTasks: z.array(z.string()),
+  nextSteps:    z.string(),
 })
 
 export const ClosurePayloadSchema = z.object({
-  type:            z.literal('closure_payload'),
-  consolidation:   z.string().min(1),
-  promotion:       z.array(z.string()),
-  working_memory:  z.array(WorkingMemoryEntrySchema),
-  session_handoff: SessionHandoffSchema,
+  type:           z.literal('closure_payload'),
+  consolidation:  z.string().min(1),
+  promotion:      z.array(z.string()),
+  workingMemory:  z.array(WorkingMemoryEntrySchema),
+  sessionHandoff: SessionHandoffSchema,
 })
 
 export const SessionHandoffFileSchema = SessionHandoffSchema

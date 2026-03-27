@@ -57,7 +57,7 @@ export async function verifyIntegrityDoc(layout: Layout): Promise<DriftResult> {
 export async function refreshIntegrityDoc(layout: Layout): Promise<string> {
   const tracked = await getTrackedFiles(layout)
   const files   = await hashTrackedFiles(layout, tracked)
-  await writeJson(layout.state.integrity, { version: '1.0', algorithm: 'sha256', last_checkpoint: null, files })
+  await writeJson(layout.state.integrity, { version: '1.0', algorithm: 'sha256', lastCheckpoint: null, files })
   const buf = await fs.readFile(layout.state.integrity)
   return sha256Digest(buf)
 }
@@ -91,34 +91,34 @@ export async function verifyChainFromImprint(layout: Layout): Promise<ChainVerif
     return { valid: false, reason: `first entry is not genesis (got ${first.type})` }
   }
 
-  // Genesis imprint_hash must match sha256Digest of the imprint file at activation time.
+  // Genesis imprintHash must match sha256Digest of the imprint file at activation time.
   // We store the hash in FAP step 7 — compare against what's in the genesis entry.
-  // The structural_baseline hash in imprint can serve as a cross-check anchor.
+  // The structuralBaseline hash in imprint can serve as a cross-check anchor.
   // (We can't re-derive the original FAP imprint hash, so we verify internal chain linkage only.)
-  const genesisImprintHash: string = (first as Record<string, unknown>)['imprint_hash'] as string
+  const genesisImprintHash: string = (first as Record<string, unknown>)['imprintHash'] as string
   if (!genesisImprintHash || !genesisImprintHash.startsWith('sha256:')) {
-    return { valid: false, reason: 'genesis entry has no valid imprint_hash' }
+    return { valid: false, reason: 'genesis entry has no valid imprintHash' }
   }
 
-  // Rules 2: verify prev_hash linkage for subsequent entries
+  // Rules 2: verify prevHash linkage for subsequent entries
   for (let i = 1; i < chain.length; i++) {
     const prev    = chain[i - 1]!
     const current = chain[i]!
     const expectedPrevHash = sha256Digest(JSON.stringify(prev))
-    const actualPrevHash   = (current as Record<string, unknown>)['prev_hash'] as string | undefined
+    const actualPrevHash   = (current as Record<string, unknown>)['prevHash'] as string | undefined
 
     if (actualPrevHash !== expectedPrevHash) {
       return {
         valid:  false,
-        reason: `chain broken at seq ${current.seq}: prev_hash mismatch`,
+        reason: `chain broken at seq ${current.seq}: prevHash mismatch`,
       }
     }
 
-    // Rule 3: ENDURE_COMMIT must have evolution_auth_digest
-    if (current.type === 'ENDURE_COMMIT' && !current.evolution_auth_digest) {
+    // Rule 3: ENDURE_COMMIT must have evolutionAuthDigest
+    if (current.type === 'ENDURE_COMMIT' && !current.evolutionAuthDigest) {
       return {
         valid:  false,
-        reason: `ENDURE_COMMIT at seq ${current.seq} missing evolution_auth_digest`,
+        reason: `ENDURE_COMMIT at seq ${current.seq} missing evolutionAuthDigest`,
       }
     }
   }

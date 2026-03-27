@@ -141,9 +141,9 @@ describe('MIL — processClosure', () => {
     const layout = createLayout(tmpDir)
     const logger = createLogger({ test: true })
     await processClosure(layout, SESSION_ID, logger, {
-      consolidation:  'Session went well. Finished the implementation.',
-      promotion:      ['key-decision'],
-      working_memory: [{ priority: 7, path: 'src/main.ts' }],
+      consolidation: 'Session went well. Finished the implementation.',
+      promotion:     ['key-decision'],
+      workingMemory: [{ priority: 7, path: 'src/main.ts' }],
     }, 10)
 
     // Check semantic promotion was created

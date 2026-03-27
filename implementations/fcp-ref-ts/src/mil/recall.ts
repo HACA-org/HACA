@@ -64,9 +64,9 @@ export async function processClosure(
   sessionId: string,
   logger: Logger,
   closure: {
-    consolidation:  string
-    promotion:      string[]
-    working_memory: Array<{ priority: number; path: string }>
+    consolidation: string
+    promotion:     string[]
+    workingMemory: Array<{ priority: number; path: string }>
   },
   maxEntries: number,
 ): Promise<void> {
@@ -83,7 +83,7 @@ export async function processClosure(
   }
 
   // Merge working memory updates
-  if (closure.working_memory.length > 0) {
-    await mergeWorkingMemory(layout, closure.working_memory, maxEntries)
+  if (closure.workingMemory.length > 0) {
+    await mergeWorkingMemory(layout, closure.workingMemory, maxEntries)
   }
 }

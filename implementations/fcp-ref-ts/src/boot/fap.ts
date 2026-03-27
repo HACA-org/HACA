@@ -51,34 +51,34 @@ export async function runFAP(opts: FAPOptions): Promise<FAPResult> {
     // ── Step 4: Operator Enrollment ─────────────────────────────────────────
     io.write('FAP 4/8: operator enrollment')
     const operatorHash = sha256Digest(`${operatorName}\n${operatorEmail}`)
-    const operatorBound = { operator_name: operatorName, operator_email: operatorEmail, operator_hash: operatorHash }
-    log.info('fap:step4:ok', { operator_name: operatorName })
+    const operatorBound = { operatorName, operatorEmail, operatorHash }
+    log.info('fap:step4:ok', { operatorName })
 
     // ── Step 5: Integrity Document ───────────────────────────────────────────
     io.write('FAP 5/8: integrity document generation')
     const tracked = await getTrackedFiles(layout)
     const files = await hashTrackedFiles(layout, tracked)
     await ensureDir(layout.state.dir)
-    await track(layout.state.integrity, { version: '1.0', algorithm: 'sha256', last_checkpoint: null, files })
+    await track(layout.state.integrity, { version: '1.0', algorithm: 'sha256', lastCheckpoint: null, files })
     log.info('fap:step5:ok', { tracked: tracked.length })
 
     // ── Step 6: Imprint Record ───────────────────────────────────────────────
     io.write('FAP 6/8: imprint record finalization')
-    const structural_baseline = sha256Digest(await fs.readFile(layout.state.baseline))
-    const integrity_document  = sha256Digest(await fs.readFile(layout.state.integrity))
-    const skills_index        = sha256Digest(await fs.readFile(layout.skills.index))
+    const structuralBaseline = sha256Digest(await fs.readFile(layout.state.baseline))
+    const integrityDocument  = sha256Digest(await fs.readFile(layout.state.integrity))
+    const skillsIndex        = sha256Digest(await fs.readFile(layout.skills.index))
     // Infer profile from topology: opaque topology implies HACA-Evolve.
-    const haca_profile = baseline.cpe.topology === 'opaque' ? 'haca-evolve' : 'haca-core'
+    const hacaProfile = baseline.cpe.topology === 'opaque' ? 'haca-evolve' : 'haca-core'
     const now = new Date().toISOString()
     const imprint = {
       version: '1.0' as const,
-      activated_at: now,
-      haca_arch_version: '1.0.0',
-      haca_profile,
-      operator_bound: operatorBound,
-      structural_baseline,
-      integrity_document,
-      skills_index,
+      activatedAt: now,
+      hacaArchVersion: '1.0.0',
+      hacaProfile,
+      operatorBound,
+      structuralBaseline,
+      integrityDocument,
+      skillsIndex,
     }
     await ensureDir(layout.memory.dir)
     await track(layout.memory.imprint, imprint)
@@ -86,17 +86,17 @@ export async function runFAP(opts: FAPOptions): Promise<FAPResult> {
 
     // ── Step 7: Genesis Omega ────────────────────────────────────────────────
     io.write('FAP 7/8: genesis omega')
-    const imprint_hash = sha256Digest(await fs.readFile(layout.memory.imprint))
-    const genesis = { seq: 0, ts: now, type: 'genesis' as const, imprint_hash, prev_hash: null }
+    const imprintHash = sha256Digest(await fs.readFile(layout.memory.imprint))
+    const genesis = { seq: 0, ts: now, type: 'genesis' as const, imprintHash, prevHash: null }
     await appendJsonl(layout.state.integrityChain, genesis)
     created.push(layout.state.integrityChain)
-    log.info('fap:step7:ok', { imprint_hash })
+    log.info('fap:step7:ok', { imprintHash })
 
     // ── Step 8: First Session Token ──────────────────────────────────────────
     io.write('FAP 8/8: first session token')
     const sessionId = randomUUID()
     await ensureDir(layout.state.sentinels.dir)
-    await track(layout.state.sentinels.sessionToken, { session_id: sessionId, issued_at: now })
+    await track(layout.state.sentinels.sessionToken, { sessionId, issuedAt: now })
 
     log.info('fap:complete', { sessionId })
     io.write('FAP complete.')

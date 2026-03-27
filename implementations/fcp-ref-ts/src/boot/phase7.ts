@@ -11,7 +11,7 @@ export const phase7: BootPhase = {
     const sessionId = randomUUID()
     const issuedAt = new Date().toISOString()
     await ensureDir(layout.state.sentinels.dir)
-    await writeJson(layout.state.sentinels.sessionToken, { session_id: sessionId, issued_at: issuedAt })
+    await writeJson(layout.state.sentinels.sessionToken, { sessionId, issuedAt })
     logger.info('boot:phase7:ok', { sessionId })
     return { sessionId }
   },

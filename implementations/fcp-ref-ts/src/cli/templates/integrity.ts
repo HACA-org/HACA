@@ -3,7 +3,7 @@ export function makeIntegrityDoc(): Record<string, unknown> {
   return {
     version:         '1.0',
     algorithm:       'sha256',
-    last_checkpoint: null,
+    lastCheckpoint: null,
     files:           {},
   }
 }

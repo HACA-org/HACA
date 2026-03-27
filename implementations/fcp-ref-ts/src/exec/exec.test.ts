@@ -32,19 +32,19 @@ function makeCtx(): ExecContext {
   const layout  = createLayout(tmpDir)
   const logger  = createLogger({ test: true })
   const baseline = {
-    version:   '1.0',
-    entity_id: 'test-entity',
-    cpe:       { topology: 'transparent', backend: 'test' },
-    heartbeat: { cycle_threshold: 10, interval_seconds: 60 },
-    watchdog:  { sil_threshold_seconds: 300 },
-    context_window: { budget_tokens: 10000, critical_pct: 80 },
-    drift:     { comparison_mechanism: 'ncd-gzip-v1', threshold: 0.5 },
-    session_store: { rotation_threshold_bytes: 1048576 },
-    working_memory: { max_entries: 20 },
-    integrity_chain: { checkpoint_interval: 5 },
-    pre_session_buffer: { max_entries: 10 },
-    operator_channel: { notifications_dir: 'state/operator_notifications' },
-    fault:     { n_boot: 3, n_channel: 3, n_retry: 3 },
+    version:  '1.0',
+    entityId: 'test-entity',
+    cpe:      { topology: 'transparent', backend: 'test' },
+    heartbeat:        { cycleThreshold: 10, intervalSeconds: 60 },
+    watchdog:         { silThresholdSeconds: 300 },
+    contextWindow:    { budgetTokens: 10000, criticalPct: 80 },
+    drift:            { comparisonMechanism: 'ncd-gzip-v1', threshold: 0.5 },
+    sessionStore:     { rotationThresholdBytes: 1048576 },
+    workingMemory:    { maxEntries: 20 },
+    integrityChain:   { checkpointInterval: 5 },
+    preSessionBuffer: { maxEntries: 10 },
+    operatorChannel:  { notificationsDir: 'state/operator-notifications' },
+    fault:            { nBoot: 3, nChannel: 3, nRetry: 3 },
   } as import('../types/formats/baseline.js').Baseline
   return { layout, baseline, logger, sessionId: 'test-session-id' }
 }
@@ -351,8 +351,8 @@ describe('EXEC — fcp_skill_audit', () => {
     await fs.mkdir(skillDir, { recursive: true })
     const manifest = {
       name: 'test_skill', class: 'custom', version: '1.0.0',
-      description: 'A test skill', timeout_seconds: 30,
-      background: false, ttl_seconds: null, permissions: [], dependencies: [],
+      description: 'A test skill', timeoutSeconds: 30,
+      background: false, ttlSeconds: null, permissions: [], dependencies: [],
     }
     await fs.writeFile(path.join(skillDir, 'manifest.json'),
       JSON.stringify(manifest), 'utf8')

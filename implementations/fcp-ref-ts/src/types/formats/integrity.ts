@@ -8,10 +8,10 @@ const CheckpointSchema = z.object({
 })
 
 export const IntegrityDocumentSchema = z.object({
-  version:         z.literal('1.0'),
-  algorithm:       z.literal('sha256'),
-  last_checkpoint: CheckpointSchema.nullable(),
-  files:           z.record(z.string(), z.string()),
+  version:        z.literal('1.0'),
+  algorithm:      z.literal('sha256'),
+  lastCheckpoint: CheckpointSchema.nullable(),
+  files:          z.record(z.string(), z.string()),
 })
 
 // Integrity Chain — discriminated union of four entry types
@@ -21,35 +21,35 @@ const chainBase = z.object({
 })
 
 export const ChainGenesisSchema = chainBase.extend({
-  type:         z.literal('genesis'),
-  imprint_hash: sha256,
-  prev_hash:    z.null(),
+  type:        z.literal('genesis'),
+  imprintHash: sha256,
+  prevHash:    z.null(),
 })
 
 export const ChainEndureCommitSchema = chainBase.extend({
-  type:                  z.literal('ENDURE_COMMIT'),
-  evolution_auth_digest: sha256,
-  files:                 z.record(z.string(), sha256),
-  integrity_doc_hash:    sha256,
-  prev_hash:             sha256,
+  type:                z.literal('ENDURE_COMMIT'),
+  evolutionAuthDigest: sha256,
+  files:               z.record(z.string(), sha256),
+  integrityDocHash:    sha256,
+  prevHash:            sha256,
 })
 
 export const ChainSeveranceCommitSchema = chainBase.extend({
-  type:               z.literal('SEVERANCE_COMMIT'),
-  skill_removed:      z.string().min(1),
-  reason:             z.string().min(1),
-  files:              z.record(z.string(), sha256),
-  integrity_doc_hash: sha256,
-  prev_hash:          sha256,
+  type:             z.literal('SEVERANCE_COMMIT'),
+  skillRemoved:     z.string().min(1),
+  reason:           z.string().min(1),
+  files:            z.record(z.string(), sha256),
+  integrityDocHash: sha256,
+  prevHash:         sha256,
 })
 
 export const ChainModelChangeSchema = chainBase.extend({
-  type:               z.literal('MODEL_CHANGE'),
-  from:               z.string().min(1),
-  to:                 z.string().min(1),
-  files:              z.record(z.string(), sha256),
-  integrity_doc_hash: sha256,
-  prev_hash:          sha256,
+  type:             z.literal('MODEL_CHANGE'),
+  from:             z.string().min(1),
+  to:               z.string().min(1),
+  files:            z.record(z.string(), sha256),
+  integrityDocHash: sha256,
+  prevHash:         sha256,
 })
 
 export const IntegrityChainEntrySchema = z.discriminatedUnion('type', [

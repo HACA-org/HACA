@@ -12,7 +12,7 @@ describe('CLI — makeBaselineJson', () => {
     expect(b['version']).toBe('1.0')
     expect((b['cpe'] as Record<string, unknown>)['topology']).toBe('transparent')
     expect((b['cpe'] as Record<string, unknown>)['backend']).toBe('anthropic:claude-opus-4-6')
-    expect((b['context_window'] as Record<string, unknown>)['budget_tokens']).toBe(100000)
+    expect((b['contextWindow'] as Record<string, unknown>)['budgetTokens']).toBe(100000)
   })
 
   it('sets drift threshold to 0 for transparent topology', () => {
@@ -27,7 +27,7 @@ describe('CLI — makeBaselineJson', () => {
 
   it('accepts a custom entityId', () => {
     const b = makeBaselineJson({ entityId: 'my-entity', topology: 'transparent', backend: 'auto', budgetTokens: 1000 })
-    expect(b['entity_id']).toBe('my-entity')
+    expect(b['entityId']).toBe('my-entity')
   })
 })
 
@@ -36,7 +36,7 @@ describe('CLI — makeIntegrityDoc', () => {
     const doc = makeIntegrityDoc()
     expect(doc['version']).toBe('1.0')
     expect(doc['algorithm']).toBe('sha256')
-    expect(doc['last_checkpoint']).toBeNull()
+    expect(doc['lastCheckpoint']).toBeNull()
     expect(doc['files']).toEqual({})
   })
 })

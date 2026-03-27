@@ -29,19 +29,19 @@ afterEach(async () => {
 
 function makeBaseline(): Baseline {
   return {
-    version:   '1.0',
-    entity_id: 'test',
-    cpe:       { topology: 'transparent', backend: 'test' },
-    heartbeat: { cycle_threshold: 5, interval_seconds: 60 },
-    watchdog:  { sil_threshold_seconds: 300 },
-    context_window: { budget_tokens: 10000, critical_pct: 80 },
-    drift:     { comparison_mechanism: 'ncd-gzip-v1', threshold: 0.5 },
-    session_store: { rotation_threshold_bytes: 1048576 },
-    working_memory: { max_entries: 20 },
-    integrity_chain: { checkpoint_interval: 5 },
-    pre_session_buffer: { max_entries: 3 },
-    operator_channel: { notifications_dir: 'state/op' },
-    fault: { n_boot: 3, n_channel: 3, n_retry: 3 },
+    version:  '1.0',
+    entityId: 'test',
+    cpe:      { topology: 'transparent', backend: 'test' },
+    heartbeat:        { cycleThreshold: 5, intervalSeconds: 60 },
+    watchdog:         { silThresholdSeconds: 300 },
+    contextWindow:    { budgetTokens: 10000, criticalPct: 80 },
+    drift:            { comparisonMechanism: 'ncd-gzip-v1', threshold: 0.5 },
+    sessionStore:     { rotationThresholdBytes: 1048576 },
+    workingMemory:    { maxEntries: 20 },
+    integrityChain:   { checkpointInterval: 5 },
+    preSessionBuffer: { maxEntries: 3 },
+    operatorChannel:  { notificationsDir: 'state/op' },
+    fault:            { nBoot: 3, nChannel: 3, nRetry: 3 },
   }
 }
 
@@ -68,13 +68,13 @@ describe('SIL — chain', () => {
     const layout = createLayout(tmpDir)
     await fs.mkdir(path.dirname(layout.state.integrityChain), { recursive: true })
     // Write a genesis entry manually (as FAP would)
-    const genesis = { seq: 0, ts: new Date().toISOString(), type: 'genesis', imprint_hash: 'sha256:abc', prev_hash: null }
+    const genesis = { seq: 0, ts: new Date().toISOString(), type: 'genesis', imprintHash: 'sha256:abc', prevHash: null }
     await fs.appendFile(layout.state.integrityChain, JSON.stringify(genesis) + '\n', 'utf8')
 
     await appendEndureCommit(layout, {
-      evolution_auth_digest: 'sha256:' + 'a'.repeat(64),
-      files:                 { 'boot.md': 'sha256:' + 'b'.repeat(64) },
-      integrity_doc_hash:    'sha256:' + 'c'.repeat(64),
+      evolutionAuthDigest: 'sha256:' + 'a'.repeat(64),
+      files:               { 'boot.md': 'sha256:' + 'b'.repeat(64) },
+      integrityDocHash:    'sha256:' + 'c'.repeat(64),
     })
 
     const chain = await readChain(layout)
@@ -86,12 +86,12 @@ describe('SIL — chain', () => {
   it('appendModelChange creates a linked MODEL_CHANGE entry', async () => {
     const layout = createLayout(tmpDir)
     await fs.mkdir(path.dirname(layout.state.integrityChain), { recursive: true })
-    const genesis = { seq: 0, ts: new Date().toISOString(), type: 'genesis', imprint_hash: 'sha256:abc', prev_hash: null }
+    const genesis = { seq: 0, ts: new Date().toISOString(), type: 'genesis', imprintHash: 'sha256:abc', prevHash: null }
     await fs.appendFile(layout.state.integrityChain, JSON.stringify(genesis) + '\n', 'utf8')
 
     await appendModelChange(layout, {
       from: 'claude-3', to: 'claude-4',
-      files: {}, integrity_doc_hash: 'sha256:' + 'd'.repeat(64),
+      files: {}, integrityDocHash: 'sha256:' + 'd'.repeat(64),
     })
 
     const chain = await readChain(layout)
@@ -286,7 +286,7 @@ describe('SIL — endure', () => {
     await fs.mkdir(layout.memory.dir, { recursive: true })
     // Set up a genesis entry in the chain
     await fs.mkdir(path.dirname(layout.state.integrityChain), { recursive: true })
-    const genesis = { seq: 0, ts: new Date().toISOString(), type: 'genesis', imprint_hash: 'sha256:abc', prev_hash: null }
+    const genesis = { seq: 0, ts: new Date().toISOString(), type: 'genesis', imprintHash: 'sha256:abc', prevHash: null }
     await fs.appendFile(layout.state.integrityChain, JSON.stringify(genesis) + '\n', 'utf8')
 
     // Create required tracked files

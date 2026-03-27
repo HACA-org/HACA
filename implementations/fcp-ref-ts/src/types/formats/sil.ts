@@ -1,16 +1,16 @@
 import { z } from 'zod'
 
 const ProbeScoreSchema = z.object({
-  last_score: z.number().min(0).max(1),
-  mean_score: z.number().min(0).max(1),
-  max_score:  z.number().min(0).max(1),
+  lastScore: z.number().min(0).max(1),
+  meanScore: z.number().min(0).max(1),
+  maxScore:  z.number().min(0).max(1),
 })
 
 export const SemanticDigestSchema = z.object({
-  version:          z.literal('1.0'),
-  last_updated:     z.string().datetime(),
-  cycles_evaluated: z.number().int().min(0),
-  probes:           z.record(z.string(), ProbeScoreSchema),
+  version:         z.literal('1.0'),
+  lastUpdated:     z.string().datetime(),
+  cyclesEvaluated: z.number().int().min(0),
+  probes:          z.record(z.string(), ProbeScoreSchema),
 })
 
 const DeterministicLayerSchema = z.object({

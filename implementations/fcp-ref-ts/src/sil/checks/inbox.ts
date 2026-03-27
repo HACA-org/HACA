@@ -16,7 +16,7 @@ export const inboxCheck: VitalCheck = {
       return { ok: true }
     }
 
-    const max = ctx.baseline.pre_session_buffer.max_entries
+    const max = ctx.baseline.preSessionBuffer.maxEntries
     if (count > max) {
       return {
         ok:       false,

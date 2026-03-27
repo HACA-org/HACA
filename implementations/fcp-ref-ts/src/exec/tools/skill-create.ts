@@ -48,15 +48,15 @@ export const skillCreateHandler: ToolHandler = {
 
     // Build and validate manifest
     const manifest: SkillManifest = SkillManifestSchema.parse({
-      name:            parsed.name,
-      class:           'custom',
-      version:         parsed.version ?? '1.0.0',
-      description:     parsed.description,
-      timeout_seconds: 30,
-      background:      false,
-      ttl_seconds:     null,
-      permissions:     [],
-      dependencies:    [],
+      name:           parsed.name,
+      class:          'custom',
+      version:        parsed.version ?? '1.0.0',
+      description:    parsed.description,
+      timeoutSeconds: 30,
+      background:     false,
+      ttlSeconds:     null,
+      permissions:    [],
+      dependencies:   [],
     })
 
     // Load (or initialise) skill index

@@ -81,7 +81,7 @@ async function runChecks(root: string): Promise<CheckResult[]> {
   if (await fileExists(layout.state.sentinels.sessionToken)) {
     try {
       const raw = await readJson(layout.state.sentinels.sessionToken) as Record<string, unknown>
-      const issued = new Date(raw['issued_at'] as string).getTime()
+      const issued = new Date(raw['issuedAt'] as string).getTime()
       const age    = (Date.now() - issued) / 1000 / 60  // minutes
       if (age > 60) {
         add('session_token', 'warn', `stale (${age.toFixed(0)}m old) — possible crash`)

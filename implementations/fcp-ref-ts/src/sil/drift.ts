@@ -67,12 +67,12 @@ async function evalProbe(probe: DriftProbe, layout: Layout): Promise<DriftReport
 
 async function loadDigest(layout: Layout): Promise<SemanticDigest> {
   if (!await fileExists(layout.state.semanticDigest)) {
-    return { version: '1.0', last_updated: new Date().toISOString(), cycles_evaluated: 0, probes: {} }
+    return { version: '1.0', lastUpdated: new Date().toISOString(), cyclesEvaluated: 0, probes: {} }
   }
   try {
     return SemanticDigestSchema.parse(await readJson(layout.state.semanticDigest))
   } catch {
-    return { version: '1.0', last_updated: new Date().toISOString(), cycles_evaluated: 0, probes: {} }
+    return { version: '1.0', lastUpdated: new Date().toISOString(), cyclesEvaluated: 0, probes: {} }
   }
 }
 
@@ -93,17 +93,17 @@ export async function runDriftEvaluation(layout: Layout, logger: Logger): Promis
   const updatedProbes: Record<string, ProbeScore> = { ...digest.probes }
   for (const r of reports) {
     const prev   = digest.probes[r.probeId]
-    const count  = (digest.cycles_evaluated || 0) + 1
-    const mean   = prev ? (prev.mean_score * (count - 1) + r.score) / count : r.score
-    const maxVal = prev ? Math.max(prev.max_score, r.score) : r.score
-    updatedProbes[r.probeId] = { last_score: r.score, mean_score: mean, max_score: maxVal }
+    const count  = (digest.cyclesEvaluated || 0) + 1
+    const mean   = prev ? (prev.meanScore * (count - 1) + r.score) / count : r.score
+    const maxVal = prev ? Math.max(prev.maxScore, r.score) : r.score
+    updatedProbes[r.probeId] = { lastScore: r.score, meanScore: mean, maxScore: maxVal }
   }
 
   const updated: SemanticDigest = {
-    version:          '1.0',
-    last_updated:     new Date().toISOString(),
-    cycles_evaluated: (digest.cycles_evaluated || 0) + 1,
-    probes:           updatedProbes,
+    version:         '1.0',
+    lastUpdated:     new Date().toISOString(),
+    cyclesEvaluated: (digest.cyclesEvaluated || 0) + 1,
+    probes:          updatedProbes,
   }
   await writeJson(layout.state.semanticDigest, updated)
 

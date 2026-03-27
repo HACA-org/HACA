@@ -67,13 +67,13 @@ export async function runEndureProtocol(layout: Layout, logger: Logger): Promise
 
   for (const proposal of approved) {
     // Integrity digest = sha256Digest(content || id) — a stable per-proposal auth token
-    const evolution_auth_digest = sha256Digest(`${proposal.id}:${proposal.content}`)
+    const evolutionAuthDigest = sha256Digest(`${proposal.id}:${proposal.content}`)
 
     // Update integrity doc and capture new file hashes
-    const integrity_doc_hash = await refreshIntegrityDoc(layout)
+    const integrityDocHash = await refreshIntegrityDoc(layout)
     const files = await currentFileHashes(layout)
 
-    await appendEndureCommit(layout, { evolution_auth_digest, files, integrity_doc_hash })
+    await appendEndureCommit(layout, { evolutionAuthDigest, files, integrityDocHash })
     logger.info('sil:endure_commit', { id: proposal.id })
   }
 

@@ -4,8 +4,8 @@ import type { VitalCheck, HeartbeatContext, VitalResult } from '../../types/sil.
 export const budgetCheck: VitalCheck = {
   name: 'context_budget',
   async run(ctx: HeartbeatContext): Promise<VitalResult> {
-    const budget   = ctx.baseline.context_window.budget_tokens
-    const critical = ctx.baseline.context_window.critical_pct
+    const budget   = ctx.baseline.contextWindow.budgetTokens
+    const critical = ctx.baseline.contextWindow.criticalPct
     if (budget <= 0) return { ok: true }
 
     const pct  = (ctx.inputTokens / budget) * 100

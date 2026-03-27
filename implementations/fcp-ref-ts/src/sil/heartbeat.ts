@@ -17,20 +17,20 @@ export function createHeartbeat(
   logger:   Logger,
   checks:   VitalCheck[],
 ): Heartbeat {
-  const { cycle_threshold, interval_seconds } = baseline.heartbeat
+  const { cycleThreshold, intervalSeconds } = baseline.heartbeat
 
   return {
     shouldRun(cycleCount: number, lastHeartbeatTs: string): boolean {
-      const cycleDue = cycleCount >= cycle_threshold
+      const cycleDue = cycleCount >= cycleThreshold
       const elapsed  = Date.now() - new Date(lastHeartbeatTs).getTime()
-      const timeDue  = elapsed >= interval_seconds * 1000
+      const timeDue  = elapsed >= intervalSeconds * 1000
       return cycleDue || timeDue
     },
 
     async run(cycleCount, inputTokens, lastHeartbeatTs): Promise<HeartbeatResult> {
       const ts      = new Date().toISOString()
-      const budgetPct = baseline.context_window.budget_tokens > 0
-        ? Math.round((inputTokens / baseline.context_window.budget_tokens) * 100)
+      const budgetPct = baseline.contextWindow.budgetTokens > 0
+        ? Math.round((inputTokens / baseline.contextWindow.budgetTokens) * 100)
         : 0
 
       const ctx: HeartbeatContext = {

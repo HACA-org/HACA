@@ -52,7 +52,7 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
 
       // ── Budget check ─────────────────────────────────────────────────────
       const tokens = cycle.inputTokens > 0 ? cycle.inputTokens : estimateTokens(messages)
-      const budget = checkBudget(tokens, baseline.context_window.budget_tokens, baseline.context_window.critical_pct)
+      const budget = checkBudget(tokens, baseline.contextWindow.budgetTokens, baseline.contextWindow.criticalPct)
       if (budget.status === 'critical') {
         io.emit({ type: 'session_close', reason: 'budget_critical' })
         return { closed: 'forced', reason: 'budget_critical' }
@@ -142,9 +142,9 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
       .map(m => (m.content as string).slice(0, 200))
       .slice(-3)
       .join('\n') || '(no output)',
-    promotion:       [],
-    working_memory:  [],
-    session_handoff: { pending_tasks: [], next_steps: '' },
+    promotion:      [],
+    workingMemory:  [],
+    sessionHandoff: { pendingTasks: [], nextSteps: '' },
   }
   return { closed: 'normal', closurePayload }
 }

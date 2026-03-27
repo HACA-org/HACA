@@ -22,18 +22,18 @@ afterEach(async () => {
 
 async function initEntity(root: string) {
   const BASELINE = {
-    version: '1.0', entity_id: 'test',
+    version: '1.0', entityId: 'test',
     cpe: { topology: 'transparent', backend: 'anthropic:claude-sonnet-4-6' },
-    heartbeat: { cycle_threshold: 50, interval_seconds: 60 },
-    watchdog: { sil_threshold_seconds: 300 },
-    context_window: { budget_tokens: 100000, critical_pct: 90 },
-    drift: { comparison_mechanism: 'ncd-gzip-v1', threshold: 0.3 },
-    session_store: { rotation_threshold_bytes: 1048576 },
-    working_memory: { max_entries: 10 },
-    integrity_chain: { checkpoint_interval: 10 },
-    pre_session_buffer: { max_entries: 5 },
-    operator_channel: { notifications_dir: 'state/operator_notifications' },
-    fault: { n_boot: 3, n_channel: 3, n_retry: 3 },
+    heartbeat:        { cycleThreshold: 50, intervalSeconds: 60 },
+    watchdog:         { silThresholdSeconds: 300 },
+    contextWindow:    { budgetTokens: 100000, criticalPct: 90 },
+    drift:            { comparisonMechanism: 'ncd-gzip-v1', threshold: 0.3 },
+    sessionStore:     { rotationThresholdBytes: 1048576 },
+    workingMemory:    { maxEntries: 10 },
+    integrityChain:   { checkpointInterval: 10 },
+    preSessionBuffer: { maxEntries: 5 },
+    operatorChannel:  { notificationsDir: 'state/operator-notifications' },
+    fault:            { nBoot: 3, nChannel: 3, nRetry: 3 },
   }
   await fs.mkdir(path.join(root, 'state'), { recursive: true })
   await fs.mkdir(path.join(root, 'persona'), { recursive: true })

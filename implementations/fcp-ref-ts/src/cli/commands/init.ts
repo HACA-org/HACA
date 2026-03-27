@@ -193,7 +193,7 @@ async function runInit(): Promise<void> {
 
     // Store operator credentials for FAP as a staging file (read by init, cleared by FAP)
     await writeJson(path.join(entityRoot, 'state', '.fap-operator.json'), {
-      operator_name: operatorName, operator_email: operatorEmail,
+      operatorName, operatorEmail,
     })
 
     // Set default if none

@@ -121,8 +121,8 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
   if (await fileExists(stagingPath)) {
     try {
       const creds = await readJson(stagingPath) as Record<string, string>
-      operatorName  = creds['operator_name']
-      operatorEmail = creds['operator_email']
+      operatorName  = creds['operatorName']
+      operatorEmail = creds['operatorEmail']
     } catch { /* ignore */ }
   }
 
@@ -163,7 +163,7 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
   if (result.closed === 'normal') {
     await processClosure(
       layout, sessionId, logger, result.closurePayload,
-      baseline.working_memory.max_entries,
+      baseline.workingMemory.maxEntries,
     )
   }
 }

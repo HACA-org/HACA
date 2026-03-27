@@ -9,19 +9,19 @@ import { createLogger } from '../../src/logger/logger.js'
 import type { BootIO } from '../../src/types/boot.js'
 
 const MINIMAL_BASELINE = {
-  version: '1.0',
-  entity_id: 'test-entity',
+  version:  '1.0',
+  entityId: 'test-entity',
   cpe: { topology: 'transparent', backend: 'anthropic:claude-sonnet-4-6' },
-  heartbeat: { cycle_threshold: 50, interval_seconds: 60 },
-  watchdog: { sil_threshold_seconds: 300 },
-  context_window: { budget_tokens: 100000, critical_pct: 90 },
-  drift: { comparison_mechanism: 'ncd-gzip-v1', threshold: 0.3 },
-  session_store: { rotation_threshold_bytes: 1048576 },
-  working_memory: { max_entries: 10 },
-  integrity_chain: { checkpoint_interval: 10 },
-  pre_session_buffer: { max_entries: 5 },
-  operator_channel: { notifications_dir: 'state/operator_notifications' },
-  fault: { n_boot: 3, n_channel: 3, n_retry: 3 },
+  heartbeat:        { cycleThreshold: 50, intervalSeconds: 60 },
+  watchdog:         { silThresholdSeconds: 300 },
+  contextWindow:    { budgetTokens: 100000, criticalPct: 90 },
+  drift:            { comparisonMechanism: 'ncd-gzip-v1', threshold: 0.3 },
+  sessionStore:     { rotationThresholdBytes: 1048576 },
+  workingMemory:    { maxEntries: 10 },
+  integrityChain:   { checkpointInterval: 10 },
+  preSessionBuffer: { maxEntries: 5 },
+  operatorChannel:  { notificationsDir: 'state/operator-notifications' },
+  fault:            { nBoot: 3, nChannel: 3, nRetry: 3 },
 }
 
 const testIO: BootIO = {
@@ -80,13 +80,13 @@ describe('boot — cold start (FAP)', () => {
     await startEntity({ layout, logger, io: testIO, operatorName: 'Bob', operatorEmail: 'bob@example.com' })
 
     const raw = JSON.parse(await fs.readFile(layout.memory.imprint, 'utf8')) as {
-      operator_bound: { operator_hash: string }
+      operatorBound: { operatorHash: string }
     }
     const expectedHash = 'sha256:' + createHash('sha256').update('Bob\nbob@example.com').digest('hex')
-    expect(raw.operator_bound.operator_hash).toBe(expectedHash)
+    expect(raw.operatorBound.operatorHash).toBe(expectedHash)
   })
 
-  it('writes a genesis entry in integrity_chain.jsonl', async () => {
+  it('writes a genesis entry in integrity-chain.jsonl', async () => {
     await setupMinimalEntity(tmpDir)
     const layout = createLayout(tmpDir)
     const logger = createLogger({ test: true })
@@ -96,10 +96,10 @@ describe('boot — cold start (FAP)', () => {
     const lines = (await fs.readFile(layout.state.integrityChain, 'utf8'))
       .split('\n').filter(l => l.trim())
     expect(lines).toHaveLength(1)
-    const entry = JSON.parse(lines[0]!) as { type: string; seq: number; prev_hash: unknown }
+    const entry = JSON.parse(lines[0]!) as { type: string; seq: number; prevHash: unknown }
     expect(entry.type).toBe('genesis')
     expect(entry.seq).toBe(0)
-    expect(entry.prev_hash).toBeNull()
+    expect(entry.prevHash).toBeNull()
   })
 
   it('returns error if operator credentials are absent', async () => {

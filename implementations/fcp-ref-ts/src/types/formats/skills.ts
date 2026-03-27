@@ -10,8 +10,8 @@ const SkillEntrySchema = z.object({
 })
 
 const AliasEntrySchema = z.object({
-  skill:         z.string().min(1),
-  operator_only: z.boolean().optional(),
+  skill:        z.string().min(1),
+  operatorOnly: z.boolean().optional(),
 })
 
 export const SkillIndexSchema = z.object({
@@ -21,15 +21,15 @@ export const SkillIndexSchema = z.object({
 })
 
 export const SkillManifestSchema = z.object({
-  name:            z.string().min(1),
-  class:           SkillClassSchema,
-  version:         z.string().min(1),
-  description:     z.string().min(1),
-  timeout_seconds: z.number().int().positive(),
-  background:      z.boolean(),
-  ttl_seconds:     z.number().int().positive().nullable(),
-  permissions:     z.array(z.string()),
-  dependencies:    z.array(z.string()),
+  name:           z.string().min(1),
+  class:          SkillClassSchema,
+  version:        z.string().min(1),
+  description:    z.string().min(1),
+  timeoutSeconds: z.number().int().positive(),
+  background:     z.boolean(),
+  ttlSeconds:     z.number().int().positive().nullable(),
+  permissions:    z.array(z.string()),
+  dependencies:   z.array(z.string()),
 })
 
 export type SkillClass    = z.infer<typeof SkillClassSchema>

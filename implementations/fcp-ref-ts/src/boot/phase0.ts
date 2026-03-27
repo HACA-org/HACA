@@ -8,11 +8,11 @@ export const phase0: BootPhase = {
   name: 'imprint-verification',
   async run(ctx: BootContext): Promise<void> {
     const { imprint, logger } = ctx
-    const { operator_name, operator_email, operator_hash } = imprint.operator_bound
-    const expected = sha256Digest(`${operator_name}\n${operator_email}`)
-    if (operator_hash !== expected) {
+    const { operatorName, operatorEmail, operatorHash } = imprint.operatorBound
+    const expected = sha256Digest(`${operatorName}\n${operatorEmail}`)
+    if (operatorHash !== expected) {
       throw new BootError(0, 'Operator hash mismatch in imprint.json — entity may be compromised')
     }
-    logger.info('boot:phase0:ok', { operator: operator_name })
+    logger.info('boot:phase0:ok', { operator: operatorName })
   },
 }
