@@ -422,12 +422,17 @@ describe('EXEC — fcp_shell_run', () => {
     expect(policy.commands).toContain('echo')
   })
 
-  it('rejects cwd outside workspace — hard error, no gate', async () => {
-    const io  = makeIO('o')
-    const ctx = makeCtx({ io })
+  it('prompts when cwd is outside workspace — denied', async () => {
+    const ctx = makeCtx({ io: makeIO('d'), policy: makePolicy(['ls']) })
     const r   = await shellRunHandler.execute({ cmd: 'ls', args: [], cwd: tmpDir }, ctx)
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).toMatch(/outside workspace/)
+    if (!r.ok) expect(r.error).toMatch(/[Dd]enied/)
+  })
+
+  it('allows cwd outside workspace when operator approves once', async () => {
+    const ctx = makeCtx({ io: makeIO('o'), policy: makePolicy(['ls']) })
+    const r   = await shellRunHandler.execute({ cmd: 'ls', args: [], cwd: tmpDir }, ctx)
+    expect(r.ok).toBe(true)
   })
 })
 

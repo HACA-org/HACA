@@ -1,7 +1,7 @@
 // fcp_shell_run — run a shell command within workspace_focus.
 // Allowed commands come from state/allowlist.json (no hardcoded list).
 // Gate: asks if command not in allowlist (once/session/add-to-allowlist/deny).
-// cwd outside workspace is a hard error — no gate.
+// Gate: asks if cwd is outside workspace (once/session/deny).
 import * as path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -41,12 +41,20 @@ export const shellRunHandler: ToolHandler = {
     const workspace = await resolveWorkspace(ctx)
     if (!workspace) return { ok: false, error: 'workspace_focus is not set' }
 
-    // Resolve working directory — cwd outside workspace is a hard error
+    // Resolve working directory
     let cwd = workspace
     if (parsed.cwd) {
       const abs = path.isAbsolute(parsed.cwd) ? parsed.cwd : path.join(workspace, parsed.cwd)
       const cwdErr = checkInsideWorkspace(abs, workspace)
-      if (cwdErr) return { ok: false, error: `cwd outside workspace is not allowed: ${abs}` }
+      if (cwdErr) {
+        // cwd outside workspace — ask operator
+        const decision = await resolveToolApproval(
+          `Run command with cwd outside workspace: ${abs}`,
+          'once-session-deny',
+          ctx.io,
+        )
+        if (!decision.granted) return { ok: false, error: 'Denied by operator.' }
+      }
       cwd = abs
     }
 
