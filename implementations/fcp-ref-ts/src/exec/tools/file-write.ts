@@ -1,6 +1,7 @@
 // fcp_file_write — write content to a file on disk within workspace_focus.
 import * as path from 'node:path'
-import { ensureDir, atomicWrite, readJson, fileExists } from '../../store/io.js'
+import { ensureDir, atomicWrite } from '../../store/io.js'
+import { resolveWorkspace, checkInsideWorkspace } from '../workspace.js'
 import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
 
 function extractParams(params: unknown): { path: string; content: string } | null {
@@ -10,16 +11,6 @@ function extractParams(params: unknown): { path: string; content: string } | nul
   const content  = typeof p['content'] === 'string' ? p['content'] : null
   if (!filePath || content === null) return null
   return { path: filePath, content }
-}
-
-async function resolveWorkspace(ctx: ExecContext): Promise<string | null> {
-  if (!await fileExists(ctx.layout.state.workspaceFocus)) return null
-  try {
-    const raw = await readJson(ctx.layout.state.workspaceFocus) as Record<string, unknown>
-    return typeof raw['path'] === 'string' ? raw['path'].trim() : null
-  } catch {
-    return null
-  }
 }
 
 export const fileWriteHandler: ToolHandler = {
@@ -32,9 +23,8 @@ export const fileWriteHandler: ToolHandler = {
     if (!workspace) return { ok: false, error: 'workspace_focus is not set' }
 
     const abs = path.isAbsolute(args.path) ? args.path : path.join(workspace, args.path)
-    if (!abs.startsWith(workspace + path.sep) && abs !== workspace) {
-      return { ok: false, error: 'path is outside workspace_focus' }
-    }
+    const err = checkInsideWorkspace(abs, workspace)
+    if (err) return { ok: false, error: err }
 
     try {
       await ensureDir(path.dirname(abs))

@@ -13,7 +13,10 @@ export async function loadAllowlistPolicy(layout: Layout): Promise<AllowlistPoli
     try {
       const data = parseAllowlistData(await readJson(layout.state.allowlist))
       for (const key of Object.keys(data)) sessionGrants.add(key)
-    } catch { /* ignore malformed file */ }
+    } catch (e: unknown) {
+      // Malformed allowlist — log and proceed with empty grants (don't crash startup)
+      console.warn('[exec:allowlist] malformed allowlist.json, ignoring:', String(e))
+    }
   }
 
   return {
@@ -26,7 +29,7 @@ export async function loadAllowlistPolicy(layout: Layout): Promise<AllowlistPoli
       // Merge into persistent allowlist
       let data: Record<string, true> = {}
       if (await fileExists(layout.state.allowlist)) {
-        try { data = parseAllowlistData(await readJson(layout.state.allowlist)) } catch { /* ignore */ }
+        try { data = parseAllowlistData(await readJson(layout.state.allowlist)) } catch { data = {} }
       }
       data[skillName] = true
       await writeJson(layout.state.allowlist, data)

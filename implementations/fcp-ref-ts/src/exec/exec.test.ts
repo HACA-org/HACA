@@ -136,6 +136,14 @@ describe('EXEC — allowlist', () => {
     const policy = await loadAllowlistPolicy(ctx.layout)
     expect(policy.isAllowed('pre_loaded')).toBe(true)
   })
+
+  it('starts with empty grants when allowlist.json is malformed', async () => {
+    const ctx = makeCtx()
+    await fs.mkdir(ctx.layout.state.dir, { recursive: true })
+    await fs.writeFile(ctx.layout.state.allowlist, 'not-valid-json{{{', 'utf8')
+    const policy = await loadAllowlistPolicy(ctx.layout)
+    expect(policy.isAllowed('any_skill')).toBe(false)
+  })
 })
 
 // ─── fcp_file_read ────────────────────────────────────────────────────────────
@@ -236,6 +244,34 @@ describe('EXEC — fcp_web_fetch', () => {
   it('blocks private RFC-1918 address', async () => {
     const ctx = makeCtx()
     const r   = await webFetchHandler.execute({ url: 'http://192.168.1.100/internal' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/blocked/)
+  })
+
+  it('blocks 10.x RFC-1918 address', async () => {
+    const ctx = makeCtx()
+    const r   = await webFetchHandler.execute({ url: 'http://10.0.0.1/internal' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/blocked/)
+  })
+
+  it('blocks 172.16.x RFC-1918 address', async () => {
+    const ctx = makeCtx()
+    const r   = await webFetchHandler.execute({ url: 'http://172.16.0.1/internal' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/blocked/)
+  })
+
+  it('blocks 172.31.x RFC-1918 address', async () => {
+    const ctx = makeCtx()
+    const r   = await webFetchHandler.execute({ url: 'http://172.31.255.254/internal' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/blocked/)
+  })
+
+  it('blocks IPv6 loopback', async () => {
+    const ctx = makeCtx()
+    const r   = await webFetchHandler.execute({ url: 'http://[::1]/secret' }, ctx)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/blocked/)
   })
