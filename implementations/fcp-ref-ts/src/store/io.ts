@@ -3,7 +3,7 @@ import * as path from 'node:path'
 
 export class IOError extends Error {
   constructor(
-    public readonly op: 'read' | 'write' | 'append' | 'rename' | 'mkdir',
+    public readonly op: 'read' | 'write' | 'append' | 'rename' | 'mkdir' | 'delete',
     public readonly filePath: string,
     message: string,
     public override readonly cause?: unknown,
@@ -45,9 +45,12 @@ export async function readJson(filePath: string): Promise<unknown> {
 }
 
 // Atomic write: tmp sibling → rename. Direct in-place writes are not permitted.
+// Ensures parent directory exists before writing.
 export async function atomicWrite(filePath: string, content: string): Promise<void> {
+  const dir = path.dirname(filePath)
   const tmp = filePath + '.tmp'
   try {
+    await fs.mkdir(dir, { recursive: true })
     await fs.writeFile(tmp, content, 'utf8')
     await fs.rename(tmp, filePath)
   } catch (e: unknown) {
@@ -90,11 +93,15 @@ export async function readJsonl(filePath: string): Promise<unknown[]> {
 }
 
 // Read all .msg files from a directory in ascending ts order (ties by filename).
+// Returns empty array if the directory does not exist.
 export async function drainMsgDir(dirPath: string): Promise<{ file: string; raw: unknown }[]> {
   let entries: string[]
   try {
     entries = await fs.readdir(dirPath)
   } catch (e: unknown) {
+    if (typeof e === 'object' && e !== null && (e as NodeJS.ErrnoException).code === 'ENOENT') {
+      return []
+    }
     throw new IOError('read', dirPath, `Cannot read inbox directory: ${dirPath}`, e)
   }
   const msgs = entries
@@ -113,6 +120,19 @@ export async function deleteFile(filePath: string): Promise<void> {
   try {
     await fs.unlink(filePath)
   } catch (e: unknown) {
-    throw new IOError('write', filePath, `Cannot delete file: ${filePath}`, e)
+    throw new IOError('delete', filePath, `Cannot delete file: ${filePath}`, e)
+  }
+}
+
+// Reads a JSONL file, returning an empty array if the file does not exist.
+export async function readJsonlOrEmpty(filePath: string): Promise<unknown[]> {
+  try {
+    return await readJsonl(filePath)
+  } catch (e: unknown) {
+    if (e instanceof IOError && typeof e.cause === 'object' && e.cause !== null
+        && (e.cause as NodeJS.ErrnoException).code === 'ENOENT') {
+      return []
+    }
+    throw e
   }
 }

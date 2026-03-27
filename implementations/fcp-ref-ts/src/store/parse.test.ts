@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   parseBaseline, parseSessionToken, parseSkillIndex, parseSkillManifest,
   parseIntegrityDocument, parseIntegrityChainEntry, parseWorkingMemory,
-  parseClosurePayload, ParseError,
+  parseClosurePayload, parseAllowlistData, parseSemanticDigest,
+  parseDriftProbe, parseSessionHandoff, ParseError,
 } from './parse.js'
 
 const validBaseline = {
@@ -34,6 +35,20 @@ describe('store/parse', () => {
       try { parseBaseline({}) } catch (e: unknown) { err = e }
       expect(err).toBeInstanceOf(ParseError)
       expect((err as ParseError).schema).toBe('Baseline')
+    })
+
+    it('ParseError wraps non-ZodError as ParseError', () => {
+      // A schema whose .parse() throws something other than ZodError
+      const brokenSchema = { parse: () => { throw new TypeError('internal') } }
+      const parse = (raw: unknown) => {
+        try { return brokenSchema.parse() } catch (e) {
+          if (e instanceof Error && e.name !== 'ZodError') {
+            throw new ParseError('BrokenSchema', { errors: [{ code: 'custom', path: [], message: String(e) }] } as never)
+          }
+          throw e
+        }
+      }
+      expect(() => parse(null)).toThrow(ParseError)
     })
   })
 
@@ -189,6 +204,99 @@ describe('store/parse', () => {
     it('rejects wrong type discriminant', () => {
       const cp = { type: 'wrong', consolidation: 'x', promotion: [], workingMemory: [], sessionHandoff: {} }
       expect(() => parseClosurePayload(cp)).toThrow(ParseError)
+    })
+  })
+
+  describe('parseAllowlistData', () => {
+    it('accepts record of true values', () => {
+      expect(() => parseAllowlistData({ fcp_file_read: true, fcp_shell_run: true })).not.toThrow()
+    })
+
+    it('accepts empty record', () => {
+      expect(() => parseAllowlistData({})).not.toThrow()
+    })
+
+    it('rejects non-true values', () => {
+      expect(() => parseAllowlistData({ fcp_file_read: false })).toThrow(ParseError)
+    })
+
+    it('rejects non-object', () => {
+      expect(() => parseAllowlistData(null)).toThrow(ParseError)
+    })
+  })
+
+  describe('parseSemanticDigest', () => {
+    it('accepts valid digest', () => {
+      const sd = {
+        version: '1.0',
+        lastUpdated: '2026-03-27T12:00:00Z',
+        cyclesEvaluated: 5,
+        probes: {
+          'probe-1': { lastScore: 0.8, meanScore: 0.75, maxScore: 0.9 },
+        },
+      }
+      expect(() => parseSemanticDigest(sd)).not.toThrow()
+    })
+
+    it('accepts empty probes', () => {
+      const sd = { version: '1.0', lastUpdated: '2026-03-27T12:00:00Z', cyclesEvaluated: 0, probes: {} }
+      expect(() => parseSemanticDigest(sd)).not.toThrow()
+    })
+
+    it('rejects score out of range', () => {
+      const sd = {
+        version: '1.0', lastUpdated: '2026-03-27T12:00:00Z', cyclesEvaluated: 1,
+        probes: { 'p': { lastScore: 1.5, meanScore: 0.5, maxScore: 0.9 } },
+      }
+      expect(() => parseSemanticDigest(sd)).toThrow(ParseError)
+    })
+  })
+
+  describe('parseDriftProbe', () => {
+    it('accepts probe with null deterministic and null reference', () => {
+      const probe = {
+        id: 'probe-1',
+        description: 'checks identity drift',
+        target: 'memory/semantic/identity.md',
+        deterministic: null,
+        reference: null,
+      }
+      expect(() => parseDriftProbe(probe)).not.toThrow()
+    })
+
+    it('accepts probe with hash deterministic layer', () => {
+      const probe = {
+        id: 'probe-2',
+        description: 'hash check',
+        target: 'memory/semantic/values.md',
+        deterministic: { type: 'hash', value: 'sha256:abc123' },
+        reference: null,
+      }
+      expect(() => parseDriftProbe(probe)).not.toThrow()
+    })
+
+    it('rejects target not starting with memory/', () => {
+      const probe = {
+        id: 'probe-3', description: 'bad', target: 'state/baseline.json',
+        deterministic: null, reference: null,
+      }
+      expect(() => parseDriftProbe(probe)).toThrow(ParseError)
+    })
+  })
+
+  describe('parseSessionHandoff', () => {
+    it('accepts valid handoff file', () => {
+      const h = { pendingTasks: ['task A'], nextSteps: 'continue X' }
+      expect(() => parseSessionHandoff(h)).not.toThrow()
+    })
+
+    it('accepts empty pendingTasks', () => {
+      const h = { pendingTasks: [], nextSteps: '' }
+      expect(() => parseSessionHandoff(h)).not.toThrow()
+    })
+
+    it('rejects missing nextSteps', () => {
+      expect(() => parseSessionHandoff({ pendingTasks: [] })).toThrow(ParseError)
     })
   })
 })

@@ -32,7 +32,9 @@ function makeParse<T>(name: string, schema: { parse: (data: unknown) => T }) {
       return schema.parse(raw)
     } catch (e: unknown) {
       if (e instanceof ZodError) throw new ParseError(name, e)
-      throw e
+      throw new ParseError(name, new ZodError([{
+        code: 'custom', path: [], message: `Unexpected parse error: ${String(e)}`,
+      }]))
     }
   }
 }

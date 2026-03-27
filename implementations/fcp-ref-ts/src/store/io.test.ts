@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import {
-  readJson, writeJson, appendJsonl, readJsonl,
+  readJson, writeJson, appendJsonl, readJsonl, readJsonlOrEmpty,
   atomicWrite, ensureDir, fileExists, drainMsgDir, deleteFile,
   IOError,
 } from './io.js'
@@ -88,6 +88,62 @@ describe('store/io', () => {
       const file = path.join(tmp, 'new.jsonl')
       await appendJsonl(file, { first: true })
       expect(await fileExists(file)).toBe(true)
+    })
+
+    it('readJsonlOrEmpty returns [] for non-existent file', async () => {
+      const file = path.join(tmp, 'missing.jsonl')
+      expect(await readJsonlOrEmpty(file)).toEqual([])
+    })
+
+    it('readJsonlOrEmpty returns content when file exists', async () => {
+      const file = path.join(tmp, 'exists.jsonl')
+      await appendJsonl(file, { x: 1 })
+      expect(await readJsonlOrEmpty(file)).toEqual([{ x: 1 }])
+    })
+
+    it('readJsonlOrEmpty propagates IOError on malformed line', async () => {
+      const file = path.join(tmp, 'bad2.jsonl')
+      await fs.writeFile(file, 'not json\n', 'utf8')
+      await expect(readJsonlOrEmpty(file)).rejects.toBeInstanceOf(IOError)
+    })
+  })
+
+  // --- atomicWrite ---
+
+  describe('atomicWrite', () => {
+    it('creates parent directories if missing', async () => {
+      const file = path.join(tmp, 'a', 'b', 'state.json')
+      await atomicWrite(file, '{"ok":true}')
+      expect(await fileExists(file)).toBe(true)
+    })
+
+    it('cleans up .tmp on failure', async () => {
+      // Write to a path whose parent is a file (not a dir) — will fail
+      const blocker = path.join(tmp, 'blocker')
+      await fs.writeFile(blocker, 'x', 'utf8')
+      const file = path.join(blocker, 'state.json')
+      await expect(atomicWrite(file, '{}')).rejects.toBeInstanceOf(IOError)
+      expect(await fileExists(file + '.tmp')).toBe(false)
+    })
+  })
+
+  // --- deleteFile ---
+
+  describe('deleteFile', () => {
+    it('op is "delete" in thrown IOError', async () => {
+      let err: unknown
+      try { await deleteFile(path.join(tmp, 'nope2')) } catch (e) { err = e }
+      expect(err).toBeInstanceOf(IOError)
+      expect((err as IOError).op).toBe('delete')
+    })
+  })
+
+  // --- drainMsgDir ---
+
+  describe('drainMsgDir', () => {
+    it('returns [] for non-existent directory', async () => {
+      const missing = path.join(tmp, 'no-such-inbox')
+      expect(await drainMsgDir(missing)).toEqual([])
     })
   })
 
