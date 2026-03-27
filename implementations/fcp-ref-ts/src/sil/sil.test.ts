@@ -15,6 +15,7 @@ import { identityCheck } from './checks/identity.js'
 import { createHeartbeat } from './heartbeat.js'
 import { approveProposal, runEndureProtocol } from './endure.js'
 import { evolutionProposalHandler } from './tools/evolution-proposal.js'
+import { sessionCloseHandler, SESSION_CLOSE_SIGNAL } from './tools/session-close.js'
 import { runDriftEvaluation } from './drift.js'
 import type { HeartbeatContext } from '../types/sil.js'
 import type { ExecContext } from '../types/exec.js'
@@ -366,5 +367,56 @@ describe('SIL — drift', () => {
     const reports = await runDriftEvaluation(layout, logger)
     expect(reports).toHaveLength(1)
     expect(reports[0]!.exceeds).toBe(true)
+  })
+})
+
+// ─── SIL tool handlers ───────────────────────────────────────────────────────
+
+describe('SIL — fcp_session_close', () => {
+  it('returns the SESSION_CLOSE_SIGNAL sentinel', async () => {
+    const layout = createLayout(tmpDir)
+    const logger = createLogger({ test: true })
+    const ctx    = makeSilExecCtx(layout, logger)
+    const r = await sessionCloseHandler.execute({}, ctx)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.output).toBe(SESSION_CLOSE_SIGNAL)
+  })
+})
+
+describe('SIL — fcp_evolution_proposal', () => {
+  it('creates state/ dir if missing', async () => {
+    const layout = createLayout(tmpDir)
+    const logger = createLogger({ test: true })
+    const ctx    = makeSilExecCtx(layout, logger)
+    const r = await evolutionProposalHandler.execute({ content: 'add new skill' }, ctx)
+    expect(r.ok).toBe(true)
+    await expect(fs.access(layout.state.pendingProposals)).resolves.toBeUndefined()
+  })
+
+  it('requires content', async () => {
+    const layout = createLayout(tmpDir)
+    const logger = createLogger({ test: true })
+    const ctx    = makeSilExecCtx(layout, logger)
+    const r = await evolutionProposalHandler.execute({}, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/content/)
+  })
+
+  it('rejects empty content', async () => {
+    const layout = createLayout(tmpDir)
+    const logger = createLogger({ test: true })
+    const ctx    = makeSilExecCtx(layout, logger)
+    const r = await evolutionProposalHandler.execute({ content: '   ' }, ctx)
+    expect(r.ok).toBe(false)
+  })
+
+  it('accumulates multiple proposals', async () => {
+    const layout = createLayout(tmpDir)
+    const logger = createLogger({ test: true })
+    const ctx    = makeSilExecCtx(layout, logger)
+    await evolutionProposalHandler.execute({ content: 'proposal one' }, ctx)
+    await evolutionProposalHandler.execute({ content: 'proposal two' }, ctx)
+    const data = JSON.parse(await fs.readFile(layout.state.pendingProposals, 'utf8')) as { proposals: unknown[] }
+    expect(data.proposals).toHaveLength(2)
   })
 })

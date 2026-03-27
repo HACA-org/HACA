@@ -1,18 +1,31 @@
 // fcp_evolution_proposal — SIL tool: queue an evolution proposal for Operator review.
 import { randomUUID } from 'node:crypto'
+import { z } from 'zod'
 import { sha256Digest } from '../../boot/integrity.js'
-import { writeJson, readJson, fileExists } from '../../store/io.js'
+import { ensureDir, writeJson, readJson, fileExists } from '../../store/io.js'
 import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
 
-interface Proposal {
-  id:       string
-  content:  string
-  digest:   string
-  queuedAt: string
-}
+const ProposalSchema = z.object({
+  id:         z.string(),
+  content:    z.string(),
+  digest:     z.string(),
+  queuedAt:   z.string(),
+  approvedAt: z.string().optional(),
+})
 
-interface ProposalsFile {
-  proposals: Proposal[]
+const ProposalsFileSchema = z.object({
+  proposals: z.array(ProposalSchema),
+})
+
+type Proposal = z.infer<typeof ProposalSchema>
+
+async function loadProposals(filePath: string): Promise<Proposal[]> {
+  try {
+    const raw = await readJson(filePath)
+    return ProposalsFileSchema.parse(raw).proposals
+  } catch {
+    return []
+  }
 }
 
 export const evolutionProposalHandler: ToolHandler = {
@@ -31,12 +44,14 @@ export const evolutionProposalHandler: ToolHandler = {
       queuedAt: new Date().toISOString(),
     }
 
-    const existing: ProposalsFile = await fileExists(ctx.layout.state.pendingProposals)
-      ? (await readJson(ctx.layout.state.pendingProposals) as ProposalsFile)
-      : { proposals: [] }
+    await ensureDir(ctx.layout.state.dir)
+
+    const existing = await fileExists(ctx.layout.state.pendingProposals)
+      ? await loadProposals(ctx.layout.state.pendingProposals)
+      : []
 
     await writeJson(ctx.layout.state.pendingProposals, {
-      proposals: [...(existing.proposals ?? []), proposal],
+      proposals: [...existing, proposal],
     })
 
     ctx.logger.info('sil:evolution_proposal', { id: proposal.id })

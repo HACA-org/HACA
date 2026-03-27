@@ -1,7 +1,8 @@
 // SIL Endure — evolution proposal commit protocol.
-// Proposals are queued by fcp_evolution_proposal (exec tool) in state/pending-proposals.json.
+// Proposals are queued by fcp_evolution_proposal in state/pending-proposals.json.
 // runEndureProtocol() processes approved ones during the sleep cycle.
-import { fileExists, readJson, writeJson } from '../store/io.js'
+import { z } from 'zod'
+import { fileExists, readJson, writeJson, deleteFile } from '../store/io.js'
 import { refreshIntegrityDoc, currentFileHashes } from './integrity.js'
 import { appendEndureCommit } from './chain.js'
 import { sha256Digest } from '../boot/integrity.js'
@@ -9,24 +10,36 @@ import type { Layout }   from '../types/store.js'
 import type { Logger }   from '../types/logger.js'
 import type { EndureProposal } from '../types/sil.js'
 
-interface ProposalsFile {
-  readonly proposals: (EndureProposal & { approvedAt?: string })[]
-}
+const ProposalSchema = z.object({
+  id:         z.string(),
+  content:    z.string(),
+  digest:     z.string(),
+  queuedAt:   z.string(),
+  approvedAt: z.string().optional(),
+})
 
-export async function readPendingProposals(layout: Layout): Promise<EndureProposal[]> {
+const ProposalsFileSchema = z.object({
+  proposals: z.array(ProposalSchema),
+})
+
+type Proposal = z.infer<typeof ProposalSchema>
+
+async function loadProposalsFile(layout: Layout): Promise<Proposal[]> {
   if (!await fileExists(layout.state.pendingProposals)) return []
   try {
-    const data = await readJson(layout.state.pendingProposals) as ProposalsFile
-    return data.proposals ?? []
+    const raw = await readJson(layout.state.pendingProposals)
+    return ProposalsFileSchema.parse(raw).proposals
   } catch {
     return []
   }
 }
 
+export async function readPendingProposals(layout: Layout): Promise<EndureProposal[]> {
+  return loadProposalsFile(layout) as Promise<EndureProposal[]>
+}
+
 export async function approveProposal(layout: Layout, id: string): Promise<boolean> {
-  if (!await fileExists(layout.state.pendingProposals)) return false
-  const file = await readJson(layout.state.pendingProposals) as ProposalsFile
-  const proposals = file.proposals ?? []
+  const proposals = await loadProposalsFile(layout)
   const idx = proposals.findIndex(p => p.id === id)
   if (idx < 0) return false
 
@@ -40,10 +53,7 @@ export async function approveProposal(layout: Layout, id: string): Promise<boole
 // ─── Endure protocol ─────────────────────────────────────────────────────────
 
 export async function runEndureProtocol(layout: Layout, logger: Logger): Promise<void> {
-  if (!await fileExists(layout.state.pendingProposals)) return
-
-  const file = await readJson(layout.state.pendingProposals) as ProposalsFile
-  const proposals  = file.proposals ?? []
+  const proposals  = await loadProposalsFile(layout)
   const approved   = proposals.filter(p => p.approvedAt)
   const unapproved = proposals.filter(p => !p.approvedAt)
 
@@ -52,19 +62,16 @@ export async function runEndureProtocol(layout: Layout, logger: Logger): Promise
 
   for (const proposal of approved) {
     const evolutionAuthDigest = sha256Digest(`${proposal.id}:${proposal.content}`)
-
-    const integrityDocHash = await refreshIntegrityDoc(layout)
-    const files = await currentFileHashes(layout)
-
+    const integrityDocHash    = await refreshIntegrityDoc(layout)
+    const files               = await currentFileHashes(layout)
     await appendEndureCommit(layout, { evolutionAuthDigest, files, integrityDocHash })
     logger.info('sil:endure_commit', { id: proposal.id })
   }
 
-  // Persist only unapproved proposals
+  // Persist only unapproved proposals; remove file if all approved
   if (unapproved.length > 0) {
     await writeJson(layout.state.pendingProposals, { proposals: unapproved })
   } else {
-    const { deleteFile } = await import('../store/io.js')
     await deleteFile(layout.state.pendingProposals).catch(() => undefined)
   }
 
