@@ -5,11 +5,10 @@ import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { fileExists, ensureDir, readJson, writeJson, appendJsonl } from '../store/io.js'
-import { parseBaseline, parseSkillManifest } from '../store/parse.js'
+import { parseBaseline } from '../store/parse.js'
 import { sha256Digest, getTrackedFiles, hashTrackedFiles } from './integrity.js'
 import { FAPError } from '../types/boot.js'
 import type { FAPOptions, FAPResult } from '../types/boot.js'
-import type { SkillEntry } from '../types/formats/skills.js'
 
 export async function runFAP(opts: FAPOptions): Promise<FAPResult> {
   const { layout, operatorName, operatorEmail, logger, io } = opts
@@ -31,18 +30,12 @@ export async function runFAP(opts: FAPOptions): Promise<FAPResult> {
     const baselineRaw = await readJson(layout.state.baseline)
     const baseline = parseBaseline(baselineRaw)
 
-    // Scan skills/lib/ manifests → build skills index
-    const entries: SkillEntry[] = []
-    for (const ent of await safeReaddir(layout.skills.lib)) {
-      if (!ent.isDirectory()) continue
-      const mp = path.join(layout.skills.lib, ent.name, 'manifest.json')
-      if (!await fileExists(mp)) continue
-      const m = parseSkillManifest(await readJson(mp))
-      entries.push({ name: m.name, desc: m.description, manifest: `lib/${ent.name}/manifest.json`, class: m.class })
-    }
+    // Built-in tools live in exec/tools/ — skills/ contains only operator/entity custom skills.
+    // At FAP time there are no custom skills yet; the index starts empty.
     await ensureDir(layout.skills.dir)
-    await track(layout.skills.index, { version: '1.0', skills: entries, aliases: {} })
-    log.info('fap:step1:ok', { skills: entries.length })
+    await ensureDir(layout.skills.lib)
+    await track(layout.skills.index, { version: '1.0', skills: [], aliases: {} })
+    log.info('fap:step1:ok', { skills: 0 })
 
     // ── Step 2: Host Environment Capture ───────────────────────────────────
     io.write('FAP 2/8: host environment capture')
