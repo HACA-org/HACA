@@ -3,7 +3,7 @@ import type { Baseline }      from './formats/baseline.js'
 import type { ClosurePayload } from './formats/memory.js'
 import type { CPEAdapter, ToolUseBlock } from './cpe.js'
 import type { Logger }        from './logger.js'
-import type { AllowlistPolicy, ToolResult } from './exec.js'
+import type { AllowlistPolicy, ToolHandler, ToolResult } from './exec.js'
 
 export type CloseReason =
   | 'normal'
@@ -45,10 +45,13 @@ export interface SessionOptions {
   readonly baseline:   Baseline
   readonly cpe:        CPEAdapter
   readonly policy:     AllowlistPolicy
+  readonly tools:      ToolHandler[]
   readonly logger:     Logger
   readonly io:         SessionIO
   readonly sessionId:  string
   readonly profile:    'HACA-Core' | 'HACA-Evolve'
+  // Initial messages from boot context assembly (Phase 5).
+  readonly contextMessages?: import('./cpe.js').CPEMessage[]
 }
 
 export type LoopResult =
