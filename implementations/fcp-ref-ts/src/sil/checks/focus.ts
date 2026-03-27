@@ -1,4 +1,4 @@
-// Vital check: workspace focus — validate state/workspace_focus.json path safety.
+// Vital check: workspace focus — validate state/workspace-focus.json path safety.
 import * as path from 'node:path'
 import * as os from 'node:os'
 import { fileExists, readJson } from '../../store/io.js'

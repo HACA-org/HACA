@@ -72,7 +72,7 @@ export async function currentFileHashes(layout: Layout): Promise<Record<string, 
   return hashes
 }
 
-// Verify the genesis entry and every subsequent link in integrity_chain.jsonl.
+// Verify the genesis entry and every subsequent link in integrity-chain.jsonl.
 // An empty chain (entity never evolved past FAP) is valid.
 export async function verifyChainFromImprint(layout: Layout): Promise<ChainVerificationResult> {
   if (!await fileExists(layout.memory.imprint)) {

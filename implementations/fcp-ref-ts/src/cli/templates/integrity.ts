@@ -34,7 +34,7 @@ export function personaProtocol(): string {
 }
 
 export function bootMd(): string {
-  return `# Boot Protocol\n\n## Memory Interface\n\nUse these tools to persist context across sessions.\n\n---\n\n## Skills\n\nSkills extend your capabilities and are invoked as tool calls.\n\n**Built-in tools:**\n- **fcp_file_read** — read a file from the entity filesystem.\n- **fcp_file_write** — write a file to the entity filesystem.\n- **fcp_web_fetch** — fetch a URL (private IPs blocked).\n- **fcp_shell_run** — execute a whitelisted shell command.\n- **fcp_worker_skill** — invoke a named skill from the skill library.\n- **fcp_skill_create** — scaffold a new custom skill.\n- **fcp_skill_audit** — validate a skill manifest and run.js.\n\n---\n\n## Session Close\n\nAt the end of every session, the FCP will run the sleep cycle to consolidate memory and update the integrity chain.\n`
+  return `# Boot Protocol\n\n## Memory Interface\n\nUse these tools to persist context across sessions.\n\n---\n\n## Skills\n\nSkills extend your capabilities and are invoked as tool calls.\n\n**Built-in tools:**\n- **fcp_file_read** — read a file from the entity filesystem.\n- **fcp_file_write** — write a file to the entity filesystem.\n- **fcp_web_fetch** — fetch a URL (private IPs blocked).\n- **fcp_shell_run** — execute a whitelisted shell command.\n- **fcp_agent_run** — instantiate a named skill as an isolated agent subprocess.\n- **fcp_skill_create** — scaffold a new custom skill.\n- **fcp_skill_audit** — validate a skill manifest and run.js.\n\n---\n\n## Session Close\n\nAt the end of every session, the FCP will run the sleep cycle to consolidate memory and update the integrity chain.\n`
 }
 
 export const GITIGNORE = `# FCP runtime state

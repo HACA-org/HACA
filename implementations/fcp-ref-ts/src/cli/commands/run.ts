@@ -18,7 +18,7 @@ import { fileReadHandler }    from '../../exec/tools/file-read.js'
 import { fileWriteHandler }   from '../../exec/tools/file-write.js'
 import { webFetchHandler }    from '../../exec/tools/web-fetch.js'
 import { shellRunHandler }    from '../../exec/tools/shell-run.js'
-import { workerSkillHandler } from '../../exec/tools/worker-skill.js'
+import { agentRunHandler }    from '../../exec/tools/agent-run.js'
 import { skillCreateHandler } from '../../exec/tools/skill-create.js'
 import { skillAuditHandler }  from '../../exec/tools/skill-audit.js'
 import { runSessionLoop }    from '../../session/loop.js'
@@ -142,7 +142,7 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
   const policy = await loadAllowlistPolicy(layout)
   const tools  = [
     fileReadHandler, fileWriteHandler, webFetchHandler,
-    shellRunHandler, workerSkillHandler, skillCreateHandler, skillAuditHandler,
+    shellRunHandler, agentRunHandler, skillCreateHandler, skillAuditHandler,
   ]
   const profile = baseline.cpe.topology === 'opaque' ? 'HACA-Evolve' : 'HACA-Core'
 

@@ -1,4 +1,4 @@
-// Append-only integrity chain — state/integrity_chain.jsonl.
+// Append-only integrity chain — state/integrity-chain.jsonl.
 // Each entry is linked to the previous via prev_hash = sha256Digest(JSON.stringify(prevEntry)).
 // Genesis is written by FAP; this module appends post-genesis entries.
 import { appendJsonl, fileExists } from '../store/io.js'

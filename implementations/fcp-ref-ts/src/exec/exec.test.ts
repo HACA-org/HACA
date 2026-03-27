@@ -12,7 +12,7 @@ import { fileReadHandler }     from './tools/file-read.js'
 import { fileWriteHandler }    from './tools/file-write.js'
 import { webFetchHandler }     from './tools/web-fetch.js'
 import { shellRunHandler }     from './tools/shell-run.js'
-import { workerSkillHandler }  from './tools/worker-skill.js'
+import { agentRunHandler }     from './tools/agent-run.js'
 import { skillCreateHandler }  from './tools/skill-create.js'
 import { skillAuditHandler }   from './tools/skill-audit.js'
 import type { ExecContext }    from '../types/exec.js'
@@ -262,12 +262,12 @@ describe('EXEC — fcp_shell_run', () => {
   })
 })
 
-// ─── fcp_worker_skill ────────────────────────────────────────────────────────
+// ─── fcp_agent_run ───────────────────────────────────────────────────────────
 
-describe('EXEC — fcp_worker_skill', () => {
+describe('EXEC — fcp_agent_run', () => {
   it('returns error when skill index missing', async () => {
     const ctx = makeCtx()
-    const r   = await workerSkillHandler.execute({ skill: 'my_skill' }, ctx)
+    const r   = await agentRunHandler.execute({ skill: 'my_skill' }, ctx)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/index.json/)
   })
@@ -277,21 +277,21 @@ describe('EXEC — fcp_worker_skill', () => {
     await fs.mkdir(ctx.layout.skills.dir, { recursive: true })
     await fs.writeFile(ctx.layout.skills.index,
       JSON.stringify({ version: '1.0', skills: [], aliases: {} }), 'utf8')
-    const r = await workerSkillHandler.execute({ skill: 'missing_skill' }, ctx)
+    const r = await agentRunHandler.execute({ skill: 'missing_skill' }, ctx)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/not found/)
   })
 
   it('rejects invalid skill name format', async () => {
     const ctx = makeCtx()
-    const r   = await workerSkillHandler.execute({ skill: 'INVALID SKILL' }, ctx)
+    const r   = await agentRunHandler.execute({ skill: 'INVALID SKILL' }, ctx)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/invalid skill name/)
   })
 
   it('requires skill param', async () => {
     const ctx = makeCtx()
-    const r   = await workerSkillHandler.execute({}, ctx)
+    const r   = await agentRunHandler.execute({}, ctx)
     expect(r.ok).toBe(false)
   })
 })

@@ -1,4 +1,4 @@
-// fcp_worker_skill — invoke a named skill from the entity's skill library.
+// fcp_agent_run — instantiate a named skill as an isolated agent subprocess.
 // Looks up the skill in skills/index.json, then executes skills/<name>/run.js
 // with a 30-second timeout in a child process.
 import { spawn } from 'node:child_process'
@@ -10,12 +10,12 @@ import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
 const DEFAULT_TIMEOUT_MS = 30_000
 const MAX_OUT_BYTES      = 256 * 1024
 
-interface WorkerParams {
+interface AgentRunParams {
   skill:  string
   input?: unknown
 }
 
-function extractParams(params: unknown): WorkerParams | null {
+function extractParams(params: unknown): AgentRunParams | null {
   if (typeof params !== 'object' || params === null) return null
   const p = params as Record<string, unknown>
   const skill = typeof p['skill'] === 'string' ? p['skill'].trim() : null
@@ -23,8 +23,8 @@ function extractParams(params: unknown): WorkerParams | null {
   return { skill, input: p['input'] }
 }
 
-export const workerSkillHandler: ToolHandler = {
-  name: 'fcp_worker_skill',
+export const agentRunHandler: ToolHandler = {
+  name: 'fcp_agent_run',
   async execute(params: unknown, ctx: ExecContext): Promise<ToolResult> {
     const parsed = extractParams(params)
     if (!parsed) return { ok: false, error: 'skill name is required' }
@@ -52,7 +52,7 @@ export const workerSkillHandler: ToolHandler = {
     }
 
     const inputJson = JSON.stringify(parsed.input ?? {})
-    ctx.logger.info('exec:worker_skill', { skill: parsed.skill })
+    ctx.logger.info('exec:agent_run', { skill: parsed.skill })
 
     return new Promise<ToolResult>((resolve) => {
       let stdout = ''

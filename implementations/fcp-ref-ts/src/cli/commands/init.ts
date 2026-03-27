@@ -75,9 +75,9 @@ async function scaffoldEntity(root: string, profile: Profile): Promise<void> {
   const dirs = [
     path.join(root, 'memory', 'episodic'),
     path.join(root, 'memory', 'semantic'),
-    path.join(root, 'memory', 'active_context'),
+    path.join(root, 'memory', 'active-context'),
     path.join(root, 'state', 'sentinels'),
-    path.join(root, 'state', 'operator_notifications'),
+    path.join(root, 'state', 'operator-notifications'),
     path.join(root, 'io', 'inbox', 'presession'),
     path.join(root, 'io', 'spool'),
     path.join(root, 'persona'),
