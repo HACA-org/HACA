@@ -6,10 +6,8 @@ import { MILError } from '../types/mil.js'
 import type { Layout } from '../types/store.js'
 import type { WorkingMemory, WorkingMemoryEntry } from '../types/formats/memory.js'
 
-const EMPTY: WorkingMemory = { version: '1.0', entries: [] }
-
 export async function getWorkingMemory(layout: Layout): Promise<WorkingMemory> {
-  if (!await fileExists(layout.memory.workingMemory)) return EMPTY
+  if (!await fileExists(layout.memory.workingMemory)) return { version: '1.0', entries: [] }
   try {
     return parseWorkingMemory(await readJson(layout.memory.workingMemory))
   } catch (e: unknown) {

@@ -71,19 +71,25 @@ export async function processClosure(
   maxEntries: number,
 ): Promise<void> {
   const store = createMemoryStore(layout, sessionId, logger)
+  const log   = logger.child({ module: 'mil', fn: 'processClosure' })
 
-  // Write session consolidation to episodic
-  if (closure.consolidation.trim()) {
-    await store.writeEpisodic('consolidation', closure.consolidation)
-  }
+  try {
+    // Write session consolidation to episodic
+    if (closure.consolidation.trim()) {
+      await store.writeEpisodic('consolidation', closure.consolidation)
+    }
 
-  // Promote requested slugs to semantic
-  if (closure.promotion.length > 0) {
-    await store.promoteSlugs(closure.promotion)
-  }
+    // Promote requested slugs to semantic
+    if (closure.promotion.length > 0) {
+      await store.promoteSlugs(closure.promotion)
+    }
 
-  // Merge working memory updates
-  if (closure.workingMemory.length > 0) {
-    await mergeWorkingMemory(layout, closure.workingMemory, maxEntries)
+    // Merge working memory updates
+    if (closure.workingMemory.length > 0) {
+      await mergeWorkingMemory(layout, closure.workingMemory, maxEntries)
+    }
+  } catch (e: unknown) {
+    log.error('mil:closure:failed', { err: String(e) })
+    throw e
   }
 }

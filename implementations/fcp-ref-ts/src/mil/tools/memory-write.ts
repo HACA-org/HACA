@@ -12,7 +12,7 @@ export const memoryWriteHandler: ToolHandler = {
     const slug    = typeof p['slug']    === 'string' ? p['slug'].trim()    : null
     const content = typeof p['content'] === 'string' ? p['content'].trim() : null
     if (!slug)    return { ok: false, error: 'slug is required' }
-    if (!content) return { ok: false, error: 'content is required' }
+    if (!content) return { ok: false, error: 'content must not be empty' }
     if (!/^[a-z0-9-]+$/.test(slug)) return { ok: false, error: 'slug must be lowercase alphanumeric and hyphens only' }
 
     const entry = await writeEpisodic(ctx.layout, ctx.sessionId, slug, content)

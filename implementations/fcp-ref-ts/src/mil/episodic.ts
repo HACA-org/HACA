@@ -64,7 +64,7 @@ export async function searchEpisodic(layout: Layout, query: string): Promise<str
     for (const file of files.filter(f => !f.isDirectory())) {
       const fp = path.join(dirPath, file.name)
       const content = await fs.readFile(fp, 'utf8').catch(() => '')
-      if (content.toLowerCase().includes(query.toLowerCase())) {
+      if (content.toLowerCase().includes(query)) {
         results.push(path.relative(layout.root, fp))
       }
     }

@@ -1,4 +1,4 @@
-// MIL unit tests — episodic, semantic, working memory, recall, processClosure.
+// MIL unit tests — episodic, semantic, working memory, recall, processClosure, tool handlers.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as os from 'node:os'
 import * as fs from 'node:fs/promises'
@@ -9,6 +9,23 @@ import { writeEpisodic, rotateEpisodic } from './episodic.js'
 import { writeSemantic, searchSemantic } from './semantic.js'
 import { getWorkingMemory, setWorkingMemory, mergeWorkingMemory } from './working.js'
 import { recall, processClosure } from './recall.js'
+import { memoryRecallHandler } from './tools/memory-recall.js'
+import { memoryWriteHandler }  from './tools/memory-write.js'
+import { closurePayloadHandler } from './tools/closure-payload.js'
+import type { ExecContext } from '../types/exec.js'
+
+function makeCtx(layout: ReturnType<typeof createLayout>): ExecContext {
+  return {
+    layout,
+    baseline:       {} as import('../types/formats/baseline.js').Baseline,
+    logger:         createLogger({ test: true }),
+    sessionId:      'test-session',
+    policy:         { commands: [], domains: [], skills: [],
+      async addCommand() {}, async addDomain() {}, async addSkill() {} },
+    io:             { async prompt() { return '' }, write() {} },
+    firstWriteDone: { value: false },
+  }
+}
 
 let tmpDir: string
 
@@ -153,5 +170,112 @@ describe('MIL — processClosure', () => {
     // Check working memory was updated
     const wm = await getWorkingMemory(layout)
     expect(wm.entries.some(e => e.path === 'src/main.ts')).toBe(true)
+  })
+})
+
+// ─── MIL tool handlers ────────────────────────────────────────────────────────
+
+describe('MIL — fcp_memory_write', () => {
+  it('writes an episodic entry and returns the path', async () => {
+    const layout = createLayout(tmpDir)
+    const ctx    = makeCtx(layout)
+    const r = await memoryWriteHandler.execute({ slug: 'my-note', content: 'Some content.' }, ctx)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.output).toMatch(/my-note/)
+  })
+
+  it('requires slug', async () => {
+    const ctx = makeCtx(createLayout(tmpDir))
+    const r   = await memoryWriteHandler.execute({ content: 'hello' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/slug/)
+  })
+
+  it('requires content', async () => {
+    const ctx = makeCtx(createLayout(tmpDir))
+    const r   = await memoryWriteHandler.execute({ slug: 'note' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/content/)
+  })
+
+  it('rejects whitespace-only content', async () => {
+    const ctx = makeCtx(createLayout(tmpDir))
+    const r   = await memoryWriteHandler.execute({ slug: 'note', content: '   ' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/empty/)
+  })
+
+  it('rejects invalid slug format', async () => {
+    const ctx = makeCtx(createLayout(tmpDir))
+    const r   = await memoryWriteHandler.execute({ slug: 'My Note!', content: 'hi' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/slug/)
+  })
+})
+
+describe('MIL — fcp_memory_recall', () => {
+  it('returns no-match message when nothing found', async () => {
+    const ctx = makeCtx(createLayout(tmpDir))
+    const r   = await memoryRecallHandler.execute({ query: 'zzz-never-matches' }, ctx)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.output).toMatch(/No memory found/)
+  })
+
+  it('finds content written via memory-write', async () => {
+    const layout = createLayout(tmpDir)
+    const ctx    = makeCtx(layout)
+    await memoryWriteHandler.execute({ slug: 'test-topic', content: 'unique-keyword-xyz' }, ctx)
+    const r = await memoryRecallHandler.execute({ query: 'unique-keyword-xyz' }, ctx)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.output).toContain('unique-keyword-xyz')
+  })
+
+  it('requires query', async () => {
+    const ctx = makeCtx(createLayout(tmpDir))
+    const r   = await memoryRecallHandler.execute({}, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/query/)
+  })
+
+  it('rejects empty query', async () => {
+    const ctx = makeCtx(createLayout(tmpDir))
+    const r   = await memoryRecallHandler.execute({ query: '' }, ctx)
+    expect(r.ok).toBe(false)
+  })
+})
+
+describe('MIL — fcp_closure_payload', () => {
+  const VALID_PAYLOAD = {
+    type:          'closure_payload' as const,
+    consolidation: 'Session summary.',
+    promotion:     ['key-concept'],
+    workingMemory: [{ priority: 5, path: 'src/main.ts' }],
+    sessionHandoff: { pendingTasks: [], nextSteps: 'Continue tomorrow.' },
+  }
+
+  it('stages a valid closure payload to pending-closure.json', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    const ctx = makeCtx(layout)
+    const r = await closurePayloadHandler.execute(VALID_PAYLOAD, ctx)
+    expect(r.ok).toBe(true)
+    const raw = JSON.parse(await fs.readFile(layout.state.pendingClosure, 'utf8'))
+    expect(raw.consolidation).toBe('Session summary.')
+    expect(raw.promotion).toContain('key-concept')
+  })
+
+  it('creates state/ dir if missing', async () => {
+    const layout = createLayout(tmpDir)
+    const ctx    = makeCtx(layout)
+    const r = await closurePayloadHandler.execute(VALID_PAYLOAD, ctx)
+    expect(r.ok).toBe(true)
+    await expect(fs.access(layout.state.pendingClosure)).resolves.toBeUndefined()
+  })
+
+  it('rejects invalid payload', async () => {
+    const ctx = makeCtx(createLayout(tmpDir))
+    const r   = await closurePayloadHandler.execute({ bad: 'data' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/invalid closure payload/)
   })
 })
