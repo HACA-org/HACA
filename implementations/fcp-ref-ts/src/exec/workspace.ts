@@ -7,7 +7,9 @@ export async function resolveWorkspace(ctx: ExecContext): Promise<string | null>
   if (!await fileExists(ctx.layout.state.workspaceFocus)) return null
   try {
     const raw = await readJson(ctx.layout.state.workspaceFocus) as Record<string, unknown>
-    return typeof raw['path'] === 'string' ? raw['path'].trim() : null
+    const p = typeof raw['path'] === 'string' ? raw['path'].trim() : null
+    // Normalize to remove trailing slashes so startsWith check in checkInsideWorkspace is reliable
+    return p ? path.normalize(p) : null
   } catch {
     return null
   }

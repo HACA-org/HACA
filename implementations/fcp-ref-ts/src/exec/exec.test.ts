@@ -186,6 +186,31 @@ describe('EXEC — allowlist', () => {
     expect(policy.skills).toContain('my_skill')
   })
 
+  it('session grant is visible in-memory but does not write allowlist.json', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    const policy = await loadAllowlistPolicy(layout)
+    await policy.addCommand('git', 'session')
+    expect(policy.commands).toContain('git')
+    // allowlist.json must not exist — session grant must not be persisted
+    expect(await fs.access(layout.state.allowlist).then(() => true).catch(() => false)).toBe(false)
+  })
+
+  it('session grant does not leak to disk when a subsequent persistent grant triggers persistCurrent', async () => {
+    const layout = createLayout(tmpDir)
+    await fs.mkdir(layout.state.dir, { recursive: true })
+    const policy = await loadAllowlistPolicy(layout)
+    await policy.addCommand('git', 'session')      // session only
+    await policy.addDomain('api.example.com', 'persistent')  // triggers write
+    const raw = JSON.parse(await fs.readFile(layout.state.allowlist, 'utf8')) as {
+      commands: string[]; domains: string[]
+    }
+    expect(raw.domains).toContain('api.example.com')
+    expect(raw.commands).not.toContain('git')  // session grant must NOT be on disk
+    // but still visible in-memory
+    expect(policy.commands).toContain('git')
+  })
+
   it('starts empty when allowlist.json is malformed', async () => {
     const layout = createLayout(tmpDir)
     await fs.mkdir(layout.state.dir, { recursive: true })

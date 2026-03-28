@@ -45,10 +45,10 @@ export const webFetchHandler: ToolHandler = {
     if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'only http/https URLs are allowed' }
     if (isBlocked(url)) return { ok: false, error: 'private/loopback addresses are blocked' }
 
-    // Extract hostname for allowlist check
+    // Extract hostname for allowlist check — normalize to lowercase for case-insensitive comparison
     let hostname: string
     try {
-      hostname = new URL(url).hostname
+      hostname = new URL(url).hostname.toLowerCase()
     } catch {
       return { ok: false, error: 'malformed URL' }
     }
