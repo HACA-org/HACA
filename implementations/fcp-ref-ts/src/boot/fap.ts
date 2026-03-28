@@ -3,6 +3,7 @@
 
 import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs/promises'
+import * as os from 'node:os'
 import * as path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileExists, ensureDir, readJson, writeJson, appendJsonl } from '../store/io.js'
@@ -15,7 +16,7 @@ const require = createRequire(import.meta.url)
 const { version: fcpVersion } = require('../../package.json') as { version: string }
 
 export async function runFAP(opts: FAPOptions): Promise<FAPResult> {
-  const { layout, operatorName, operatorEmail, logger, io } = opts
+  const { layout, logger, io } = opts
   const log = logger.child({ phase: 'FAP' })
 
   // Track created files for rollback on failure.
@@ -68,7 +69,10 @@ export async function runFAP(opts: FAPOptions): Promise<FAPResult> {
 
     // ── Step 4: Operator Enrollment ─────────────────────────────────────────
     io.write('FAP 4/8: operator enrollment')
-    const operatorHash = sha256Digest(`${operatorName}\n${operatorEmail}`)
+    io.write('  Enter your details to bind this entity to an Operator.')
+    const operatorName  = (await io.prompt('  Name: ')).trim() || os.userInfo().username
+    const operatorEmail = (await io.prompt('  Email: ')).trim() || `${os.userInfo().username}@localhost`
+    const operatorHash  = sha256Digest(`${operatorName}\n${operatorEmail}`)
     const operatorBound = { operatorName, operatorEmail, operatorHash }
     log.info('fap:step4:ok', { operatorName })
 

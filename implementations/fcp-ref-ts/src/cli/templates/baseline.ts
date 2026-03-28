@@ -1,12 +1,13 @@
 // Generate a canonical baseline.json for a new entity.
 import { randomUUID } from 'node:crypto'
-import type { Topology } from '../../types/formats/baseline.js'
+import type { Topology, AuthorizationScope } from '../../types/formats/baseline.js'
 
 export interface BaselineTemplateOpts {
-  readonly entityId?:    string
-  readonly topology:     Topology
-  readonly backend:      string   // "<provider>:<model>"
-  readonly fallbackTokens: number
+  readonly entityId?:           string
+  readonly topology:            Topology
+  readonly backend:             string   // "<provider>:<model>"
+  readonly fallbackTokens:      number
+  readonly authorizationScope?: AuthorizationScope
 }
 
 export function makeBaselineJson(opts: BaselineTemplateOpts): Record<string, unknown> {
@@ -53,5 +54,6 @@ export function makeBaselineJson(opts: BaselineTemplateOpts): Record<string, unk
       nChannel: 3,
       nRetry:   3,
     },
+    ...(opts.authorizationScope ? { authorizationScope: opts.authorizationScope } : {}),
   }
 }

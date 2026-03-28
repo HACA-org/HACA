@@ -1,9 +1,11 @@
 // fcp init — interactive entity scaffolding.
 // Separates interactive flow (readline prompts) from file generation (templates/).
+// Operator enrollment (name/email) is collected by FAP on first boot — not here.
 import * as path from 'node:path'
 import * as os from 'node:os'
 import * as fs from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import type { Command } from 'commander'
 import { writeJson, ensureDir, atomicWrite } from '../../store/io.js'
@@ -14,10 +16,49 @@ import {
   type Profile,
 } from '../templates/integrity.js'
 import { CLIError } from '../../types/cli.js'
+import type { AuthorizationScope } from '../../types/formats/baseline.js'
 
 const FCP_HOME     = path.join(os.homedir(), '.fcp')
 const ENTITIES_DIR = path.join(FCP_HOME, 'entities')
 const DEFAULT_FILE = path.join(FCP_HOME, 'default')
+
+// ─── Model catalog ────────────────────────────────────────────────────────────
+
+const ANTHROPIC_MODELS = [
+  'claude-opus-4-6',
+  'claude-sonnet-4-6',
+  'claude-haiku-4-5-20251001',
+  'claude-opus-4-5-20251101',
+  'claude-sonnet-4-20250514',
+]
+
+const OPENAI_MODELS = [
+  'gpt-4o',
+  'gpt-4o-mini',
+  'o1',
+  'o1-mini',
+  'o3-mini',
+]
+
+const GOOGLE_MODELS = [
+  'gemini-2.5-flash',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite-preview',
+  'gemini-3.1-pro-preview',
+]
+
+function listOllamaModels(): string[] {
+  try {
+    const result = spawnSync('curl', ['-s', 'http://localhost:11434/api/tags'], {
+      encoding: 'utf8', timeout: 2000,
+    })
+    if (result.status !== 0 || !result.stdout) return []
+    const data = JSON.parse(result.stdout) as { models?: Array<{ name: string }> }
+    return (data.models ?? []).map(m => m.name)
+  } catch {
+    return []
+  }
+}
 
 // ─── Readline helpers ─────────────────────────────────────────────────────────
 
@@ -109,6 +150,94 @@ async function scaffoldEntity(root: string, profile: Profile): Promise<void> {
   await atomicWrite(path.join(root, '.gitignore'), GITIGNORE)
 }
 
+async function gitInitAndCommit(root: string, entityId: string): Promise<void> {
+  const run = (args: string[]) => spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+
+  // Skip if already a git repo
+  if (!existsSync(path.join(root, '.git'))) {
+    const init = run(['init'])
+    if (init.status !== 0) {
+      process.stdout.write(`  ⚠  git init failed: ${init.stderr.trim()}\n`)
+      return
+    }
+  }
+
+  run(['add', '.'])
+  const commit = run(['commit', '-m', `init: scaffold entity ${entityId}`])
+  if (commit.status !== 0) {
+    process.stdout.write(`  ⚠  git commit failed: ${commit.stderr.trim()}\n`)
+  }
+}
+
+// ─── Model picker ─────────────────────────────────────────────────────────────
+
+async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
+  hr('CPE Backend')
+  process.stdout.write('\n  Provider:\n')
+  process.stdout.write('    1. Anthropic\n')
+  process.stdout.write('    2. OpenAI\n')
+  process.stdout.write('    3. Google\n')
+  process.stdout.write('    4. Ollama (local)\n\n')
+
+  const providerRaw = await ask(rl, '  Provider', '1')
+
+  let models: string[]
+  let providerPrefix: string
+
+  if (providerRaw === '2') {
+    models = OPENAI_MODELS
+    providerPrefix = 'openai'
+  } else if (providerRaw === '3') {
+    models = GOOGLE_MODELS
+    providerPrefix = 'google'
+  } else if (providerRaw === '4') {
+    providerPrefix = 'ollama'
+    process.stdout.write('\n  Detecting local Ollama models...\n')
+    models = listOllamaModels()
+    if (models.length === 0) {
+      process.stdout.write('  No Ollama models found (is Ollama running?).\n')
+      process.stdout.write('  Enter model name manually.\n\n')
+      const manual = await ask(rl, '  Model', 'llama3.2')
+      return `ollama:${manual}`
+    }
+  } else {
+    models = ANTHROPIC_MODELS
+    providerPrefix = 'anthropic'
+  }
+
+  process.stdout.write('\n  Available models:\n')
+  models.forEach((m, i) => process.stdout.write(`    ${i + 1}. ${m}\n`))
+  process.stdout.write('\n')
+
+  const modelRaw = await ask(rl, '  Model number or name', '1')
+  const idx = parseInt(modelRaw, 10) - 1
+  const model = (idx >= 0 && idx < models.length) ? models[idx]! : modelRaw
+
+  return `${providerPrefix}:${model}`
+}
+
+// ─── Authorization scope picker (HACA-Evolve only) ───────────────────────────
+
+async function pickAuthScope(rl: ReturnType<typeof makeRl>): Promise<AuthorizationScope> {
+  hr('Authorization Scope')
+  process.stdout.write('\n  Define what the entity may do autonomously without Operator approval.\n\n')
+
+  const autonomousEvolution = await confirm(rl, '  Autonomous file evolution (fileWrite, fileDelete, jsonMerge)', false)
+  const autonomousSkills    = await confirm(rl, '  Autonomous skill installation (skillInstall)', false)
+  const operatorMemory      = await confirm(rl, '  Autonomous memory promotion (promoteSlugs)', false)
+
+  const renewalRaw = await ask(rl, '  Scope renewal period in days (0 = no expiry)', '0')
+  const renewalDays = Math.max(0, parseInt(renewalRaw, 10) || 0)
+
+  return {
+    autonomousEvolution,
+    autonomousSkills,
+    operatorMemory,
+    renewalDays,
+    grantedAt: new Date().toISOString(),
+  }
+}
+
 // ─── Main flow ────────────────────────────────────────────────────────────────
 
 async function runInit(): Promise<void> {
@@ -128,8 +257,8 @@ async function runInit(): Promise<void> {
     process.stdout.write('\n')
 
     // ── Entity ID ────────────────────────────────────────────────────────────
-    const existing     = await listEntities()
-    const currentDef   = await getDefault()
+    const existing   = await listEntities()
+    const currentDef = await getDefault()
     if (existing.length > 0) {
       process.stdout.write('  Existing entities:\n')
       for (const eid of existing) {
@@ -168,19 +297,14 @@ async function runInit(): Promise<void> {
     const profile: Profile = profileRaw === '2' ? 'haca-evolve' : 'haca-core'
     const topology          = profile === 'haca-evolve' ? 'opaque' : 'transparent'
 
-    // ── Backend ──────────────────────────────────────────────────────────────
-    hr('CPE Backend')
-    process.stdout.write('\n  Format: <provider>:<model>\n')
-    process.stdout.write(  '  Examples: anthropic:claude-opus-4-6  openai:gpt-4o  ollama:llama3.2\n\n')
-    const backend = await ask(rl, '  Backend', 'anthropic:claude-sonnet-4-6')
+    // ── Authorization scope (HACA-Evolve only) ────────────────────────────────
+    let authorizationScope: AuthorizationScope | undefined
+    if (profile === 'haca-evolve') {
+      authorizationScope = await pickAuthScope(rl)
+    }
 
-    // ── Operator credentials ─────────────────────────────────────────────────
-    hr('Operator')
-    const operatorName  = await ask(rl, '  Name',  os.userInfo().username)
-    const operatorEmail = await ask(rl, '  Email', `${os.userInfo().username}@localhost`)
-
-    // ── Budget ───────────────────────────────────────────────────────────────
-    const fallbackTokens = 200_000
+    // ── CPE Backend ───────────────────────────────────────────────────────────
+    const backend = await pickBackend(rl)
 
     // ── Scaffold ─────────────────────────────────────────────────────────────
     hr('Creating entity')
@@ -188,13 +312,12 @@ async function runInit(): Promise<void> {
 
     await scaffoldEntity(entityRoot, profile)
     await writeJson(path.join(entityRoot, 'state', 'baseline.json'), makeBaselineJson({
-      entityId, topology, backend, fallbackTokens,
+      entityId, topology, backend, fallbackTokens: 200_000,
+      ...(authorizationScope ? { authorizationScope } : {}),
     }))
 
-    // Store operator credentials for FAP as a staging file (read by init, cleared by FAP)
-    await writeJson(path.join(entityRoot, 'state', '.fap-operator.json'), {
-      operatorName, operatorEmail,
-    })
+    // git init + first commit
+    await gitInitAndCommit(entityRoot, entityId)
 
     // Set default if none
     if (!currentDef) await setDefault(entityId)
@@ -206,6 +329,9 @@ async function runInit(): Promise<void> {
     process.stdout.write(`  path:     ${entityRoot}\n`)
     process.stdout.write(`  profile:  ${profile}\n`)
     process.stdout.write(`  backend:  ${backend}\n`)
+    if (authorizationScope) {
+      process.stdout.write(`  scope:    evolution=${authorizationScope.autonomousEvolution} skills=${authorizationScope.autonomousSkills} memory=${authorizationScope.operatorMemory} renewal=${authorizationScope.renewalDays}d\n`)
+    }
     hr()
     process.stdout.write('\n  First boot will run FAP (First Activation Protocol).\n')
     process.stdout.write('  Run:  fcp\n\n')

@@ -24,9 +24,14 @@ const MINIMAL_BASELINE = {
   fault:            { nBoot: 3, nChannel: 3, nRetry: 3 },
 }
 
-const testIO: BootIO = {
-  prompt: async () => '',
-  write: () => undefined,
+// FAP asks for name then email via io.prompt().
+function makeFapIO(name = 'Alice', email = 'alice@example.com'): BootIO {
+  const answers = [name, email]
+  let idx = 0
+  return {
+    prompt: async () => answers[idx++] ?? '',
+    write:  () => undefined,
+  }
 }
 
 let tmpDir: string
@@ -53,10 +58,7 @@ describe('boot — cold start (FAP)', () => {
     const layout = createLayout(tmpDir)
     const logger = createLogger({ test: true })
 
-    const result = await startEntity({
-      layout, logger, io: testIO,
-      operatorName: 'Alice', operatorEmail: 'alice@example.com',
-    })
+    const result = await startEntity({ layout, logger, io: makeFapIO() })
 
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -77,7 +79,7 @@ describe('boot — cold start (FAP)', () => {
     const logger = createLogger({ test: true })
     const { createHash } = await import('node:crypto')
 
-    await startEntity({ layout, logger, io: testIO, operatorName: 'Bob', operatorEmail: 'bob@example.com' })
+    await startEntity({ layout, logger, io: makeFapIO('Bob', 'bob@example.com') })
 
     const raw = JSON.parse(await fs.readFile(layout.memory.imprint, 'utf8')) as {
       operatorBound: { operatorHash: string }
@@ -91,7 +93,7 @@ describe('boot — cold start (FAP)', () => {
     const layout = createLayout(tmpDir)
     const logger = createLogger({ test: true })
 
-    await startEntity({ layout, logger, io: testIO, operatorName: 'Alice', operatorEmail: 'alice@example.com' })
+    await startEntity({ layout, logger, io: makeFapIO() })
 
     const lines = (await fs.readFile(layout.state.integrityChain, 'utf8'))
       .split('\n').filter(l => l.trim())
@@ -102,12 +104,12 @@ describe('boot — cold start (FAP)', () => {
     expect(entry.prevHash).toBeNull()
   })
 
-  it('returns error if operator credentials are absent', async () => {
-    await setupMinimalEntity(tmpDir)
+  it('returns error when baseline.json is absent (entity not initialized)', async () => {
+    // No baseline.json — boot detects entity not initialized
     const layout = createLayout(tmpDir)
     const logger = createLogger({ test: true })
 
-    const result = await startEntity({ layout, logger, io: testIO })
+    const result = await startEntity({ layout, logger, io: makeFapIO() })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toContain('fcp init')
   })
@@ -120,10 +122,7 @@ describe('boot — cold start (FAP)', () => {
     const layout = createLayout(tmpDir)
     const logger = createLogger({ test: true })
 
-    const result = await startEntity({
-      layout, logger, io: testIO,
-      operatorName: 'Alice', operatorEmail: 'alice@example.com',
-    })
+    const result = await startEntity({ layout, logger, io: makeFapIO() })
 
     expect(result.ok).toBe(false)
     // No partial artifacts should remain

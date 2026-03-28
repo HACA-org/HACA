@@ -112,24 +112,7 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
     prompt: (_question) => Promise.resolve(''),  // boot prompts not used in CLI run
   }
 
-  // Read operator credentials from staging file (if present — set during `fcp init`)
-  const stagingPath = path.join(entityRoot, 'state', '.fap-operator.json')
-  let operatorName: string | undefined
-  let operatorEmail: string | undefined
-  if (await fileExists(stagingPath)) {
-    try {
-      const creds = await readJson(stagingPath) as Record<string, string>
-      operatorName  = creds['operatorName']
-      operatorEmail = creds['operatorEmail']
-    } catch { /* ignore */ }
-  }
-
-  const bootResult = await startEntity({
-    layout, logger, io,
-    sleepCycle:    runSleepCycle,
-    ...(operatorName  ? { operatorName }  : {}),
-    ...(operatorEmail ? { operatorEmail } : {}),
-  })
+  const bootResult = await startEntity({ layout, logger, io, sleepCycle: runSleepCycle })
 
   if (!bootResult.ok) {
     throw new CLIError(`Boot failed (phase ${bootResult.phase}): ${bootResult.reason}`, 1)

@@ -58,22 +58,17 @@ export type BootResult =
   | { ok: false; phase: BootPhaseId; reason: string }
 
 export interface FAPOptions {
-  readonly layout:        Layout
-  readonly operatorName:  string
-  readonly operatorEmail: string
-  readonly logger:        Logger
-  readonly io:            BootIO
+  readonly layout:  Layout
+  readonly logger:  Logger
+  readonly io:      BootIO
 }
 
 // Options for the boot orchestrator (startEntity).
-// operatorName/operatorEmail are only required for cold-start (FAP).
 export interface StartEntityOptions {
-  readonly layout:         Layout
-  readonly logger:         Logger
-  readonly io:             BootIO
-  readonly sleepCycle?:    SleepCycleFn
-  readonly operatorName?:  string
-  readonly operatorEmail?: string
+  readonly layout:      Layout
+  readonly logger:      Logger
+  readonly io:          BootIO
+  readonly sleepCycle?: SleepCycleFn
 }
 
 export type FAPResult =

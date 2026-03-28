@@ -43,6 +43,7 @@ io/spool/
 state/sentinels/session.token
 state/pending-closure.json
 state/session-grants.json
+state/.fap-operator.json
 memory/session.jsonl
 
 # Node

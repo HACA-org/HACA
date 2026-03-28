@@ -8,7 +8,14 @@ import { startEntity } from '../../src/boot/boot.js'
 import { createLogger } from '../../src/logger/logger.js'
 import type { BootIO } from '../../src/types/boot.js'
 
-const testIO: BootIO = { prompt: async () => '', write: () => undefined }
+function makeFapIO(name = 'Alice', email = 'alice@example.com'): BootIO {
+  const answers = [name, email]
+  let idx = 0
+  return { prompt: async () => answers[idx++] ?? '', write: () => undefined }
+}
+
+// Warm-boot IO — imprint already exists, prompt never called.
+const warmIO: BootIO = { prompt: async () => '', write: () => undefined }
 
 let tmpDir: string
 
@@ -44,7 +51,7 @@ async function initEntity(root: string) {
 
   const layout = createLayout(root)
   const logger = createLogger({ test: true })
-  const r = await startEntity({ layout, logger, io: testIO, operatorName: 'Alice', operatorEmail: 'alice@example.com' })
+  const r = await startEntity({ layout, logger, io: makeFapIO() })
   if (!r.ok) throw new Error(`FAP failed: ${r.reason}`)
   return { layout, logger }
 }
@@ -57,7 +64,7 @@ describe('boot — crash recovery', () => {
     const staleToken = JSON.parse(await fs.readFile(layout.state.sentinels.sessionToken, 'utf8')) as { sessionId: string }
     const staleId = staleToken.sessionId
 
-    const result = await startEntity({ layout, logger, io: testIO })
+    const result = await startEntity({ layout, logger, io: warmIO })
     expect(result.ok).toBe(true)
     if (!result.ok) return
 
@@ -75,7 +82,7 @@ describe('boot — crash recovery', () => {
 
     let sleepCycleCalled = false
     const result = await startEntity({
-      layout, logger, io: testIO,
+      layout, logger, io: warmIO,
       sleepCycle: async () => { sleepCycleCalled = true },
     })
 
@@ -86,7 +93,7 @@ describe('boot — crash recovery', () => {
   it('succeeds without sleep cycle when not injected', async () => {
     const { layout, logger } = await initEntity(tmpDir)
 
-    const result = await startEntity({ layout, logger, io: testIO })
+    const result = await startEntity({ layout, logger, io: warmIO })
     expect(result.ok).toBe(true)
   })
 })

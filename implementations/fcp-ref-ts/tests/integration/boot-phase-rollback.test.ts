@@ -8,7 +8,11 @@ import { startEntity } from '../../src/boot/boot.js'
 import { createLogger } from '../../src/logger/logger.js'
 import type { BootIO } from '../../src/types/boot.js'
 
-const testIO: BootIO = { prompt: async () => '', write: () => undefined }
+function makeFapIO(name = 'Alice', email = 'alice@example.com'): BootIO {
+  const answers = [name, email]
+  let idx = 0
+  return { prompt: async () => answers[idx++] ?? '', write: () => undefined }
+}
 
 let tmpDir: string
 
@@ -44,8 +48,7 @@ describe('boot — FAP rollback', () => {
     const logger = createLogger({ test: true })
 
     const result = await startEntity({
-      layout, logger, io: testIO,
-      operatorName: 'Alice', operatorEmail: 'alice@example.com',
+      layout, logger, io: makeFapIO(),
     })
 
     expect(result.ok).toBe(false)
@@ -67,8 +70,7 @@ describe('boot — FAP rollback', () => {
     const logger = createLogger({ test: true })
 
     const result = await startEntity({
-      layout, logger, io: testIO,
-      operatorName: 'Alice', operatorEmail: 'alice@example.com',
+      layout, logger, io: makeFapIO(),
     })
 
     expect(result.ok).toBe(false)
@@ -87,8 +89,7 @@ describe('boot — FAP rollback', () => {
     const logger = createLogger({ test: true })
 
     const result = await startEntity({
-      layout, logger, io: testIO,
-      operatorName: 'Alice', operatorEmail: 'alice@example.com',
+      layout, logger, io: makeFapIO(),
     })
 
     expect(result.ok).toBe(false)

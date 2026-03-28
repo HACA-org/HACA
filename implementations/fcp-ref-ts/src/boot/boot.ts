@@ -14,17 +14,11 @@ export async function startEntity(opts: StartEntityOptions): Promise<BootResult>
 
   // ── Cold-start: run FAP ──────────────────────────────────────────────────
   if (!await fileExists(layout.memory.imprint)) {
-    if (!opts.operatorName || !opts.operatorEmail) {
+    if (!await fileExists(layout.state.baseline)) {
       return { ok: false, phase: 0, reason: 'Entity not initialized — run: fcp init' }
     }
     log.info('boot:cold-start')
-    const result = await runFAP({
-      layout,
-      operatorName: opts.operatorName,
-      operatorEmail: opts.operatorEmail,
-      logger,
-      io,
-    })
+    const result = await runFAP({ layout, logger, io })
     if (!result.ok) return { ok: false, phase: 0, reason: result.reason }
     return { ok: true, sessionId: result.sessionId, contextMessages: [] }
   }

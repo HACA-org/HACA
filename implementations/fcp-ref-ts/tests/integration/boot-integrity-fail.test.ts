@@ -8,7 +8,12 @@ import { startEntity } from '../../src/boot/boot.js'
 import { createLogger } from '../../src/logger/logger.js'
 import type { BootIO } from '../../src/types/boot.js'
 
-const testIO: BootIO = { prompt: async () => '', write: () => undefined }
+function makeFapIO(name = 'Alice', email = 'alice@example.com'): BootIO {
+  const answers = [name, email]
+  let idx = 0
+  return { prompt: async () => answers[idx++] ?? '', write: () => undefined }
+}
+const warmIO: BootIO = { prompt: async () => '', write: () => undefined }
 
 let tmpDir: string
 
@@ -43,7 +48,7 @@ async function initEntity(root: string) {
 
   const layout = createLayout(root)
   const logger = createLogger({ test: true })
-  const r = await startEntity({ layout, logger, io: testIO, operatorName: 'Alice', operatorEmail: 'alice@example.com' })
+  const r = await startEntity({ layout, logger, io: makeFapIO() })
   if (!r.ok) throw new Error(`FAP failed: ${r.reason}`)
 
   // Remove the stale session token so the next boot is a clean warm boot (not crash recovery).
@@ -58,7 +63,7 @@ describe('boot — integrity failure', () => {
     // Tamper with a tracked file
     await fs.writeFile(layout.bootMd, '# Tampered!\n')
 
-    const result = await startEntity({ layout, logger, io: testIO })
+    const result = await startEntity({ layout, logger, io: warmIO })
     expect(result.ok).toBe(false)
     if (!result.ok) {
       expect(result.phase).toBe(3)
@@ -71,7 +76,7 @@ describe('boot — integrity failure', () => {
 
     await fs.writeFile(path.join(layout.persona, 'id.md'), '# Modified identity\n')
 
-    const result = await startEntity({ layout, logger, io: testIO })
+    const result = await startEntity({ layout, logger, io: warmIO })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.phase).toBe(3)
   })
@@ -79,7 +84,7 @@ describe('boot — integrity failure', () => {
   it('passes integrity check when no files are modified', async () => {
     const { layout, logger } = await initEntity(tmpDir)
 
-    const result = await startEntity({ layout, logger, io: testIO })
+    const result = await startEntity({ layout, logger, io: warmIO })
     expect(result.ok).toBe(true)
   })
 
@@ -88,7 +93,7 @@ describe('boot — integrity failure', () => {
 
     await fs.unlink(layout.state.integrity)
 
-    const result = await startEntity({ layout, logger, io: testIO })
+    const result = await startEntity({ layout, logger, io: warmIO })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.phase).toBe(3)
   })
@@ -99,7 +104,7 @@ describe('boot — integrity failure', () => {
     // Delete a tracked file — absence is drift
     await fs.unlink(layout.bootMd)
 
-    const result = await startEntity({ layout, logger, io: testIO })
+    const result = await startEntity({ layout, logger, io: warmIO })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.phase).toBe(3)
   })
@@ -119,7 +124,7 @@ describe('boot — integrity failure', () => {
     intRaw.files['state/baseline.json'] = createHash('sha256').update(baselineStr).digest('hex')
     await fs.writeFile(layout.state.integrity, JSON.stringify(intRaw))
 
-    const result = await startEntity({ layout, logger, io: testIO })
+    const result = await startEntity({ layout, logger, io: warmIO })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.phase).toBe(1)
   })
