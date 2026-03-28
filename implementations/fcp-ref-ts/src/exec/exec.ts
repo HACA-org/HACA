@@ -1,8 +1,6 @@
 // EXEC component entrypoint.
-// Exposes: tool handlers, allowlist policy, registry, dispatch.
+// Exposes: tool handlers and allowlist policy.
 export { loadAllowlistPolicy }  from './allowlist.js'
-export { createToolRegistry }   from './registry.js'
-export { dispatch }             from './dispatch.js'
 
 export { fileReadHandler }    from './tools/file-read.js'
 export { fileWriteHandler }   from './tools/file-write.js'

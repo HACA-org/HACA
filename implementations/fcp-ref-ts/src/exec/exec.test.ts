@@ -1,12 +1,10 @@
-// EXEC unit tests — registry, dispatch, allowlist, and all tool handlers.
+// EXEC unit tests — allowlist and all tool handlers.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as os from 'node:os'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { createLayout } from '../types/store.js'
 import { createLogger } from '../logger/logger.js'
-import { createToolRegistry }  from './registry.js'
-import { dispatch }            from './dispatch.js'
 import { loadAllowlistPolicy } from './allowlist.js'
 import { fileReadHandler }     from './tools/file-read.js'
 import { fileWriteHandler }    from './tools/file-write.js'
@@ -16,7 +14,6 @@ import { agentRunHandler }     from './tools/agent-run.js'
 import { skillCreateHandler }  from './tools/skill-create.js'
 import { skillAuditHandler }   from './tools/skill-audit.js'
 import type { ExecContext, AllowlistPolicy, GateIO } from '../types/exec.js'
-import type { ToolUseBlock }   from '../types/cpe.js'
 
 let tmpDir:   string
 let workspace: string
@@ -99,51 +96,6 @@ function makeCtx(opts: {
     firstWriteDone: opts.firstWriteDone ?? { value: false },
   }
 }
-
-// ─── Registry ───────────────────────────────────────────────────────────────
-
-describe('EXEC — registry', () => {
-  it('get returns handler by name', () => {
-    const reg = createToolRegistry([fileReadHandler, fileWriteHandler])
-    expect(reg.get('fcp_file_read')).toBe(fileReadHandler)
-    expect(reg.get('fcp_file_write')).toBe(fileWriteHandler)
-  })
-
-  it('get returns undefined for unknown name', () => {
-    const reg = createToolRegistry([fileReadHandler])
-    expect(reg.get('unknown_tool')).toBeUndefined()
-  })
-
-  it('list returns sorted names', () => {
-    const reg = createToolRegistry([fileWriteHandler, fileReadHandler])
-    expect(reg.list()).toEqual(['fcp_file_read', 'fcp_file_write'])
-  })
-})
-
-// ─── Dispatch ────────────────────────────────────────────────────────────────
-
-describe('EXEC — dispatch', () => {
-  it('returns error for unknown tool', async () => {
-    const ctx = makeCtx()
-    const reg = createToolRegistry([])
-    const tu: ToolUseBlock = { type: 'tool_use', id: 'x', name: 'fcp_unknown', input: {} }
-    const result = await dispatch(tu, reg, ctx)
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error).toMatch(/unknown tool/i)
-  })
-
-  it('delegates to the registered handler', async () => {
-    const ctx = makeCtx()
-    const testFile = path.join(workspace, 'hello.txt')
-    await fs.writeFile(testFile, 'hello world', 'utf8')
-
-    const reg = createToolRegistry([fileReadHandler])
-    const tu: ToolUseBlock = { type: 'tool_use', id: 'x', name: 'fcp_file_read', input: { path: testFile } }
-    const result = await dispatch(tu, reg, ctx)
-    expect(result.ok).toBe(true)
-    if (result.ok) expect(result.output).toBe('hello world')
-  })
-})
 
 // ─── Allowlist ───────────────────────────────────────────────────────────────
 
