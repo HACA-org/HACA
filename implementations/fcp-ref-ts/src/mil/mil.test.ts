@@ -212,6 +212,28 @@ describe('MIL — fcp_memory_write', () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/slug/)
   })
+
+  it('notifies CPE when slug already exists without overwrite', async () => {
+    const layout = createLayout(tmpDir)
+    const ctx    = makeCtx(layout)
+    await memoryWriteHandler.execute({ slug: 'existing', content: 'original content' }, ctx)
+    const r = await memoryWriteHandler.execute({ slug: 'existing', content: 'new content' }, ctx)
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.output).toMatch(/SLUG_EXISTS/)
+      expect(r.output).toContain('original content')
+      expect(r.output).toMatch(/overwrite:true/)
+    }
+  })
+
+  it('overwrites existing slug when overwrite:true', async () => {
+    const layout = createLayout(tmpDir)
+    const ctx    = makeCtx(layout)
+    await memoryWriteHandler.execute({ slug: 'to-overwrite', content: 'old' }, ctx)
+    const r = await memoryWriteHandler.execute({ slug: 'to-overwrite', content: 'updated', overwrite: true }, ctx)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.output).toMatch(/Written/)
+  })
 })
 
 describe('MIL — fcp_memory_recall', () => {

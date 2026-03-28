@@ -15,19 +15,19 @@ export const closurePayloadHandler: ToolHandler = {
       promotion:     { type: 'array', items: { type: 'string' }, description: 'Memory slugs to promote to semantic memory.' },
       workingMemory: {
         type: 'array',
-        description: 'Working memory entries to carry forward into the next session.',
+        description: 'Pointers to episodic/semantic memory entries the next session needs to resume context. path is the relative path to the memory file (e.g. memory/episodic/.../slug.md or memory/semantic/slug.md).',
         items: {
           type: 'object',
           properties: {
-            priority: { type: 'integer', minimum: 1, description: 'Importance rank (higher = more important).' },
-            path:     { type: 'string',  description: 'Relative path to the file this entry points to.' },
+            priority: { type: 'integer', minimum: 1, description: 'Importance rank (higher = more important, loaded first).' },
+            path:     { type: 'string',  description: 'Relative path to the memory entry (episodic or semantic slug).' },
           },
           required: ['priority', 'path'],
         },
       },
       sessionHandoff: {
         type: 'object',
-        description: 'Summary of pending tasks and next steps for the next session.',
+        description: 'Narrative context that explains the working memory entries and what the next session should do to resume.',
         properties: {
           pendingTasks: { type: 'array', items: { type: 'string' } },
           nextSteps:    { type: 'string' },
