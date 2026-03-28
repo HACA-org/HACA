@@ -26,6 +26,15 @@ function extractParams(params: unknown): AgentRunParams | null {
 
 export const agentRunHandler: ToolHandler = {
   name: 'fcp_agent_run',
+  description: 'Run a named skill as an isolated agent subprocess. The skill must be registered in skills/index.json. Always requires operator approval. Timeout: 30 s, max output: 256 KB.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      skill: { type: 'string', description: 'Skill name as registered in skills/index.json.' },
+      input: { description: 'Input data passed to the skill as FCP_SKILL_INPUT (any JSON value).' },
+    },
+    required: ['skill'],
+  },
   async execute(params: unknown, ctx: ExecContext): Promise<ToolResult> {
     const parsed = extractParams(params)
     if (!parsed) return { ok: false, error: 'skill name is required' }

@@ -18,6 +18,14 @@ function extractPath(params: unknown): string | null {
 
 export const fileReadHandler: ToolHandler = {
   name: 'fcp_file_read',
+  description: 'Read the contents of a file within the current workspace_focus. Asks for approval if the path is outside the workspace.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'File path (relative to workspace_focus, or absolute).' },
+    },
+    required: ['path'],
+  },
   async execute(params: unknown, ctx: ExecContext): Promise<ToolResult> {
     const filePath = extractPath(params)
     if (!filePath) return { ok: false, error: 'path is required' }

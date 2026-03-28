@@ -96,7 +96,7 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
       io.emit({
         type:         'token_update',
         inputTokens:  tokens,
-        outputTokens: cycle.inputTokens > 0 ? 0 : 0,   // output populated after CPE response below
+        outputTokens: 0,   // output tokens only available after CPE response
         budgetPct:    budget.usedPct,
       })
       if (budget.status === 'critical') {
@@ -111,8 +111,8 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
         messages,
         tools: tools.map(t => ({
           name:         t.name,
-          description:  t.name,
-          input_schema: {},
+          description:  t.description,
+          input_schema: t.inputSchema,
         })),
       })
       cycle = {

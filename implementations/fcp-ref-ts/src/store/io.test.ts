@@ -191,13 +191,14 @@ describe('store/io', () => {
     expect(results.map(r => (r.raw as { seq: number }).seq)).toEqual([1, 2])
   })
 
-  it('drainMsgDir ignores non-.msg files', async () => {
+  it('drainMsgDir reads both .msg and .json files, ignores others', async () => {
     const inbox = path.join(tmp, 'inbox2')
     await ensureDir(inbox)
-    await fs.writeFile(path.join(inbox, 'a.msg'), '{"ok":true}', 'utf8')
-    await fs.writeFile(path.join(inbox, 'ignore.json'), '{}', 'utf8')
+    await fs.writeFile(path.join(inbox, 'a.msg'),   '{"ok":true}',  'utf8')
+    await fs.writeFile(path.join(inbox, 'b.json'),  '"signal"',     'utf8')
+    await fs.writeFile(path.join(inbox, 'c.txt'),   'ignored',      'utf8')
     const results = await drainMsgDir(inbox)
-    expect(results).toHaveLength(1)
+    expect(results).toHaveLength(2)
   })
 
   // --- deleteFile ---

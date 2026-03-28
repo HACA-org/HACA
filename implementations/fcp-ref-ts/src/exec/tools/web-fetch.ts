@@ -31,6 +31,14 @@ function isBlocked(url: string): boolean {
 
 export const webFetchHandler: ToolHandler = {
   name: 'fcp_web_fetch',
+  description: 'Fetch a URL and return the text content. Private/loopback addresses are always blocked. Domains must be in the allowlist or the operator must approve. Timeout: 15 s, max response: 512 KB.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'Full http/https URL to fetch.' },
+    },
+    required: ['url'],
+  },
   async execute(params: unknown, ctx: ExecContext): Promise<ToolResult> {
     const url = extractUrl(params)
     if (!url) return { ok: false, error: 'url is required' }

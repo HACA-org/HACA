@@ -37,7 +37,9 @@ export interface ExecContext {
 // A ToolHandler is a pure, stateless handler for one named tool.
 // It receives raw params (validated internally) and returns a ToolResult.
 export interface ToolHandler {
-  readonly name: string
+  readonly name:         string
+  readonly description:  string                    // passed to CPE tool declaration
+  readonly inputSchema:  Record<string, unknown>   // JSON Schema — passed as input_schema
   execute(params: unknown, ctx: ExecContext): Promise<ToolResult>
 }
 

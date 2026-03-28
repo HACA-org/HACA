@@ -17,6 +17,15 @@ function extractParams(params: unknown): { path: string; content: string } | nul
 
 export const fileWriteHandler: ToolHandler = {
   name: 'fcp_file_write',
+  description: 'Write content to a file within workspace_focus. Asks for approval on the first write of the session (inside workspace) and always if the path is outside the workspace.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path:    { type: 'string', description: 'File path (relative to workspace_focus, or absolute).' },
+      content: { type: 'string', description: 'Content to write.' },
+    },
+    required: ['path', 'content'],
+  },
   async execute(params: unknown, ctx: ExecContext): Promise<ToolResult> {
     const args = extractParams(params)
     if (!args) return { ok: false, error: 'path and content are required' }

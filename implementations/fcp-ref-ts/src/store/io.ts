@@ -105,7 +105,7 @@ export async function drainMsgDir(dirPath: string): Promise<{ file: string; raw:
     throw new IOError('read', dirPath, `Cannot read inbox directory: ${dirPath}`, e)
   }
   const msgs = entries
-    .filter(name => name.endsWith('.msg'))
+    .filter(name => name.endsWith('.msg') || name.endsWith('.json'))
     .sort()
     .map(name => path.join(dirPath, name))
 

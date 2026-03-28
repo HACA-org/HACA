@@ -25,6 +25,14 @@ interface AuditReport {
 
 export const skillAuditHandler: ToolHandler = {
   name: 'fcp_skill_audit',
+  description: 'Read and validate a skill\'s manifest.json and report its status, permissions, and any issues.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      skill: { type: 'string', description: 'Skill name as registered in skills/index.json.' },
+    },
+    required: ['skill'],
+  },
   async execute(params: unknown, ctx: ExecContext): Promise<ToolResult> {
     const skillName = extractSkill(params)
     if (!skillName) return { ok: false, error: 'skill name is required' }

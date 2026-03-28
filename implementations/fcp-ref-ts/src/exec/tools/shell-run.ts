@@ -34,6 +34,16 @@ function extractParams(params: unknown): ShellParams | null {
 
 export const shellRunHandler: ToolHandler = {
   name: 'fcp_shell_run',
+  description: 'Run a shell command within workspace_focus. Commands must be in the allowlist or the operator must approve. Timeout: 10 s, max output: 256 KB.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      cmd:  { type: 'string', description: 'Command name (no shell expansion; no pipes or redirects).' },
+      args: { type: 'array', items: { type: 'string' }, description: 'Command arguments.' },
+      cwd:  { type: 'string', description: 'Working directory (relative to workspace_focus, or absolute). Defaults to workspace_focus.' },
+    },
+    required: ['cmd'],
+  },
   async execute(params: unknown, ctx: ExecContext): Promise<ToolResult> {
     const parsed = extractParams(params)
     if (!parsed) return { ok: false, error: 'cmd is required' }

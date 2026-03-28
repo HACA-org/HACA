@@ -7,6 +7,14 @@ import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
 
 export const memoryRecallHandler: ToolHandler = {
   name: 'fcp_memory_recall',
+  description: 'Query the memory store (semantic + episodic) and return matching content. Use this to recall past context, facts, or episodic events.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'Search query string.' },
+    },
+    required: ['query'],
+  },
   async execute(params: unknown, ctx: ExecContext): Promise<ToolResult> {
     if (typeof params !== 'object' || params === null || typeof (params as Record<string, unknown>)['query'] !== 'string') {
       return { ok: false, error: 'query is required' }

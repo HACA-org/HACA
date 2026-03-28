@@ -32,6 +32,16 @@ console.log(JSON.stringify({ ok: true, input }))
 
 export const skillCreateHandler: ToolHandler = {
   name: 'fcp_skill_create',
+  description: 'Scaffold a new custom skill: creates skills/<name>/manifest.json and run.js stub, and registers it in skills/index.json. Requires operator approval.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name:        { type: 'string', description: 'Skill name (lowercase alphanumeric, underscores, hyphens).' },
+      description: { type: 'string', description: 'Human-readable description of what the skill does.' },
+      version:     { type: 'string', description: 'Semver version string. Defaults to 1.0.0.' },
+    },
+    required: ['name', 'description'],
+  },
   async execute(params: unknown, ctx: ExecContext): Promise<ToolResult> {
     const parsed = extractParams(params)
     if (!parsed) return { ok: false, error: 'name and description are required' }
