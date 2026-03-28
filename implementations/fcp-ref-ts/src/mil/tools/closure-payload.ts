@@ -15,14 +15,14 @@ export const closurePayloadHandler: ToolHandler = {
       promotion:     { type: 'array', items: { type: 'string' }, description: 'Memory slugs to promote to semantic memory.' },
       workingMemory: {
         type: 'array',
-        description: 'Working memory entries (key-value pairs) to carry forward.',
+        description: 'Working memory entries to carry forward into the next session.',
         items: {
           type: 'object',
           properties: {
-            key:   { type: 'string' },
-            value: { type: 'string' },
+            priority: { type: 'integer', minimum: 1, description: 'Importance rank (higher = more important).' },
+            path:     { type: 'string',  description: 'Relative path to the file this entry points to.' },
           },
-          required: ['key', 'value'],
+          required: ['priority', 'path'],
         },
       },
       sessionHandoff: {

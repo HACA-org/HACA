@@ -1,5 +1,7 @@
 // recall() — unified search across all 3 memory layers (working, semantic, episodic).
 // createMemoryStore() — factory returning a MemoryStore bound to a layout + session.
+import * as fs from 'node:fs/promises'
+import * as path from 'node:path'
 import { writeEpisodic, rotateEpisodic, searchEpisodic } from './episodic.js'
 import { writeSemantic, searchSemantic } from './semantic.js'
 import { getWorkingMemory, setWorkingMemory, mergeWorkingMemory } from './working.js'
@@ -46,9 +48,25 @@ export function createMemoryStore(layout: Layout, sessionId: string, _logger: Lo
     writeSemantic: (slug, content) => writeSemantic(layout, slug, content),
 
     // Promote slugs from episodic to semantic memory.
+    // Reads the episodic file content so semantic gets the real content, not a placeholder.
     promoteSlugs: async (slugs) => {
       for (const slug of slugs) {
-        await writeSemantic(layout, slug, `# ${slug}\nPromoted from session ${sessionId}.`)
+        // Find the episodic file for this session + slug
+        const sessionDirPrefix = sessionId.slice(0, 8)
+        let episodicContent: string | null = null
+        try {
+          const dirs = await fs.readdir(layout.memory.episodic, { withFileTypes: true })
+          const sessionDir = dirs
+            .filter(d => d.isDirectory() && d.name.includes(sessionDirPrefix))
+            .map(d => d.name)
+            .sort()
+            .at(-1)
+          if (sessionDir) {
+            const fp = path.join(layout.memory.episodic, sessionDir, `${slug}.md`)
+            episodicContent = await fs.readFile(fp, 'utf8').catch(() => null)
+          }
+        } catch { /* episodic dir missing — fall through to placeholder */ }
+        await writeSemantic(layout, slug, episodicContent ?? `# ${slug}\nPromoted from session ${sessionId}.`)
       }
     },
 
