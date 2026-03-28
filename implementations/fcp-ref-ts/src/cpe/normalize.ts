@@ -162,6 +162,9 @@ export function normalizeOllama(raw: unknown): CPEResponse {
       : toolUses.length > 0 ? 'tool_use' : 'end_turn',
     content,
     toolUses,
-    usage: { inputTokens: 0, outputTokens: 0 },
+    usage: {
+      inputTokens:  Number(r['prompt_eval_count']) || 0,
+      outputTokens: Number(r['eval_count'])        || 0,
+    },
   }
 }
