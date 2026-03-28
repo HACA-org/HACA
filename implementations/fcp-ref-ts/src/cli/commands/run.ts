@@ -177,10 +177,7 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
         })
         if (answer === 'y') {
           await approveProposal(layout, proposal.id)
-          await appendIntegrityLog(layout, {
-            event: 'EVOLUTION_AUTH', id: proposal.id, digest: proposal.digest,
-            ts: new Date().toISOString(), autoApproved: false,
-          })
+          // EVOLUTION_AUTH is written by endure.ts when the proposal is committed.
           process.stdout.write('  → Approved.\n')
         } else {
           await appendIntegrityLog(layout, {
