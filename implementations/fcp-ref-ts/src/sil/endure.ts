@@ -99,7 +99,7 @@ async function executeOp(op: EvolutionOp, root: string, workspaceFocus: string, 
     case 'skillInstall': {
       // Validate the staged skill before installing
       const stageDir = path.join(workspaceFocus, 'tmp', 'fcp-stage', op.name)
-      const audit    = await auditSkillDir(stageDir, op.name, logger)
+      const audit    = await auditSkillDir(stageDir, logger, op.name)
       if (!audit.ok) throw new Error(`skillInstall audit failed: ${audit.error}`)
       if (audit.report.issues.length > 0) {
         throw new Error(`skillInstall audit issues: ${audit.report.issues.join('; ')}`)

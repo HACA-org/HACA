@@ -23,10 +23,12 @@ interface AuditReport {
 
 // Core audit logic — operates on an absolute skill directory path.
 // Does not require the skill to be registered in index.json.
+// skillName is optional — only checked when provided (index mode).
+// In path mode (staging) the manifest is the source of truth for the name.
 export async function auditSkillDir(
-  skillDir:  string,
-  skillName: string,
-  logger:    import('../../types/logger.js').Logger,
+  skillDir:   string,
+  logger:     import('../../types/logger.js').Logger,
+  skillName?: string,
 ): Promise<{ ok: false; error: string } | { ok: true; report: AuditReport }> {
   const manifestPath = path.join(skillDir, 'manifest.json')
 
@@ -43,7 +45,7 @@ export async function auditSkillDir(
 
   const issues: string[] = []
 
-  if (manifest.name !== skillName) {
+  if (skillName !== undefined && manifest.name !== skillName) {
     issues.push(`manifest.name "${manifest.name}" does not match expected "${skillName}"`)
   }
 
@@ -101,9 +103,8 @@ export const skillAuditHandler: ToolHandler = {
       const workspace = await resolveWorkspace(ctx)
       if (!workspace) return { ok: false, error: 'workspace_focus is not set' }
 
-      const absDir   = path.isAbsolute(pathParam) ? pathParam : path.join(workspace, pathParam)
-      const skillName = path.basename(absDir)
-      const result   = await auditSkillDir(absDir, skillName, ctx.logger)
+      const absDir = path.isAbsolute(pathParam) ? pathParam : path.join(workspace, pathParam)
+      const result = await auditSkillDir(absDir, ctx.logger)  // no skillName — manifest is source of truth
       if (!result.ok) return result
       return { ok: true, output: JSON.stringify(result.report, null, 2) }
     }
@@ -123,7 +124,7 @@ export const skillAuditHandler: ToolHandler = {
     if (!entry) return { ok: false, error: `skill not in index: ${skillParam}` }
 
     const skillDir = path.join(ctx.layout.skills.dir, skillParam!)
-    const result   = await auditSkillDir(skillDir, skillParam!, ctx.logger)
+    const result   = await auditSkillDir(skillDir, ctx.logger, skillParam!)  // skillName checked against index
     if (!result.ok) return result
 
     // Cross-check index consistency
