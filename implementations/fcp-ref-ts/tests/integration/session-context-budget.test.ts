@@ -34,31 +34,32 @@ describe('session/budget — estimateTokens', () => {
 describe('session/budget — checkBudget', () => {
   const BUDGET = 10000
   const CRITICAL_PCT = 90
+  const WARN_PCT = 80
 
   it('returns ok when well below budget', () => {
-    const result = checkBudget(1000, BUDGET, CRITICAL_PCT) // 10%
+    const result = checkBudget(1000, BUDGET, CRITICAL_PCT, WARN_PCT) // 10%
     expect(result.status).toBe('ok')
     expect(result.usedPct).toBe(10)
   })
 
-  it('returns warn when within 10% of critical threshold', () => {
-    const result = checkBudget(8100, BUDGET, CRITICAL_PCT) // 81%
+  it('returns warn when at warnPct threshold', () => {
+    const result = checkBudget(8100, BUDGET, CRITICAL_PCT, WARN_PCT) // 81%
     expect(result.status).toBe('warn')
   })
 
   it('returns critical at the critical threshold', () => {
-    const result = checkBudget(9000, BUDGET, CRITICAL_PCT) // 90%
+    const result = checkBudget(9000, BUDGET, CRITICAL_PCT, WARN_PCT) // 90%
     expect(result.status).toBe('critical')
     expect(result.usedPct).toBe(90)
   })
 
   it('returns critical above the critical threshold', () => {
-    const result = checkBudget(9500, BUDGET, CRITICAL_PCT) // 95%
+    const result = checkBudget(9500, BUDGET, CRITICAL_PCT, WARN_PCT) // 95%
     expect(result.status).toBe('critical')
   })
 
   it('usedPct is rounded', () => {
-    const result = checkBudget(333, BUDGET, CRITICAL_PCT) // 3.33%
+    const result = checkBudget(333, BUDGET, CRITICAL_PCT, WARN_PCT) // 3.33%
     expect(Number.isInteger(result.usedPct)).toBe(true)
   })
 })

@@ -1,8 +1,9 @@
 // Session loop — main cognitive cycle.
-// Iterates: drain inbox → operator prompt → CPE invoke → tool dispatch → repeat.
-// EXCEPTION: ~170 lines — tool dispatch and message persistence are tightly coupled
+// Iterates: drain inbox → operator prompt → CPE invoke → tool dispatch → heartbeat → repeat.
+// EXCEPTION: ~200 lines — tool dispatch and message persistence are tightly coupled
 // to the main loop invariant and cannot be split without losing readability.
-import { appendJsonl, readJson, fileExists } from '../store/io.js'
+import * as path from 'node:path'
+import { appendJsonl, readJson, fileExists, ensureDir, writeJson } from '../store/io.js'
 import { drainInbox } from './inbox.js'
 import { buildContext } from './context.js'
 import { estimateTokens, checkBudget } from './budget.js'
@@ -11,11 +12,24 @@ import { SESSION_CLOSE_SIGNAL } from '../sil/sil.js'
 import { ClosurePayloadSchema } from '../types/formats/memory.js'
 import type { SessionOptions, LoopResult, CycleState } from '../types/session.js'
 import type { CPEMessage, ToolResultBlock } from '../types/cpe.js'
+import type { HeartbeatResult } from '../types/sil.js'
 
 const MAX_TOOL_CYCLES = 50
 
+async function writeOperatorNotification(
+  layout: import('../types/store.js').Layout,
+  level: 'degraded' | 'critical',
+  result: HeartbeatResult,
+): Promise<void> {
+  await ensureDir(layout.state.operatorNotifications)
+  const ts   = new Date().toISOString().replace(/[:.]/g, '-')
+  const file = path.join(layout.state.operatorNotifications, `heartbeat-${level}-${ts}.json`)
+  const failing = result.vitals.filter(v => !v.ok)
+  await writeJson(file, { level, ts: result.ts, cycleCount: result.cycleCount, budgetPct: result.budgetPct, failing })
+}
+
 export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> {
-  const { layout, baseline, cpe, policy, tools, logger, io, sessionId, contextMessages } = opts
+  const { layout, baseline, cpe, policy, tools, logger, io, sessionId, contextMessages, heartbeat } = opts
   const log = logger.child({ module: 'session', sessionId })
 
   const toolMap = new Map(tools.map(t => [t.name, t]))
@@ -59,7 +73,7 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
 
       // ── Budget check ─────────────────────────────────────────────────────
       const tokens = cycle.inputTokens > 0 ? cycle.inputTokens : estimateTokens(messages)
-      const budget = checkBudget(tokens, baseline.contextWindow.budgetTokens, baseline.contextWindow.criticalPct)
+      const budget = checkBudget(tokens, baseline.contextWindow.budgetTokens, baseline.contextWindow.criticalPct, baseline.contextWindow.warnPct)
       if (budget.status === 'critical') {
         io.emit({ type: 'session_close', reason: 'budget_critical' })
         return { closed: 'forced', reason: 'budget_critical' }
@@ -133,6 +147,26 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
       await appendJsonl(layout.memory.sessionJsonl, { type: 'message', role: 'user', content: results, ts: new Date().toISOString() })
 
       if (sessionCloseTriggered) break
+
+      // ── Heartbeat ────────────────────────────────────────────────────────
+      if (heartbeat && await heartbeat.shouldRun(cycle.cycleNum)) {
+        const hbResult = await heartbeat.run(cycle.cycleNum, cycle.inputTokens)
+        const criticals = hbResult.vitals.filter(v => !v.ok && v.severity === 'critical')
+        const degraded  = hbResult.vitals.filter(v => !v.ok && v.severity === 'degraded')
+
+        if (criticals.length > 0) {
+          await writeOperatorNotification(layout, 'critical', hbResult)
+          // Revoke session token and force close
+          try { await import('node:fs/promises').then(fs => fs.unlink(layout.state.sentinels.sessionToken)) } catch { /* already absent */ }
+          io.emit({ type: 'session_close', reason: 'critical_condition' })
+          log.warn('session:heartbeat:critical', { vitals: criticals.map(v => v.check) })
+          return { closed: 'forced', reason: 'critical_condition' }
+        }
+        if (degraded.length > 0) {
+          await writeOperatorNotification(layout, 'degraded', hbResult)
+          log.warn('session:heartbeat:degraded', { vitals: degraded.map(v => v.check) })
+        }
+      }
     }
   } catch (e: unknown) {
     io.emit({ type: 'error', error: e })

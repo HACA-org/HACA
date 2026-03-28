@@ -51,7 +51,7 @@ function makeBaseline(): Baseline {
     cpe:      { topology: 'transparent', backend: 'test' },
     heartbeat:        { cycleThreshold: 5, intervalSeconds: 60 },
     watchdog:         { silThresholdSeconds: 300 },
-    contextWindow:    { budgetTokens: 10000, criticalPct: 80 },
+    contextWindow:    { budgetTokens: 10000, criticalPct: 80, warnPct: 60 },
     drift:            { comparisonMechanism: 'ncd-gzip-v1', threshold: 0.5 },
     sessionStore:     { rotationThresholdBytes: 1048576 },
     workingMemory:    { maxEntries: 20 },
@@ -249,22 +249,23 @@ describe('SIL — identityCheck', () => {
 // ─── Heartbeat ────────────────────────────────────────────────────────────────
 
 describe('SIL — createHeartbeat', () => {
-  it('shouldRun is true when cycleCount exceeds threshold', () => {
+  it('shouldRun is true when cycleCount exceeds threshold (no prior state)', async () => {
     const layout   = createLayout(tmpDir)
     const baseline = makeBaseline()
     const logger   = createLogger({ test: true })
     const hb = createHeartbeat(layout, baseline, logger, [])
-    const old = new Date(Date.now() - 1000).toISOString()
-    expect(hb.shouldRun(5, old)).toBe(true)
+    // No heartbeat.json → cycleCount=0, lastTs=epoch → time threshold fires immediately
+    expect(await hb.shouldRun(0)).toBe(true)
   })
 
-  it('shouldRun is false when cycle and time thresholds are not met', () => {
+  it('shouldRun is false just after run() persists state', async () => {
     const layout   = createLayout(tmpDir)
     const baseline = makeBaseline()
     const logger   = createLogger({ test: true })
     const hb = createHeartbeat(layout, baseline, logger, [])
-    const now = new Date().toISOString()
-    expect(hb.shouldRun(0, now)).toBe(false)
+    await hb.run(0, 0)
+    // Cycle delta = 0 (< threshold=5), time delta ≈ 0 (< intervalSeconds=60)
+    expect(await hb.shouldRun(0)).toBe(false)
   })
 
   it('run returns all vital results', async () => {
@@ -272,7 +273,7 @@ describe('SIL — createHeartbeat', () => {
     const baseline = makeBaseline()
     const logger   = createLogger({ test: true })
     const hb = createHeartbeat(layout, baseline, logger, [budgetCheck])
-    const result = await hb.run(3, 100, new Date().toISOString())
+    const result = await hb.run(3, 100)
     expect(result.vitals).toHaveLength(1)
     expect(result.vitals[0]!.check).toBe('context_budget')
   })

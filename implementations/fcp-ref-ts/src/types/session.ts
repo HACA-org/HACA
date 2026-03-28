@@ -4,6 +4,7 @@ import type { ClosurePayload } from './formats/memory.js'
 import type { CPEAdapter, ToolUseBlock } from './cpe.js'
 import type { Logger }        from './logger.js'
 import type { AllowlistPolicy, ToolHandler, ToolResult } from './exec.js'
+import type { Heartbeat }     from '../sil/heartbeat.js'
 
 export type CloseReason =
   | 'normal'
@@ -52,6 +53,8 @@ export interface SessionOptions {
   readonly profile:    'HACA-Core' | 'HACA-Evolve'
   // Initial messages from boot context assembly (Phase 5).
   readonly contextMessages?: import('./cpe.js').CPEMessage[]
+  // Heartbeat orchestrator — optional so tests can omit it.
+  readonly heartbeat?: Heartbeat
 }
 
 export type LoopResult =

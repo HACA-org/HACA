@@ -27,6 +27,7 @@ export function makeBaselineJson(opts: BaselineTemplateOpts): Record<string, unk
     contextWindow: {
       budgetTokens: opts.budgetTokens,
       criticalPct:  80,
+      warnPct:      65,
     },
     drift: {
       comparisonMechanism: 'ncd-gzip-v1',

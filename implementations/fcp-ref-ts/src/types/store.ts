@@ -46,6 +46,7 @@ export interface Layout {
     readonly distressBeacon: string
     readonly allowlist: string
     readonly sessionGrants: string
+    readonly heartbeat: string
   }
 }
 
@@ -95,6 +96,7 @@ export function createLayout(root: string): Layout {
       distressBeacon:       j('state', 'distress.beacon'),
       allowlist:            j('state', 'allowlist.json'),
       sessionGrants:        j('state', 'session-grants.json'),
+      heartbeat:            j('state', 'heartbeat.json'),
     },
   }
 }

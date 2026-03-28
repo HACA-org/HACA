@@ -9,7 +9,7 @@ export const budgetCheck: VitalCheck = {
     if (budget <= 0) return { ok: true }
 
     const pct  = (ctx.inputTokens / budget) * 100
-    const warn = critical - 10
+    const warn = ctx.baseline.contextWindow.warnPct
 
     if (pct >= critical) {
       return {

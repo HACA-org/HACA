@@ -21,11 +21,10 @@ export function estimateTokens(messages: CPEMessage[]): number {
   return Math.ceil(chars / 4)
 }
 
-// criticalPct is from baseline.context_window.critical_pct (0-100 integer).
-// warn threshold is 10 percentage points below critical.
-export function checkBudget(inputTokens: number, budgetTokens: number, criticalPct: number): BudgetResult {
+// criticalPct and warnPct are from baseline.contextWindow (0-100 integers).
+export function checkBudget(inputTokens: number, budgetTokens: number, criticalPct: number, warnPct: number): BudgetResult {
   const usedPct = Math.round((inputTokens / budgetTokens) * 100)
-  if (usedPct >= criticalPct)      return { status: 'critical', usedPct }
-  if (usedPct >= criticalPct - 10) return { status: 'warn',     usedPct }
+  if (usedPct >= criticalPct) return { status: 'critical', usedPct }
+  if (usedPct >= warnPct)     return { status: 'warn',     usedPct }
   return { status: 'ok', usedPct }
 }
