@@ -9,7 +9,6 @@ import { drainInbox } from './inbox.js'
 import { buildContext } from './context.js'
 import { estimateTokens, checkBudget } from './budget.js'
 import { makeFingerprint } from './fingerprint.js'
-import { compactSessionHistory } from './gc.js'
 import { SESSION_CLOSE_SIGNAL, COMPACT_SESSION_SIGNAL } from '../sil/sil.js'
 import { ClosurePayloadSchema } from '../types/formats/memory.js'
 import type { SessionOptions, LoopResult, CycleState } from '../types/session.js'
@@ -178,23 +177,6 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
       messages.push({ role: 'user', content: results })
       await appendJsonl(layout.memory.sessionJsonl, { type: 'message', role: 'user', content: results, ts: new Date().toISOString() })
 
-      // ── Compact close — GC history, revoke token, reboot ────────────────
-      if (sessionCloseTriggered && compactRequested) {
-        log.info('session:compact_close')
-        await compactSessionHistory(layout, contextWindow, logger)
-        await nodefs.unlink(layout.state.sentinels.sessionToken).catch(() => undefined)
-        io.emit({ type: 'session_close', reason: 'normal' })
-        const raw = await fileExists(layout.state.pendingClosure)
-          ? await readJson(layout.state.pendingClosure)
-          : null
-        const parsed = ClosurePayloadSchema.safeParse(raw)
-        if (!parsed.success) {
-          log.warn('session:no-closure-payload')
-          return { closed: 'forced', reason: 'critical_condition' }
-        }
-        return { closed: 'normal', closurePayload: parsed.data }
-      }
-
       if (sessionCloseTriggered) break
 
       // ── Heartbeat ────────────────────────────────────────────────────────
@@ -217,7 +199,6 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
           const otherCriticals = criticals.filter(v => v.check !== 'compact_session')
           if (otherCriticals.length > 0) {
             await writeOperatorNotification(layout, 'critical', hbResult)
-            await nodefs.unlink(layout.state.sentinels.sessionToken).catch(() => undefined)
             io.emit({ type: 'session_close', reason: 'critical_condition' })
             log.warn('session:heartbeat:critical', { vitals: otherCriticals.map(v => v.check) })
             return { closed: 'forced', reason: 'critical_condition' }
@@ -241,9 +222,9 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
     return { closed: 'error', error: e }
   }
 
-  // ── Normal close ─────────────────────────────────────────────────────────
+  // ── Normal / compact close ───────────────────────────────────────────────
   io.emit({ type: 'session_close', reason: 'normal' })
-  log.info('session:close', { cycles: cycle.cycleNum })
+  log.info('session:close', { cycles: cycle.cycleNum, compact: compactRequested })
 
   const raw = await fileExists(layout.state.pendingClosure)
     ? await readJson(layout.state.pendingClosure)
@@ -253,5 +234,5 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
     log.warn('session:no-closure-payload')
     return { closed: 'forced', reason: 'critical_condition' }
   }
-  return { closed: 'normal', closurePayload: parsed.data }
+  return { closed: 'normal', closurePayload: parsed.data, compact: compactRequested }
 }

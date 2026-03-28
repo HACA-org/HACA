@@ -15,7 +15,7 @@ import { startEntity }   from '../../boot/boot.js'
 import { resolveAdapter } from '../../cpe/resolve.js'
 import { loadAllowlistPolicy, fileReadHandler, fileWriteHandler, webFetchHandler,
          shellRunHandler, agentRunHandler, skillCreateHandler, skillAuditHandler } from '../../exec/exec.js'
-import { processClosure, memoryRecallHandler, memoryWriteHandler,
+import { memoryRecallHandler, memoryWriteHandler,
          closurePayloadHandler } from '../../mil/mil.js'
 import { evolutionProposalHandler, sessionCloseHandler } from '../../sil/sil.js'
 import { runSessionLoop }    from '../../session/loop.js'
@@ -157,15 +157,17 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
     ...(contextMessages ? { contextMessages } : {}),
   })
 
-  // Sleep cycle: consolidate memory, update integrity
-  await runSleepCycle(layout, baseline, logger)
-
-  if (result.closed === 'normal') {
-    await processClosure(
-      layout, sessionId, logger, result.closurePayload,
-      baseline.workingMemory.maxEntries,
-    )
+  // Sleep cycle: memory consolidation → GC → Endure (HACA-Arch §6.4)
+  const sleepOpts = {
+    layout,
+    baseline,
+    logger,
+    sessionId,
+    contextWindow: cpe.contextWindow,
+    compact:       result.closed === 'normal' && result.compact,
+    ...(result.closed === 'normal' ? { closurePayload: result.closurePayload } : {}),
   }
+  await runSleepCycle(sleepOpts)
 }
 
 export { runFcp }

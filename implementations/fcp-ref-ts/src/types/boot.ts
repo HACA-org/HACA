@@ -11,9 +11,24 @@ export interface BootIO {
   write(text: string): void
 }
 
+import type { ClosurePayload } from './formats/memory.js'
+
+export interface SleepCycleOpts {
+  readonly layout:         Layout
+  readonly baseline:       Baseline
+  readonly logger:         Logger
+  readonly sessionId:      string
+  // Present after a normal or compact close; absent on crash recovery.
+  readonly closurePayload?: ClosurePayload
+  // Model context window — needed by MIL GC to compute compaction target.
+  // Only relevant when closurePayload is present and compact was triggered.
+  readonly contextWindow:  number
+  // Set to true when session ended via compact protocol — triggers MIL GC.
+  readonly compact:        boolean
+}
+
 // Injected sleep cycle — phases that need it (Phase 2 crash recovery) call this.
-// Not available until Session Loop (Phase 4 build) is implemented.
-export type SleepCycleFn = (layout: Layout, baseline: Baseline, logger: Logger) => Promise<void>
+export type SleepCycleFn = (opts: SleepCycleOpts) => Promise<void>
 
 export interface BootContext {
   readonly layout:      Layout

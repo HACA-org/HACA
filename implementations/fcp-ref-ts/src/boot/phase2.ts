@@ -16,7 +16,15 @@ export const phase2: BootPhase = {
 
     if (sleepCycle) {
       logger.info('boot:phase2:sleep-cycle-start')
-      await sleepCycle(layout, baseline, logger)
+      // Crash recovery: no closure payload, no compact — GC and Endure still run.
+      await sleepCycle({
+        layout,
+        baseline,
+        logger,
+        sessionId:     '',   // session ID unknown after crash
+        contextWindow: baseline.contextWindow.fallbackTokens,
+        compact:       false,
+      })
       logger.info('boot:phase2:sleep-cycle-done')
     }
 
