@@ -106,10 +106,15 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
   const baselineRaw = await readJson(layout.state.baseline)
   const baseline    = parseBaseline(baselineRaw)
 
-  // Boot — FAP on cold start, 8-phase sequence on warm start
+  // Boot — FAP on cold start, 8-phase sequence on warm start.
+  // prompt() is used by FAP step 4 (operator enrollment) on first run.
   const io: import('../../types/boot.js').BootIO = {
-    write:  (msg) => process.stdout.write(msg + '\n'),
-    prompt: (_question) => Promise.resolve(''),  // boot prompts not used in CLI run
+    write: (msg) => process.stdout.write(msg + '\n'),
+    prompt: (question) => new Promise(resolve => {
+      process.stdout.write(question)
+      const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false })
+      rl.once('line', line => { rl.close(); resolve(line.trim()) })
+    }),
   }
 
   const bootResult = await startEntity({ layout, logger, io, sleepCycle: runSleepCycle })
