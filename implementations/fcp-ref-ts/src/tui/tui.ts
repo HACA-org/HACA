@@ -11,13 +11,14 @@ import { renderStatus, renderSeparator, renderInputPrompt } from './status.js'
 import { TUIInput } from './input.js'
 
 export interface TUIOptions {
-  readonly sessionId: string
-  readonly profile:   Profile
+  readonly sessionId:     string
+  readonly profile:       Profile
+  readonly contextWindow: number
 }
 
 export function createTUI(opts: TUIOptions): SessionIO & { teardown(): void } {
   const out    = makeStdoutOutput()
-  let state: AppState = initialAppState(opts.sessionId, opts.profile)
+  let state: AppState = initialAppState(opts.sessionId, opts.profile, opts.contextWindow)
   let input: TUIInput | null = null
 
   function render(currentInput = ''): void {

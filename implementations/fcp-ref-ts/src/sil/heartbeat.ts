@@ -28,7 +28,7 @@ async function loadState(layout: Layout): Promise<HeartbeatState> {
 
 export interface Heartbeat {
   shouldRun(cycleCount: number): Promise<boolean>
-  run(cycleCount: number, inputTokens: number): Promise<HeartbeatResult>
+  run(cycleCount: number, inputTokens: number, contextWindow: number): Promise<HeartbeatResult>
 }
 
 export function createHeartbeat(
@@ -48,10 +48,12 @@ export function createHeartbeat(
       return cycleDue || timeDue
     },
 
-    async run(cycleCount: number, inputTokens: number): Promise<HeartbeatResult> {
+    async run(cycleCount: number, inputTokens: number, contextWindow: number): Promise<HeartbeatResult> {
       const ts      = new Date().toISOString()
-      const budgetPct = baseline.contextWindow.budgetTokens > 0
-        ? Math.round((inputTokens / baseline.contextWindow.budgetTokens) * 100)
+      // budgetPct shown to operator: relative to 95% of the model window
+      const operatorMax = contextWindow > 0 ? contextWindow * 0.95 : baseline.contextWindow.fallbackTokens
+      const budgetPct   = operatorMax > 0
+        ? Math.round((inputTokens / operatorMax) * 100)
         : 0
 
       const ctx: HeartbeatContext = {
@@ -61,6 +63,7 @@ export function createHeartbeat(
         cycleCount,
         lastHeartbeatTs: ts,
         inputTokens,
+        contextWindow,
       }
 
       const vitals: Array<{ check: string } & (import('../types/sil.js').VitalResult)> = []
@@ -87,6 +90,7 @@ export function createHeartbeat(
 
 // Default set of vital checks for convenience.
 export { budgetCheck }   from './checks/budget.js'
+export { compactCheck }  from './checks/compact.js'
 export { focusCheck }    from './checks/focus.js'
 export { inboxCheck }    from './checks/inbox.js'
 export { identityCheck } from './checks/identity.js'

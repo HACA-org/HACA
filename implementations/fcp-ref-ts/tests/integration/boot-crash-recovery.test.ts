@@ -27,7 +27,7 @@ async function initEntity(root: string) {
     cpe: { topology: 'transparent', backend: 'anthropic:claude-sonnet-4-6' },
     heartbeat:        { cycleThreshold: 50, intervalSeconds: 60 },
     watchdog:         { silThresholdSeconds: 300 },
-    contextWindow:    { budgetTokens: 100000, criticalPct: 90, warnPct: 70 },
+    contextWindow:    { fallbackTokens: 100000, criticalPct: 90, warnPct: 70 },
     drift:            { comparisonMechanism: 'ncd-gzip-v1', threshold: 0.3 },
     sessionStore:     { rotationThresholdBytes: 1048576 },
     workingMemory:    { maxEntries: 10 },

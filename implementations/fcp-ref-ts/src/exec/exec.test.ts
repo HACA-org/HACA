@@ -80,7 +80,7 @@ function makeCtx(opts: {
     cpe:      { topology: 'transparent', backend: 'test' },
     heartbeat:        { cycleThreshold: 10, intervalSeconds: 60 },
     watchdog:         { silThresholdSeconds: 300 },
-    contextWindow:    { budgetTokens: 10000, criticalPct: 80, warnPct: 60 },
+    contextWindow:    { fallbackTokens: 10000, criticalPct: 80, warnPct: 60 },
     drift:            { comparisonMechanism: 'ncd-gzip-v1', threshold: 0.5 },
     sessionStore:     { rotationThresholdBytes: 1048576 },
     workingMemory:    { maxEntries: 20 },

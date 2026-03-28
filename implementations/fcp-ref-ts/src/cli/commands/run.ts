@@ -150,9 +150,10 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
 
   const result = await runSessionLoop({
     layout, baseline, cpe, policy, tools, logger,
-    io:     makeConsoleIO(),
+    io:            makeConsoleIO(),
     sessionId,
     profile,
+    contextWindow: cpe.contextWindow,
     ...(contextMessages ? { contextMessages } : {}),
   })
 

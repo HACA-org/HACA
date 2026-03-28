@@ -17,6 +17,7 @@ export type SessionEvent =
   | { type: 'cycle_start';   cycleNum: number }
   | { type: 'cpe_invoke' }
   | { type: 'cpe_response';  content: string; toolUses: ToolUseBlock[] }
+  | { type: 'token_update';  inputTokens: number; outputTokens: number; budgetPct: number }
   | { type: 'tool_dispatch'; skillName: string; input: unknown }
   | { type: 'tool_result';   skillName: string; result: ToolResult }
   | { type: 'operator_msg';  content: string }
@@ -50,7 +51,9 @@ export interface SessionOptions {
   readonly logger:     Logger
   readonly io:         SessionIO
   readonly sessionId:  string
-  readonly profile:    'HACA-Core' | 'HACA-Evolve'
+  readonly profile:        'HACA-Core' | 'HACA-Evolve'
+  // Actual model context window in tokens (from CPEAdapter.contextWindow).
+  readonly contextWindow:  number
   // Initial messages from boot context assembly (Phase 5).
   readonly contextMessages?: import('./cpe.js').CPEMessage[]
   // Heartbeat orchestrator — optional so tests can omit it.

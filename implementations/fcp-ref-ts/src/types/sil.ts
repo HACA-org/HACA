@@ -9,6 +9,7 @@ export interface HeartbeatContext {
   readonly cycleCount:      number
   readonly lastHeartbeatTs: string
   readonly inputTokens:     number
+  readonly contextWindow:   number   // actual model context window from CPEAdapter
 }
 
 export type VitalSeverity = 'degraded' | 'critical'

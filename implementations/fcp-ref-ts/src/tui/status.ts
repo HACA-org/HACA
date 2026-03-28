@@ -19,17 +19,24 @@ function budgetColor(pct: number, s: string): string {
 }
 
 export function renderStatus(out: Output, state: AppState, layout: TUILayout): void {
-  const profile  = state.profile === 'HACA-Evolve' ? color('Evolve', C_CYAN) : color('Core', C_GREEN)
+  const profile   = state.profile === 'HACA-Evolve' ? color('Evolve', C_CYAN) : color('Core', C_GREEN)
   const statusTxt = STATUS_LABEL[state.status] ?? state.status
-  const budget   = `${state.budgetPct}%`
-  const cycles   = `#${state.cycleCount}`
-  const sid      = dim(state.sessionId.slice(0, 8))
+  const budgetStr = `${state.budgetPct}%`
+  const tokensStr = state.inputTokens > 0
+    ? dim(`↑${fmtK(state.inputTokens)} ↓${fmtK(state.outputTokens)}`)
+    : dim('--')
+  const cycles = `#${state.cycleCount}`
+  const sid    = dim(state.sessionId.slice(0, 8))
 
   const left  = ` FCP ${profile}  ${dim(statusTxt)}`
-  const right = ` ${cycles}  ${budgetColor(state.budgetPct, budget)}  ${sid} `
+  const right = ` ${cycles}  ${tokensStr}  ${budgetColor(state.budgetPct, budgetStr)}  ${sid} `
   const gap   = Math.max(1, layout.columns - stripped(left).length - stripped(right).length)
 
   out.write(moveTo(layout.statusRow, 1) + eraseLine() + left + ' '.repeat(gap) + right)
+}
+
+function fmtK(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`
 }
 
 // Strip ANSI codes to compute visible string length

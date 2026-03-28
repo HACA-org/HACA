@@ -1,15 +1,18 @@
-// Vital check: context budget — warn/critical when token usage exceeds thresholds.
+// Vital check: context budget — warn/critical when token usage exceeds operator thresholds.
+// Uses the model's actual context window (ctx.contextWindow) as denominator.
+// criticalPct and warnPct are operator-visible thresholds (relative to 95% of the model window).
 import type { VitalCheck, HeartbeatContext, VitalResult } from '../../types/sil.js'
 
 export const budgetCheck: VitalCheck = {
   name: 'context_budget',
   async run(ctx: HeartbeatContext): Promise<VitalResult> {
-    const budget   = ctx.baseline.contextWindow.budgetTokens
-    const critical = ctx.baseline.contextWindow.criticalPct
-    if (budget <= 0) return { ok: true }
+    if (ctx.contextWindow <= 0) return { ok: true }
 
-    const pct  = (ctx.inputTokens / budget) * 100
-    const warn = ctx.baseline.contextWindow.warnPct
+    // Operator sees 0-100% relative to 95% of the model window.
+    const operatorMax = ctx.contextWindow * 0.95
+    const pct         = (ctx.inputTokens / operatorMax) * 100
+    const critical    = ctx.baseline.contextWindow.criticalPct
+    const warn        = ctx.baseline.contextWindow.warnPct
 
     if (pct >= critical) {
       return {

@@ -51,7 +51,7 @@ function makeBaseline(): Baseline {
     cpe:      { topology: 'transparent', backend: 'test' },
     heartbeat:        { cycleThreshold: 5, intervalSeconds: 60 },
     watchdog:         { silThresholdSeconds: 300 },
-    contextWindow:    { budgetTokens: 10000, criticalPct: 80, warnPct: 60 },
+    contextWindow:    { fallbackTokens: 10000, criticalPct: 80, warnPct: 60 },
     drift:            { comparisonMechanism: 'ncd-gzip-v1', threshold: 0.5 },
     sessionStore:     { rotationThresholdBytes: 1048576 },
     workingMemory:    { maxEntries: 20 },
@@ -70,6 +70,7 @@ function makeCtx(layout = createLayout(tmpDir)): HeartbeatContext {
     cycleCount:      0,
     lastHeartbeatTs: new Date().toISOString(),
     inputTokens:     0,
+    contextWindow:   200000,
   }
 }
 
@@ -162,23 +163,28 @@ describe('SIL — integrity verification', () => {
 // ─── Vital checks ─────────────────────────────────────────────────────────────
 
 describe('SIL — budgetCheck', () => {
+  // contextWindow=200000, operatorMax=190000, criticalPct=80, warnPct=60
+  // critical threshold: 190000 * 0.80 = 152000 tokens
+  // warn threshold:     190000 * 0.60 = 114000 tokens
+
   it('returns ok when usage is low', async () => {
     const ctx = makeCtx()
-    const r = await budgetCheck.run({ ...ctx, inputTokens: 1000 })
+    const r = await budgetCheck.run({ ...ctx, inputTokens: 10000 })
     expect(r.ok).toBe(true)
   })
 
   it('returns degraded when usage is in warn band', async () => {
     const ctx = makeCtx()
-    // critical=80, warn=70; 75% usage
-    const r = await budgetCheck.run({ ...ctx, inputTokens: 7500 })
+    // 120000/190000 = 63% → above warnPct(60) but below criticalPct(80)
+    const r = await budgetCheck.run({ ...ctx, inputTokens: 120000 })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.severity).toBe('degraded')
   })
 
   it('returns critical when usage exceeds threshold', async () => {
     const ctx = makeCtx()
-    const r = await budgetCheck.run({ ...ctx, inputTokens: 9000 })
+    // 160000/190000 = 84% → above criticalPct(80)
+    const r = await budgetCheck.run({ ...ctx, inputTokens: 160000 })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.severity).toBe('critical')
   })
@@ -263,7 +269,7 @@ describe('SIL — createHeartbeat', () => {
     const baseline = makeBaseline()
     const logger   = createLogger({ test: true })
     const hb = createHeartbeat(layout, baseline, logger, [])
-    await hb.run(0, 0)
+    await hb.run(0, 0, 200000)
     // Cycle delta = 0 (< threshold=5), time delta ≈ 0 (< intervalSeconds=60)
     expect(await hb.shouldRun(0)).toBe(false)
   })
@@ -273,7 +279,7 @@ describe('SIL — createHeartbeat', () => {
     const baseline = makeBaseline()
     const logger   = createLogger({ test: true })
     const hb = createHeartbeat(layout, baseline, logger, [budgetCheck])
-    const result = await hb.run(3, 100)
+    const result = await hb.run(3, 100, 200000)
     expect(result.vitals).toHaveLength(1)
     expect(result.vitals[0]!.check).toBe('context_budget')
   })

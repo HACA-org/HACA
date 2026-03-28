@@ -12,7 +12,7 @@ const validBaseline = {
   cpe: { topology: 'transparent', backend: 'anthropic:claude-opus-4-6' },
   heartbeat:        { cycleThreshold: 10, intervalSeconds: 300 },
   watchdog:         { silThresholdSeconds: 300 },
-  contextWindow:    { budgetTokens: 200000, criticalPct: 85, warnPct: 65 },
+  contextWindow:    { fallbackTokens: 200000, criticalPct: 85, warnPct: 65 },
   drift:            { comparisonMechanism: 'ncd-gzip-v1', threshold: 0.15 },
   sessionStore:     { rotationThresholdBytes: 2097152 },
   workingMemory:    { maxEntries: 20 },
@@ -67,8 +67,8 @@ describe('store/parse', () => {
       expect(() => parseBaseline(bad)).toThrow(ParseError)
     })
 
-    it('rejects null budgetTokens', () => {
-      const bad = { ...validBaseline, contextWindow: { budgetTokens: null, criticalPct: 85, warnPct: 65 } }
+    it('rejects null fallbackTokens', () => {
+      const bad = { ...validBaseline, contextWindow: { fallbackTokens: null, criticalPct: 85, warnPct: 65 } }
       expect(() => parseBaseline(bad)).toThrow(ParseError)
     })
   })

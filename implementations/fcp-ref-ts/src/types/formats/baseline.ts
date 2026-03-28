@@ -23,9 +23,9 @@ export const BaselineSchema = z.object({
     silThresholdSeconds: z.number().int().positive(),
   }),
   contextWindow: z.object({
-    budgetTokens: z.number().int().positive(),
-    criticalPct:  z.number().int().min(1).max(100),
-    warnPct:      z.number().int().min(1).max(100),
+    fallbackTokens: z.number().int().positive(),
+    criticalPct:    z.number().int().min(1).max(100),
+    warnPct:        z.number().int().min(1).max(100),
   }),
   drift: z.object({
     comparisonMechanism: z.literal('ncd-gzip-v1'),

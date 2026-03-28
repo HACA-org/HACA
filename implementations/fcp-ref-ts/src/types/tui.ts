@@ -18,24 +18,28 @@ export interface AppMessage {
 }
 
 export interface AppState {
-  readonly status:      TUIStatus
-  readonly sessionId:   string
-  readonly cycleCount:  number
-  readonly inputTokens: number
-  readonly budgetPct:   number
-  readonly profile:     Profile
-  readonly messages:    AppMessage[]
+  readonly status:        TUIStatus
+  readonly sessionId:     string
+  readonly cycleCount:    number
+  readonly inputTokens:   number
+  readonly outputTokens:  number
+  readonly contextWindow: number   // model context window; 0 = unknown
+  readonly budgetPct:     number   // 0-100, relative to contextWindow * 0.95
+  readonly profile:       Profile
+  readonly messages:      AppMessage[]
 }
 
-export function initialAppState(sessionId: string, profile: Profile): AppState {
+export function initialAppState(sessionId: string, profile: Profile, contextWindow: number): AppState {
   return {
-    status:      'idle',
+    status:        'idle',
     sessionId,
-    cycleCount:  0,
-    inputTokens: 0,
-    budgetPct:   0,
+    cycleCount:    0,
+    inputTokens:   0,
+    outputTokens:  0,
+    contextWindow,
+    budgetPct:     0,
     profile,
-    messages:    [],
+    messages:      [],
   }
 }
 
@@ -53,6 +57,13 @@ export function applyEvent(state: AppState, event: SessionEvent): AppState {
           ...state.messages,
           { role: 'assistant', content: event.content, ts: new Date().toISOString() },
         ],
+      }
+    case 'token_update':
+      return {
+        ...state,
+        inputTokens:  event.inputTokens,
+        outputTokens: event.outputTokens,
+        budgetPct:    event.budgetPct,
       }
     case 'operator_msg':
       return {

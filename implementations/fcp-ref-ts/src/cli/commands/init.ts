@@ -180,7 +180,7 @@ async function runInit(): Promise<void> {
     const operatorEmail = await ask(rl, '  Email', `${os.userInfo().username}@localhost`)
 
     // ── Budget ───────────────────────────────────────────────────────────────
-    const budgetTokens = 200_000
+    const fallbackTokens = 200_000
 
     // ── Scaffold ─────────────────────────────────────────────────────────────
     hr('Creating entity')
@@ -188,7 +188,7 @@ async function runInit(): Promise<void> {
 
     await scaffoldEntity(entityRoot, profile)
     await writeJson(path.join(entityRoot, 'state', 'baseline.json'), makeBaselineJson({
-      entityId, topology, backend, budgetTokens,
+      entityId, topology, backend, fallbackTokens,
     }))
 
     // Store operator credentials for FAP as a staging file (read by init, cleared by FAP)

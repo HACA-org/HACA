@@ -9,7 +9,7 @@ export interface InitOptions {
   readonly backend:       string   // format: "<provider>:<model>"
   readonly topology:      Topology
   readonly profile:       Profile
-  readonly budgetTokens:  number
+  readonly fallbackTokens: number
   readonly verbose:       boolean
 }
 
@@ -19,7 +19,7 @@ export interface BaselineTemplate {
   readonly entityId:    string
   readonly backend:     string
   readonly topology:    Topology
-  readonly budgetTokens: number
+  readonly fallbackTokens: number
 }
 
 export class CLIError extends Error {

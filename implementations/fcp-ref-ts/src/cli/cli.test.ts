@@ -8,25 +8,25 @@ import { buildProgram } from './dispatch.js'
 
 describe('CLI — makeBaselineJson', () => {
   it('generates a baseline with correct shape', () => {
-    const b = makeBaselineJson({ topology: 'transparent', backend: 'anthropic:claude-opus-4-6', budgetTokens: 100000 })
+    const b = makeBaselineJson({ topology: 'transparent', backend: 'anthropic:claude-opus-4-6', fallbackTokens: 100000 })
     expect(b['version']).toBe('1.0')
     expect((b['cpe'] as Record<string, unknown>)['topology']).toBe('transparent')
     expect((b['cpe'] as Record<string, unknown>)['backend']).toBe('anthropic:claude-opus-4-6')
-    expect((b['contextWindow'] as Record<string, unknown>)['budgetTokens']).toBe(100000)
+    expect((b['contextWindow'] as Record<string, unknown>)['fallbackTokens']).toBe(100000)
   })
 
   it('sets drift threshold to 0 for transparent topology', () => {
-    const b = makeBaselineJson({ topology: 'transparent', backend: 'anthropic:claude-opus-4-6', budgetTokens: 10000 })
+    const b = makeBaselineJson({ topology: 'transparent', backend: 'anthropic:claude-opus-4-6', fallbackTokens: 10000 })
     expect((b['drift'] as Record<string, unknown>)['threshold']).toBe(0.0)
   })
 
   it('sets drift threshold to 0.15 for opaque topology', () => {
-    const b = makeBaselineJson({ topology: 'opaque', backend: 'anthropic:claude-opus-4-6', budgetTokens: 10000 })
+    const b = makeBaselineJson({ topology: 'opaque', backend: 'anthropic:claude-opus-4-6', fallbackTokens: 10000 })
     expect((b['drift'] as Record<string, unknown>)['threshold']).toBe(0.15)
   })
 
   it('accepts a custom entityId', () => {
-    const b = makeBaselineJson({ entityId: 'my-entity', topology: 'transparent', backend: 'auto', budgetTokens: 1000 })
+    const b = makeBaselineJson({ entityId: 'my-entity', topology: 'transparent', backend: 'auto', fallbackTokens: 1000 })
     expect(b['entityId']).toBe('my-entity')
   })
 })

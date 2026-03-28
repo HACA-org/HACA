@@ -6,7 +6,7 @@ export interface BaselineTemplateOpts {
   readonly entityId?:    string
   readonly topology:     Topology
   readonly backend:      string   // "<provider>:<model>"
-  readonly budgetTokens: number
+  readonly fallbackTokens: number
 }
 
 export function makeBaselineJson(opts: BaselineTemplateOpts): Record<string, unknown> {
@@ -25,9 +25,9 @@ export function makeBaselineJson(opts: BaselineTemplateOpts): Record<string, unk
       silThresholdSeconds: 600,
     },
     contextWindow: {
-      budgetTokens: opts.budgetTokens,
-      criticalPct:  80,
-      warnPct:      65,
+      fallbackTokens: opts.fallbackTokens,
+      criticalPct:    80,
+      warnPct:        65,
     },
     drift: {
       comparisonMechanism: 'ncd-gzip-v1',

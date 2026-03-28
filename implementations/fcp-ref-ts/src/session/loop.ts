@@ -1,14 +1,16 @@
 // Session loop — main cognitive cycle.
 // Iterates: drain inbox → operator prompt → CPE invoke → tool dispatch → heartbeat → repeat.
-// EXCEPTION: ~200 lines — tool dispatch and message persistence are tightly coupled
+// EXCEPTION: ~220 lines — tool dispatch and message persistence are tightly coupled
 // to the main loop invariant and cannot be split without losing readability.
 import * as path from 'node:path'
+import * as nodefs from 'node:fs/promises'
 import { appendJsonl, readJson, fileExists, ensureDir, writeJson } from '../store/io.js'
 import { drainInbox } from './inbox.js'
 import { buildContext } from './context.js'
 import { estimateTokens, checkBudget } from './budget.js'
 import { makeFingerprint } from './fingerprint.js'
-import { SESSION_CLOSE_SIGNAL } from '../sil/sil.js'
+import { compactSessionHistory } from './gc.js'
+import { SESSION_CLOSE_SIGNAL, COMPACT_SESSION_SIGNAL } from '../sil/sil.js'
 import { ClosurePayloadSchema } from '../types/formats/memory.js'
 import type { SessionOptions, LoopResult, CycleState } from '../types/session.js'
 import type { CPEMessage, ToolResultBlock } from '../types/cpe.js'
@@ -30,6 +32,7 @@ async function writeOperatorNotification(
 
 export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> {
   const { layout, baseline, cpe, policy, tools, logger, io, sessionId, contextMessages, heartbeat } = opts
+  const contextWindow = opts.contextWindow > 0 ? opts.contextWindow : baseline.contextWindow.fallbackTokens
   const log = logger.child({ module: 'session', sessionId })
 
   const toolMap = new Map(tools.map(t => [t.name, t]))
@@ -46,17 +49,32 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
   const messages: CPEMessage[] = [...(contextMessages ?? [])]
   const fingerprints: string[] = []
   let cycle: CycleState = { cycleNum: 0, inputTokens: 0, fingerprint: '' }
+  // Set to true when the SIL compact check fires — prevents re-injection on next cycle.
+  let compactRequested = false
 
   log.info('session:start')
 
   try {
     while (true) {
       // ── Drain async inbox ────────────────────────────────────────────────
+      let compactSignalReceived = false
       for (const msg of await drainInbox(layout)) {
-        messages.push(msg)
         const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
+        if (text === COMPACT_SESSION_SIGNAL) {
+          compactSignalReceived = true
+          continue
+        }
+        messages.push(msg)
         await appendJsonl(layout.memory.sessionJsonl, { type: 'message', role: 'user', content: text, ts: new Date().toISOString() })
         io.emit({ type: 'operator_msg', content: text })
+      }
+
+      // ── Compact signal: inject CPE instruction ───────────────────────────
+      if (compactSignalReceived) {
+        const compactInstruction = 'SYSTEM: Context window is critically full. Stop current work and immediately call fcp_closure_payload to save state. The session will be restarted for compaction.'
+        messages.push({ role: 'user', content: compactInstruction })
+        await appendJsonl(layout.memory.sessionJsonl, { type: 'message', role: 'user', content: compactInstruction, ts: new Date().toISOString() })
+        log.warn('session:compact_requested')
       }
 
       // ── Operator input (when idle) ───────────────────────────────────────
@@ -71,9 +89,17 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
         io.emit({ type: 'operator_msg', content: trimmed })
       }
 
-      // ── Budget check ─────────────────────────────────────────────────────
+      // ── Budget check (operator-visible, based on 95% of window) ─────────
       const tokens = cycle.inputTokens > 0 ? cycle.inputTokens : estimateTokens(messages)
-      const budget = checkBudget(tokens, baseline.contextWindow.budgetTokens, baseline.contextWindow.criticalPct, baseline.contextWindow.warnPct)
+      const operatorMax = Math.round(contextWindow * 0.95)
+      const budget = checkBudget(tokens, operatorMax, baseline.contextWindow.criticalPct, baseline.contextWindow.warnPct)
+      // Emit token update so TUI can display in/out counts and budget %
+      io.emit({
+        type:         'token_update',
+        inputTokens:  tokens,
+        outputTokens: cycle.inputTokens > 0 ? 0 : 0,   // output populated after CPE response below
+        budgetPct:    budget.usedPct,
+      })
       if (budget.status === 'critical') {
         io.emit({ type: 'session_close', reason: 'budget_critical' })
         return { closed: 'forced', reason: 'budget_critical' }
@@ -96,6 +122,12 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
         fingerprint: makeFingerprint(resp.toolUses),
       }
       io.emit({ type: 'cpe_response', content: resp.content, toolUses: resp.toolUses })
+      io.emit({
+        type:         'token_update',
+        inputTokens:  resp.usage.inputTokens,
+        outputTokens: resp.usage.outputTokens,
+        budgetPct:    Math.round((resp.usage.inputTokens / operatorMax) * 100),
+      })
 
       // ── End turn — push assistant message, wait for operator ─────────────
       if (resp.stopReason === 'end_turn' || resp.toolUses.length === 0) {
@@ -146,18 +178,53 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
       messages.push({ role: 'user', content: results })
       await appendJsonl(layout.memory.sessionJsonl, { type: 'message', role: 'user', content: results, ts: new Date().toISOString() })
 
+      // ── Compact close — GC history, revoke token, reboot ────────────────
+      if (sessionCloseTriggered && compactRequested) {
+        log.info('session:compact_close')
+        await compactSessionHistory(layout, contextWindow, logger)
+        await nodefs.unlink(layout.state.sentinels.sessionToken).catch(() => undefined)
+        io.emit({ type: 'session_close', reason: 'normal' })
+        const raw = await fileExists(layout.state.pendingClosure)
+          ? await readJson(layout.state.pendingClosure)
+          : null
+        const parsed = ClosurePayloadSchema.safeParse(raw)
+        if (!parsed.success) {
+          log.warn('session:no-closure-payload')
+          return { closed: 'forced', reason: 'critical_condition' }
+        }
+        return { closed: 'normal', closurePayload: parsed.data }
+      }
+
       if (sessionCloseTriggered) break
 
       // ── Heartbeat ────────────────────────────────────────────────────────
       if (heartbeat && await heartbeat.shouldRun(cycle.cycleNum)) {
-        const hbResult = await heartbeat.run(cycle.cycleNum, cycle.inputTokens)
+        const hbResult = await heartbeat.run(cycle.cycleNum, cycle.inputTokens, contextWindow)
         const criticals = hbResult.vitals.filter(v => !v.ok && v.severity === 'critical')
         const degraded  = hbResult.vitals.filter(v => !v.ok && v.severity === 'degraded')
 
-        if (criticals.length > 0) {
+        // compact_session check fires at 97% — inject inbox message for next cycle
+        const compactVital = criticals.find(v => v.check === 'compact_session')
+        if (compactVital && !compactRequested) {
+          compactRequested = true
+          await ensureDir(layout.io.inbox)
+          const ts   = new Date().toISOString().replace(/[:.]/g, '-')
+          const file = path.join(layout.io.inbox, `compact-${ts}.json`)
+          await writeJson(file, COMPACT_SESSION_SIGNAL)
+          const compactMsg = !compactVital.ok ? compactVital.message : ''
+          log.warn('session:compact_signal_injected', { pct: compactMsg })
+          // Remove compact from criticals list so the other checks still run
+          const otherCriticals = criticals.filter(v => v.check !== 'compact_session')
+          if (otherCriticals.length > 0) {
+            await writeOperatorNotification(layout, 'critical', hbResult)
+            await nodefs.unlink(layout.state.sentinels.sessionToken).catch(() => undefined)
+            io.emit({ type: 'session_close', reason: 'critical_condition' })
+            log.warn('session:heartbeat:critical', { vitals: otherCriticals.map(v => v.check) })
+            return { closed: 'forced', reason: 'critical_condition' }
+          }
+        } else if (criticals.length > 0) {
           await writeOperatorNotification(layout, 'critical', hbResult)
-          // Revoke session token and force close
-          try { await import('node:fs/promises').then(fs => fs.unlink(layout.state.sentinels.sessionToken)) } catch { /* already absent */ }
+          await nodefs.unlink(layout.state.sentinels.sessionToken).catch(() => undefined)
           io.emit({ type: 'session_close', reason: 'critical_condition' })
           log.warn('session:heartbeat:critical', { vitals: criticals.map(v => v.check) })
           return { closed: 'forced', reason: 'critical_condition' }

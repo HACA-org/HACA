@@ -108,14 +108,14 @@ describe('TUI — history', () => {
 
 describe('TUI — applyEvent', () => {
   it('cycle_start transitions to thinking', () => {
-    const s = initialAppState('sid', 'HACA-Core')
+    const s = initialAppState('sid', 'HACA-Core', 200000)
     const n = applyEvent(s, { type: 'cycle_start', cycleNum: 3 })
     expect(n.status).toBe('thinking')
     expect(n.cycleCount).toBe(3)
   })
 
   it('cpe_response appends assistant message and waits for input', () => {
-    const s = initialAppState('sid', 'HACA-Core')
+    const s = initialAppState('sid', 'HACA-Core', 200000)
     const n = applyEvent(s, { type: 'cpe_response', content: 'Hello!', toolUses: [] })
     expect(n.status).toBe('waiting_input')
     expect(n.messages).toHaveLength(1)
@@ -124,7 +124,7 @@ describe('TUI — applyEvent', () => {
   })
 
   it('cpe_response with tool_uses transitions to tool_running', () => {
-    const s = initialAppState('sid', 'HACA-Core')
+    const s = initialAppState('sid', 'HACA-Core', 200000)
     const n = applyEvent(s, {
       type: 'cpe_response', content: '', toolUses: [
         { type: 'tool_use', id: '1', name: 'fcp_file_read', input: {} },
@@ -134,14 +134,14 @@ describe('TUI — applyEvent', () => {
   })
 
   it('operator_msg appends operator message', () => {
-    const s = initialAppState('sid', 'HACA-Core')
+    const s = initialAppState('sid', 'HACA-Core', 200000)
     const n = applyEvent(s, { type: 'operator_msg', content: 'test input' })
     expect(n.messages[0]!.role).toBe('operator')
     expect(n.messages[0]!.content).toBe('test input')
   })
 
   it('session_close transitions to closing', () => {
-    const s = initialAppState('sid', 'HACA-Core')
+    const s = initialAppState('sid', 'HACA-Core', 200000)
     const n = applyEvent(s, { type: 'session_close', reason: 'normal' })
     expect(n.status).toBe('closing')
   })
