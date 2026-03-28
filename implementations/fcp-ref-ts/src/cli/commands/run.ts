@@ -12,7 +12,7 @@ import { createLogger }  from '../../logger/logger.js'
 import { parseBaseline } from '../../store/parse.js'
 import { readJson, fileExists } from '../../store/io.js'
 import { startEntity }   from '../../boot/boot.js'
-import { resolveAdapter } from '../../cpe/resolve.js'
+import { resolveAdapter } from '../../cpe/cpe.js'
 import { loadAllowlistPolicy, fileReadHandler, fileWriteHandler, webFetchHandler,
          shellRunHandler, agentRunHandler, skillCreateHandler, skillAuditHandler } from '../../exec/exec.js'
 import { memoryRecallHandler, memoryWriteHandler,
