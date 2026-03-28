@@ -29,6 +29,7 @@ export interface ExecContext {
   readonly baseline:       Baseline
   readonly logger:         Logger
   readonly sessionId:      string
+  readonly sessionMode:    'main' | 'auto'
   readonly policy:         AllowlistPolicy
   readonly io:             GateIO
   readonly firstWriteDone: { value: boolean }

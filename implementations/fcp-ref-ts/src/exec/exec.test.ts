@@ -68,6 +68,7 @@ function makeCtx(opts: {
   policy?: AllowlistPolicy
   io?: GateIO
   firstWriteDone?: { value: boolean }
+  sessionMode?: 'main' | 'auto'
 } = {}): ExecContext {
   const layout  = createLayout(tmpDir)
   const logger  = createLogger({ test: true })
@@ -91,6 +92,7 @@ function makeCtx(opts: {
     baseline,
     logger,
     sessionId:      'test-session-id',
+    sessionMode:    opts.sessionMode ?? 'main',
     policy:         opts.policy ?? makePolicy(),
     io:             opts.io     ?? makeIO(),
     firstWriteDone: opts.firstWriteDone ?? { value: false },

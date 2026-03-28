@@ -20,6 +20,7 @@ function makeCtx(layout: ReturnType<typeof createLayout>): ExecContext {
     baseline:       {} as import('../types/formats/baseline.js').Baseline,
     logger:         createLogger({ test: true }),
     sessionId:      'test-session',
+    sessionMode:    'main',
     policy:         { commands: [], domains: [], skills: [],
       async addCommand() {}, async addDomain() {}, async addSkill() {} },
     io:             { async prompt() { return '' }, write() {} },

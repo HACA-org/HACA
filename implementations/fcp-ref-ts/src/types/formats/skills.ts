@@ -20,9 +20,12 @@ export const SkillIndexSchema = z.object({
   aliases: z.record(z.string(), AliasEntrySchema),
 })
 
+export const SkillExecutionSchema = z.enum(['script', 'text'])
+
 export const SkillManifestSchema = z.object({
   name:           z.string().min(1),
   class:          SkillClassSchema,
+  execution:      SkillExecutionSchema.default('script'),
   version:        z.string().min(1),
   description:    z.string().min(1),
   timeoutSeconds: z.number().int().positive(),
@@ -32,8 +35,9 @@ export const SkillManifestSchema = z.object({
   dependencies:   z.array(z.string()),
 })
 
-export type SkillClass    = z.infer<typeof SkillClassSchema>
-export type SkillEntry    = z.infer<typeof SkillEntrySchema>
-export type AliasEntry    = z.infer<typeof AliasEntrySchema>
-export type SkillIndex    = z.infer<typeof SkillIndexSchema>
-export type SkillManifest = z.infer<typeof SkillManifestSchema>
+export type SkillClass     = z.infer<typeof SkillClassSchema>
+export type SkillExecution = z.infer<typeof SkillExecutionSchema>
+export type SkillEntry     = z.infer<typeof SkillEntrySchema>
+export type AliasEntry     = z.infer<typeof AliasEntrySchema>
+export type SkillIndex     = z.infer<typeof SkillIndexSchema>
+export type SkillManifest  = z.infer<typeof SkillManifestSchema>

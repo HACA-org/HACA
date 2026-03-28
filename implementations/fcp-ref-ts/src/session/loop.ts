@@ -36,7 +36,7 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
 
   const toolMap = new Map(tools.map(t => [t.name, t]))
   const firstWriteDone: { value: boolean } = { value: false }
-  const execCtx = { layout, baseline, logger, sessionId, policy, io, firstWriteDone }
+  const execCtx = { layout, baseline, logger, sessionId, sessionMode: 'main' as const, policy, io, firstWriteDone }
   const { system } = await buildContext(layout)
 
   // MIL/SIL tools bypass the operator gate — they are fundamental to system operation.

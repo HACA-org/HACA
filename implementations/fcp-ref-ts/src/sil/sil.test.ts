@@ -27,6 +27,7 @@ function makeSilExecCtx(layout: ReturnType<typeof createLayout>, logger: ReturnT
     baseline: {} as Baseline,
     logger,
     sessionId: 'test',
+    sessionMode: 'main',
     policy: { commands: [], domains: [], skills: [],
       async addCommand() {}, async addDomain() {}, async addSkill() {} },
     io: { async prompt() { return '' }, write() {} },
