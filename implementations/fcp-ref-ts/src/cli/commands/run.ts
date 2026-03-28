@@ -17,7 +17,8 @@ import { loadAllowlistPolicy, fileReadHandler, fileWriteHandler, webFetchHandler
          shellRunHandler, agentRunHandler, skillCreateHandler, skillAuditHandler } from '../../exec/exec.js'
 import { memoryRecallHandler, memoryWriteHandler,
          closurePayloadHandler } from '../../mil/mil.js'
-import { evolutionProposalHandler, sessionCloseHandler } from '../../sil/sil.js'
+import { evolutionProposalHandler, sessionCloseHandler,
+         readPendingProposals, approveProposal, appendIntegrityLog } from '../../sil/sil.js'
 import { runSessionLoop }    from '../../session/loop.js'
 import { runSleepCycle }     from '../../session/sleep.js'
 import type { SessionIO, SessionEvent } from '../../types/session.js'
@@ -156,6 +157,41 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
     contextWindow: cpe.contextWindow,
     ...(contextMessages ? { contextMessages } : {}),
   })
+
+  // ── HACA-Core: present pending proposals for Operator approval ──────────────
+  // HACA-Evolve proposals are auto-approved at queue time; skip the gate.
+  // This gate runs synchronously on the terminal before the sleep cycle starts.
+  if (!baseline.authorizationScope) {
+    const pending = await readPendingProposals(layout)
+    if (pending.length > 0) {
+      process.stdout.write(`\n── Evolution Proposals (${pending.length}) ──\n`)
+      for (const proposal of pending) {
+        if (proposal.approvedAt) continue  // already approved in prior session
+        process.stdout.write(`\nProposal ${proposal.id}\n`)
+        process.stdout.write(`  ${proposal.description}\n`)
+        process.stdout.write(`  Ops (${proposal.ops.length}): ${proposal.ops.map(o => o.type).join(', ')}\n`)
+        process.stdout.write('  Approve? [y/N] ')
+        const answer = await new Promise<string>(resolve => {
+          const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false })
+          rl.once('line', line => { rl.close(); resolve(line.trim().toLowerCase()) })
+        })
+        if (answer === 'y') {
+          await approveProposal(layout, proposal.id)
+          await appendIntegrityLog(layout, {
+            event: 'EVOLUTION_AUTH', id: proposal.id, digest: proposal.digest,
+            ts: new Date().toISOString(), autoApproved: false,
+          })
+          process.stdout.write('  → Approved.\n')
+        } else {
+          await appendIntegrityLog(layout, {
+            event: 'EVOLUTION_REJECTED', id: proposal.id, digest: proposal.digest,
+            ts: new Date().toISOString(), reason: 'operator_declined',
+          })
+          process.stdout.write('  → Rejected.\n')
+        }
+      }
+    }
+  }
 
   // Sleep cycle: memory consolidation → GC → Endure (HACA-Arch §6.4)
   const sleepOpts = {

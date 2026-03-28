@@ -2,6 +2,16 @@ import { z } from 'zod'
 
 export const TopologySchema = z.enum(['transparent', 'opaque'])
 
+// HACA-Evolve only — Operator-defined authorization scope collected at FAP.
+// Presence of this field is the canonical indicator that the entity runs HACA-Evolve.
+export const AuthorizationScopeSchema = z.object({
+  autonomousEvolution: z.boolean(),   // fileWrite / fileDelete / jsonMerge without approval
+  autonomousSkills:    z.boolean(),   // skillInstall without approval
+  operatorMemory:      z.boolean(),   // memory promotion without approval
+  renewalDays:         z.number().int().min(0),  // 0 = no expiry
+  grantedAt:           z.string().datetime(),
+})
+
 export const OperatorBoundSchema = z.object({
   operatorName:  z.string().min(1),
   operatorEmail: z.string().email(),
@@ -51,6 +61,8 @@ export const BaselineSchema = z.object({
     nChannel: z.number().int().positive(),
     nRetry:   z.number().int().positive(),
   }),
+  // HACA-Evolve only — absent means HACA-Core (explicit approval required per proposal).
+  authorizationScope: AuthorizationScopeSchema.optional(),
 })
 
 export const ImprintRecordSchema = z.object({
@@ -65,7 +77,8 @@ export const ImprintRecordSchema = z.object({
   skillsIndex:        z.string().startsWith('sha256:'),
 })
 
-export type Topology      = z.infer<typeof TopologySchema>
-export type OperatorBound = z.infer<typeof OperatorBoundSchema>
-export type Baseline      = z.infer<typeof BaselineSchema>
-export type ImprintRecord = z.infer<typeof ImprintRecordSchema>
+export type Topology           = z.infer<typeof TopologySchema>
+export type AuthorizationScope = z.infer<typeof AuthorizationScopeSchema>
+export type OperatorBound      = z.infer<typeof OperatorBoundSchema>
+export type Baseline           = z.infer<typeof BaselineSchema>
+export type ImprintRecord      = z.infer<typeof ImprintRecordSchema>

@@ -35,10 +35,12 @@ export interface HeartbeatResult {
 }
 
 export interface EndureProposal {
-  readonly id:        string
-  readonly content:   string
-  readonly digest:    string    // sha256 of content — matches EVOLUTION_AUTH chain entry
-  readonly queuedAt:  string
+  readonly id:          string
+  readonly description: string
+  readonly ops:         import('./formats/evolution.js').EvolutionOp[]
+  readonly digest:      string    // sha256(JSON.stringify(ops)) — matches EVOLUTION_AUTH chain entry
+  readonly queuedAt:   string
+  readonly approvedAt?: string
 }
 
 export interface DriftReport {

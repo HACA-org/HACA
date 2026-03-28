@@ -4,7 +4,7 @@ export { createHeartbeat, budgetCheck, focusCheck, inboxCheck, identityCheck } f
 export { compactCheck, COMPACT_THRESHOLD_PCT } from './checks/compact.js'
 export { runDriftEvaluation }  from './drift.js'
 export { runEndureProtocol, readPendingProposals, approveProposal } from './endure.js'
-export { verifyIntegrityDoc, verifyChainFromImprint, refreshIntegrityDoc } from './integrity.js'
+export { verifyIntegrityDoc, verifyChainFromImprint, refreshIntegrityDoc, appendIntegrityLog } from './integrity.js'
 export { readChain, appendEndureCommit, appendModelChange } from './chain.js'
 
 export { SESSION_CLOSE_SIGNAL, sessionCloseHandler }   from './tools/session-close.js'

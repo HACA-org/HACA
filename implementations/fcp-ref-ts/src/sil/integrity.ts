@@ -1,7 +1,7 @@
 // SIL integrity verification — integrity doc drift detection + chain validation.
 import * as path from 'node:path'
 import * as fs from 'node:fs/promises'
-import { fileExists, readJson, writeJson } from '../store/io.js'
+import { fileExists, readJson, writeJson, appendJsonl } from '../store/io.js'
 import {
   sha256Digest, sha256File, sha256Hex,
   getTrackedFiles, hashTrackedFiles,
@@ -26,6 +26,20 @@ export interface DriftResult {
 export interface ChainVerificationResult {
   readonly valid:  boolean
   readonly reason?: string
+}
+
+// ─── integrity.log ────────────────────────────────────────────────────────────
+// Append-only JSONL audit log at state/integrity.log.
+// Events: PROPOSAL_PENDING, EVOLUTION_AUTH, EVOLUTION_REJECTED, SLEEP_COMPLETE.
+
+export type IntegrityLogEvent =
+  | { event: 'PROPOSAL_PENDING'; id: string; digest: string; ts: string }
+  | { event: 'EVOLUTION_AUTH';   id: string; digest: string; ts: string; autoApproved: boolean }
+  | { event: 'EVOLUTION_REJECTED'; id: string; digest: string; ts: string; reason: string }
+  | { event: 'SLEEP_COMPLETE';   ts: string; proposed: number; executed: number }
+
+export async function appendIntegrityLog(layout: Layout, entry: IntegrityLogEvent): Promise<void> {
+  await appendJsonl(layout.state.integrityLog, entry)
 }
 
 // Re-hash all tracked files and compare to state/integrity.json.

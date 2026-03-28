@@ -293,7 +293,7 @@ describe('SIL — endure', () => {
     await fs.mkdir(layout.state.dir, { recursive: true })
     const logger = createLogger({ test: true })
     const execCtx = makeSilExecCtx(layout, logger)
-    const result = await evolutionProposalHandler.execute({ content: 'install skill foo' }, execCtx)
+    const result = await evolutionProposalHandler.execute({ description: 'install skill foo', ops: [{ type: 'skillInstall', name: 'foo', version: '1.0.0', source: 'npm:foo' }] }, execCtx)
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.output).toMatch(/id:/)
     const data = JSON.parse(await fs.readFile(layout.state.pendingProposals, 'utf8'))
@@ -306,7 +306,7 @@ describe('SIL — endure', () => {
     await fs.mkdir(layout.state.dir, { recursive: true })
     const logger = createLogger({ test: true })
     const execCtx = makeSilExecCtx(layout, logger)
-    const result = await evolutionProposalHandler.execute({ content: 'some change' }, execCtx)
+    const result = await evolutionProposalHandler.execute({ description: 'some change', ops: [{ type: 'fileWrite', path: 'boot.md', content: '# updated' }] }, execCtx)
     if (!result.ok) throw new Error(result.error)
     const id = result.output.match(/id: (.+)/)![1]!
     const ok = await approveProposal(layout, id)
@@ -327,7 +327,7 @@ describe('SIL — endure', () => {
     await fs.writeFile(layout.state.baseline, JSON.stringify({ version: '1.0' }), 'utf8')
     const logger = createLogger({ test: true })
     const execCtx = makeSilExecCtx(layout, logger)
-    const result = await evolutionProposalHandler.execute({ content: 'evolve something' }, execCtx)
+    const result = await evolutionProposalHandler.execute({ description: 'evolve something', ops: [{ type: 'fileWrite', path: 'boot.md', content: '# evolved' }] }, execCtx)
     if (!result.ok) throw new Error(result.error)
     const id = result.output.match(/id: (.+)/)![1]!
     await approveProposal(layout, id)
@@ -395,25 +395,25 @@ describe('SIL — fcp_evolution_proposal', () => {
     const layout = createLayout(tmpDir)
     const logger = createLogger({ test: true })
     const ctx    = makeSilExecCtx(layout, logger)
-    const r = await evolutionProposalHandler.execute({ content: 'add new skill' }, ctx)
+    const r = await evolutionProposalHandler.execute({ description: 'add new skill', ops: [{ type: 'skillInstall', name: 'foo', version: '1.0.0', source: 'npm:foo' }] }, ctx)
     expect(r.ok).toBe(true)
     await expect(fs.access(layout.state.pendingProposals)).resolves.toBeUndefined()
   })
 
-  it('requires content', async () => {
+  it('requires description and ops', async () => {
     const layout = createLayout(tmpDir)
     const logger = createLogger({ test: true })
     const ctx    = makeSilExecCtx(layout, logger)
     const r = await evolutionProposalHandler.execute({}, ctx)
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.error).toMatch(/content/)
+    if (!r.ok) expect(r.error).toMatch(/Invalid payload/)
   })
 
-  it('rejects empty content', async () => {
+  it('rejects empty ops array', async () => {
     const layout = createLayout(tmpDir)
     const logger = createLogger({ test: true })
     const ctx    = makeSilExecCtx(layout, logger)
-    const r = await evolutionProposalHandler.execute({ content: '   ' }, ctx)
+    const r = await evolutionProposalHandler.execute({ description: 'something', ops: [] }, ctx)
     expect(r.ok).toBe(false)
   })
 
@@ -421,8 +421,8 @@ describe('SIL — fcp_evolution_proposal', () => {
     const layout = createLayout(tmpDir)
     const logger = createLogger({ test: true })
     const ctx    = makeSilExecCtx(layout, logger)
-    await evolutionProposalHandler.execute({ content: 'proposal one' }, ctx)
-    await evolutionProposalHandler.execute({ content: 'proposal two' }, ctx)
+    await evolutionProposalHandler.execute({ description: 'proposal one', ops: [{ type: 'fileWrite', path: 'a.md', content: 'a' }] }, ctx)
+    await evolutionProposalHandler.execute({ description: 'proposal two', ops: [{ type: 'fileDelete', path: 'b.md' }] }, ctx)
     const data = JSON.parse(await fs.readFile(layout.state.pendingProposals, 'utf8')) as { proposals: unknown[] }
     expect(data.proposals).toHaveLength(2)
   })
