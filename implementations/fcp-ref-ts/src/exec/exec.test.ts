@@ -515,7 +515,7 @@ describe('EXEC — fcp_skill_audit', () => {
     const skillDir = path.join(ctx.layout.skills.dir, 'test_skill')
     await fs.mkdir(skillDir, { recursive: true })
     const manifest = {
-      name: 'test_skill', class: 'custom', version: '1.0.0',
+      name: 'test_skill', class: 'custom', execution: 'script', version: '1.0.0',
       description: 'A test skill', timeoutSeconds: 30,
       background: false, ttlSeconds: null, permissions: [], dependencies: [],
     }
@@ -569,5 +569,38 @@ describe('EXEC — fcp_skill_audit', () => {
     const ctx = makeCtx()
     const r   = await skillAuditHandler.execute({}, ctx)
     expect(r.ok).toBe(false)
+  })
+
+  it('audits a skill by path (staging mode)', async () => {
+    const ctx      = makeCtx()
+    const stageDir = path.join(tmpDir, 'tmp', 'fcp-stage', 'staged_skill')
+    await fs.mkdir(stageDir, { recursive: true })
+    const manifest = {
+      name: 'staged_skill', class: 'custom', execution: 'script', version: '1.0.0',
+      description: 'Staged skill', timeoutSeconds: 30,
+      background: false, ttlSeconds: null, permissions: [], dependencies: [],
+    }
+    await fs.writeFile(path.join(stageDir, 'manifest.json'), JSON.stringify(manifest), 'utf8')
+    await fs.writeFile(path.join(stageDir, 'run.js'), '// stub', 'utf8')
+
+    // Set workspace_focus to tmpDir so relative path resolves correctly
+    await fs.mkdir(ctx.layout.state.dir, { recursive: true })
+    await fs.writeFile(ctx.layout.state.workspaceFocus,
+      JSON.stringify({ path: tmpDir }), 'utf8')
+
+    const r = await skillAuditHandler.execute({ path: 'tmp/fcp-stage/staged_skill' }, ctx)
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      const report = JSON.parse(r.output) as { name: string; issues: string[] }
+      expect(report.name).toBe('staged_skill')
+      expect(report.issues).toHaveLength(0)
+    }
+  })
+
+  it('rejects when both skill and path provided', async () => {
+    const ctx = makeCtx()
+    const r   = await skillAuditHandler.execute({ skill: 'foo', path: '/some/path' }, ctx)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/mutually exclusive/)
   })
 })

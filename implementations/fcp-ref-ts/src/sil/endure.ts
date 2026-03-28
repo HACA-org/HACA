@@ -17,6 +17,7 @@ import { fileExists, readJson, writeJson, deleteFile, ensureDir, atomicWrite } f
 import { refreshIntegrityDoc, currentFileHashes, appendIntegrityLog } from './integrity.js'
 import { appendEndureCommit } from './chain.js'
 import { sha256Digest } from '../boot/integrity.js'
+import { auditSkillDir } from '../exec/tools/skill-audit.js'
 import { EvolutionOpSchema } from '../types/formats/evolution.js'
 import type { EvolutionOp } from '../types/formats/evolution.js'
 import type { Layout }   from '../types/store.js'
@@ -66,7 +67,7 @@ export async function approveProposal(layout: Layout, id: string): Promise<boole
 
 // ─── op execution ─────────────────────────────────────────────────────────────
 
-async function executeOp(op: EvolutionOp, root: string): Promise<void> {
+async function executeOp(op: EvolutionOp, root: string, workspaceFocus: string, logger: Logger): Promise<void> {
   switch (op.type) {
     case 'fileWrite': {
       const abs = path.join(root, op.path)
@@ -95,11 +96,42 @@ async function executeOp(op: EvolutionOp, root: string): Promise<void> {
       break
     }
 
-    case 'skillInstall':
-      // Skill installation is recorded in the chain; the actual install
-      // (npm / local copy) is out of scope for the reference implementation.
-      // A production SIL would invoke the package manager here.
+    case 'skillInstall': {
+      // Validate the staged skill before installing
+      const stageDir = path.join(workspaceFocus, 'tmp', 'fcp-stage', op.name)
+      const audit    = await auditSkillDir(stageDir, op.name, logger)
+      if (!audit.ok) throw new Error(`skillInstall audit failed: ${audit.error}`)
+      if (audit.report.issues.length > 0) {
+        throw new Error(`skillInstall audit issues: ${audit.report.issues.join('; ')}`)
+      }
+
+      // Copy staged skill to skills/<name>/
+      const destDir = path.join(root, 'skills', op.name)
+      await fs.rm(destDir, { recursive: true, force: true })
+      await fs.cp(stageDir, destDir, { recursive: true })
+
+      // Register in skills/index.json
+      const indexPath = path.join(root, 'skills', 'index.json')
+      let index: { version: string; skills: unknown[]; aliases: Record<string, unknown> } =
+        { version: '1.0', skills: [], aliases: {} }
+      if (await fileExists(indexPath)) {
+        try { index = await readJson(indexPath) as typeof index } catch { /* start fresh */ }
+      }
+      const existing = (index.skills as Array<{ name: string }>).filter(s => s.name !== op.name)
+      index.skills = [...existing, {
+        name:     op.name,
+        desc:     audit.report.description,
+        manifest: path.join(op.name, 'manifest.json'),
+        class:    audit.report.class,
+      }]
+      await atomicWrite(indexPath, JSON.stringify(index, null, 2))
+
+      // Clean up staging directory
+      await fs.rm(stageDir, { recursive: true, force: true })
+
+      logger.info('sil:endure:skill_installed', { name: op.name })
       break
+    }
   }
 }
 
@@ -131,6 +163,13 @@ export async function runEndureProtocol(layout: Layout, logger: Logger): Promise
     return
   }
 
+  // Read workspace_focus for skillInstall ops — fail fast if missing when needed
+  let workspaceFocus = ''
+  try {
+    const raw = await readJson(layout.state.workspaceFocus) as Record<string, unknown>
+    workspaceFocus = typeof raw['path'] === 'string' ? raw['path'].trim() : ''
+  } catch { /* not set — skillInstall ops will fail if workspace is missing */ }
+
   logger.info('sil:endure_start', { count: approved.length })
 
   let executed = 0
@@ -143,7 +182,7 @@ export async function runEndureProtocol(layout: Layout, logger: Logger): Promise
     try {
       // 2. Execute ops
       for (const op of proposal.ops) {
-        await executeOp(op, layout.root)
+        await executeOp(op, layout.root, workspaceFocus, logger)
       }
 
       // 3. Refresh integrity.json
