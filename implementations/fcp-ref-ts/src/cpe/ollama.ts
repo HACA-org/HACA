@@ -19,7 +19,7 @@ function toOllamaMessages(messages: CPEMessage[]): unknown[] {
     if (toolResults.length > 0) {
       // Ollama: tool results are role:'tool' messages (one per result)
       for (const tr of toolResults) {
-        out.push({ role: 'tool', content: tr.content })
+        out.push({ role: 'tool', tool_call_id: tr.tool_use_id, content: tr.content })
       }
       continue
     }

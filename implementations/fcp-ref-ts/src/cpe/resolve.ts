@@ -1,3 +1,6 @@
+import * as fs   from 'node:fs'
+import * as path from 'node:path'
+import * as os   from 'node:os'
 import type { CPEAdapter } from '../types/cpe.js'
 import { CPEConfigError }  from '../types/cpe.js'
 import { createAnthropicAdapter } from './anthropic.js'
@@ -5,9 +8,25 @@ import { createOpenAIAdapter }    from './openai.js'
 import { createGoogleAdapter }    from './google.js'
 import { createOllamaAdapter }    from './ollama.js'
 
+// Load ~/.fcp/.env into process.env (dotenv-style, no deps).
+// Only sets keys that are not already set — shell env takes precedence.
+function loadFcpEnv(): void {
+  const envFile = path.join(os.homedir(), '.fcp', '.env')
+  let raw: string
+  try { raw = fs.readFileSync(envFile, 'utf8') } catch { return }
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eq = trimmed.indexOf('=')
+    if (eq < 1) continue
+    const key = trimmed.slice(0, eq).trim()
+    const val = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '')
+    if (key && !(key in process.env)) process.env[key] = val
+  }
+}
+
 // Parse "<provider>:<model>" — model may itself contain colons (e.g., "ollama:llama3.2:latest")
 function parseBackend(backend: string): { provider: string; model: string } {
-  if (backend === 'auto') return { provider: 'anthropic', model: 'claude-opus-4-6' }
   const idx = backend.indexOf(':')
   if (idx < 1) {
     throw new CPEConfigError(
@@ -20,12 +39,13 @@ function parseBackend(backend: string): { provider: string; model: string } {
 function requireEnv(name: string, provider: string): string {
   const val = process.env[name]
   if (val === undefined || val === '') {
-    throw new CPEConfigError(`${provider}: ${name} environment variable is not set`)
+    throw new CPEConfigError(`${provider}: ${name} is not set — add it to ~/.fcp/.env or export it in your shell`)
   }
   return val
 }
 
 export function resolveAdapter(backend: string): CPEAdapter {
+  loadFcpEnv()
   const { provider, model } = parseBackend(backend)
 
   switch (provider) {

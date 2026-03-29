@@ -44,9 +44,8 @@ describe('cpe/resolve', () => {
     expect(adapter.model).toBe('llama3.2')
   })
 
-  it('resolves "auto" as anthropic claude-opus-4-6', () => {
-    const adapter = resolveAdapter('auto')
-    expect(adapter.provider).toBe('anthropic')
+  it('throws CPEConfigError for "auto" shorthand (removed — use explicit provider:model)', () => {
+    expect(() => resolveAdapter('auto')).toThrow(CPEConfigError)
   })
 
   it('handles model identifiers with colons (ollama tag format)', () => {
