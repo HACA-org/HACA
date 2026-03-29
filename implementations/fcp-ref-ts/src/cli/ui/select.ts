@@ -64,7 +64,7 @@ export async function selectInteractive(
     function cleanup() {
       stdin.removeListener('data', dataHandler!)
       stdin.setRawMode(false)
-      stdin.pause()
+      // Don't pause stdin — let the readline instance manage it
     }
 
     let buffer = ''

@@ -63,9 +63,11 @@ function listOllamaModels(): string[] {
 }
 
 // ─── Readline setup ───────────────────────────────────────────────────────────
+// Use a single readline instance throughout init flow to avoid stdin state issues.
+// selectInteractive uses raw mode; a shared readline prevents state corruption.
 
 function makeRl() {
-  return createInterface({ input: process.stdin, output: process.stdout })
+  return createInterface({ input: process.stdin, output: process.stdout, terminal: false })
 }
 
 // ─── Entity registry ──────────────────────────────────────────────────────────
