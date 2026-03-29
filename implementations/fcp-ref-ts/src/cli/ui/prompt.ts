@@ -47,9 +47,17 @@ export async function confirm(rl: RL, question: string, defaultYes = true): Prom
 
 /**
  * Interactive selection from a list of options.
- * Supports arrow keys (↑↓) + Enter, number input (1-9), or 'q' to cancel.
+ * Supports arrow keys (↑↓) + Enter, number input (1-9), or 'q'/'Ctrl-C' to cancel.
  * Selected item highlighted in cyan with arrow marker.
+ * Throws UserCancelledError if cancelled with Ctrl-C or 'q'.
  */
+export class UserCancelledError extends Error {
+  constructor() {
+    super('User cancelled selection')
+    this.name = 'UserCancelledError'
+  }
+}
+
 export async function select(
   _rl: RL,
   question: string,
@@ -60,7 +68,14 @@ export async function select(
 
   // Dynamically import the interactive select to avoid requiring raw mode setup upfront
   const { selectInteractive } = await import('./select.js')
-  return selectInteractive(question, options, defaultIdx)
+  const result = await selectInteractive(question, options, defaultIdx)
+
+  // Check if user cancelled (via Ctrl-C or 'q')
+  if (result.index === -1) {
+    throw new UserCancelledError()
+  }
+
+  return result
 }
 
 /**

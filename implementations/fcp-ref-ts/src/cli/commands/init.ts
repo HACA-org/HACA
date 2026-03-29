@@ -18,7 +18,7 @@ import {
 } from '../templates/integrity.js'
 import { CLIError } from '../../types/cli.js'
 import type { AuthorizationScope } from '../../types/formats/baseline.js'
-import { prompt, confirm, select, hr, info, warn, header } from '../ui/prompt.js'
+import { prompt, select, hr, info, warn, header, UserCancelledError } from '../ui/prompt.js'
 
 const FCP_HOME     = path.join(os.homedir(), '.fcp')
 const ENTITIES_DIR = path.join(FCP_HOME, 'entities')
@@ -256,21 +256,23 @@ async function pickAuthScope(rl: ReturnType<typeof makeRl>): Promise<Authorizati
   hr('Authorization Scope')
   process.stdout.write('\nDefine what the entity may do autonomously without Operator approval.\n\n')
 
-  const autonomousEvolution = await confirm(
-    rl,
-    'Allow file evolution (fileWrite, fileDelete, jsonMerge)',
-    false,
-  )
-  const autonomousSkills = await confirm(
-    rl,
-    'Allow skill installation (skillInstall)',
-    false,
-  )
-  const operatorMemory = await confirm(
-    rl,
-    'Allow memory promotion (promoteSlugs)',
-    false,
-  )
+  const evolvRes = await select(rl, 'Allow file evolution (fileWrite, fileDelete, jsonMerge)', [
+    { label: 'Yes' },
+    { label: 'No' },
+  ], 1)
+  const autonomousEvolution = evolvRes.index === 0
+
+  const skillsRes = await select(rl, 'Allow skill installation (skillInstall)', [
+    { label: 'Yes' },
+    { label: 'No' },
+  ], 1)
+  const autonomousSkills = skillsRes.index === 0
+
+  const memoryRes = await select(rl, 'Allow memory promotion (promoteSlugs)', [
+    { label: 'Yes' },
+    { label: 'No' },
+  ], 1)
+  const operatorMemory = memoryRes.index === 0
 
   process.stdout.write('\n')
   const renewalDays = parseInt(
@@ -312,7 +314,7 @@ async function runInit(): Promise<void> {
       process.stdout.write('\n')
     }
 
-    const rawId = await prompt(rl, '  Entity ID', { default: 'my-entity', hint: 'alphanumeric, hyphens' })
+    const rawId = await prompt(rl, 'Entity ID', { default: 'my-entity', hint: 'alphanumeric, hyphens' })
     const entityId = rawId.toLowerCase().replace(/\s+/g, '-')
     if (!entityId || entityId.includes('/') || entityId.includes('..')) {
       throw new CLIError('Invalid entity ID', 1)
@@ -323,7 +325,11 @@ async function runInit(): Promise<void> {
 
     if (isExisting) {
       process.stdout.write(`\n${chalk.dim(`Existing entity at ${entityRoot}`)}\n\n`)
-      const reset = await confirm(rl, '  Factory reset (wipe and re-init)?', false)
+      const resetRes = await select(rl, 'Factory reset (wipe and re-init)?', [
+        { label: 'No' },
+        { label: 'Yes' },
+      ], 0)
+      const reset = resetRes.index === 1
       if (!reset) {
         process.stdout.write(`\n${chalk.dim('Cancelled.')}\n\n`)
         return
@@ -403,6 +409,14 @@ export function registerInit(program: Command): void {
     .command('init')
     .description('Install or reset an FCP entity')
     .action(async () => {
-      await runInit()
+      try {
+        await runInit()
+      } catch (err) {
+        if (err instanceof UserCancelledError) {
+          process.stdout.write(`\n${chalk.dim('Cancelled.')}\n\n`)
+          process.exit(0)
+        }
+        throw err
+      }
     })
 }

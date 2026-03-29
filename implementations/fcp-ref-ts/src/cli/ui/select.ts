@@ -93,19 +93,21 @@ export async function selectInteractive(
 
         const char = buffer[0]!
 
-        // Ctrl-C
+        // Ctrl-C — cancel selection
         if (char === '\x03') {
           cleanup()
-          stdout.write(cursor.show)
-          resolve({ index: defaultIdx, label: options[defaultIdx]!.label })
+          stdout.write(cursor.show + '\n')
+          const err = new Error('Selection cancelled by user') as any
+          err.code = 'SELECTION_CANCELLED'
+          resolve({ index: -1, label: '' })  // Signal cancellation via index
           return
         }
 
         // 'q' to quit
         if (char.toLowerCase() === 'q') {
           cleanup()
-          stdout.write(cursor.show)
-          resolve({ index: defaultIdx, label: options[defaultIdx]!.label })
+          stdout.write(cursor.show + '\n')
+          resolve({ index: -1, label: '' })  // Signal cancellation via index
           return
         }
 
