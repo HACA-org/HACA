@@ -207,9 +207,11 @@ async function promptApiKey(rl: ReturnType<typeof makeRl>, provider: string): Pr
   }
 }
 
-// ─── Model picker ─────────────────────────────────────────────────────────────
+// ─── Step 4: CPE backend and model ────────────────────────────────────────────
 
 async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
+  hr('4. CPE backend and model')
+  process.stdout.write('\n')
   const providers = [
     { label: 'Anthropic', description: 'Claude models' },
     { label: 'OpenAI', description: 'GPT-4, o1 models' },
@@ -217,7 +219,7 @@ async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
     { label: 'Ollama', description: 'Local models' },
   ]
 
-  const providerRes = await select(rl, 'CPE Backend — Select provider:', providers)
+  const providerRes = await select(rl, 'Backend', providers)
   const providerIdx = providerRes.index
   let models: string[]
   let providerPrefix: string
@@ -253,32 +255,59 @@ async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
 // ─── Authorization scope picker (HACA-Evolve only) ───────────────────────────
 
 async function pickAuthScope(rl: ReturnType<typeof makeRl>): Promise<AuthorizationScope> {
-  hr('Authorization Scope')
-  process.stdout.write('\nDefine what the entity may do autonomously without Operator approval.\n\n')
+  hr('3. Autonomous scope')
+  process.stdout.write('\n  Define what this entity is authorised to do autonomously.\n')
+  process.stdout.write('  These permissions can be revoked by re-initialising.\n\n')
 
-  const evolvRes = await select(rl, 'Allow file evolution (fileWrite, fileDelete, jsonMerge)', [
-    { label: 'Yes' },
+  process.stdout.write('  [1] Autonomous structural evolution\n')
+  process.stdout.write('      The entity may modify its own entity root freely, including\n')
+  process.stdout.write('      its own code. WARNING: this grants unrestricted write access\n')
+  process.stdout.write('      to the entire entity root.\n')
+  const evolvRes = await select(rl, 'Authorise?', [
     { label: 'No' },
-  ], 1)
-  const autonomousEvolution = evolvRes.index === 0
-
-  const skillsRes = await select(rl, 'Allow skill installation (skillInstall)', [
     { label: 'Yes' },
-    { label: 'No' },
-  ], 1)
-  const autonomousSkills = skillsRes.index === 0
-
-  const memoryRes = await select(rl, 'Allow memory promotion (promoteSlugs)', [
-    { label: 'Yes' },
-    { label: 'No' },
-  ], 1)
-  const operatorMemory = memoryRes.index === 0
+  ], 0)
+  const autonomousEvolution = evolvRes.index === 1
 
   process.stdout.write('\n')
-  const renewalDays = parseInt(
-    await prompt(rl, 'Renewal period (days)', { default: '0', hint: '0 = no expiry' }),
-    10,
-  ) || 0
+  process.stdout.write('  [2] Autonomous skill creation and installation\n')
+  process.stdout.write('      The entity may create and install new skills without approval.\n')
+  process.stdout.write('      WARNING: skills run as TypeScript code with full access to the\n')
+  process.stdout.write('      entity root. Only enable if you trust the entity\'s judgment.\n')
+  const skillsRes = await select(rl, 'Authorise?', [
+    { label: 'No' },
+    { label: 'Yes' },
+  ], 0)
+  const autonomousSkills = skillsRes.index === 1
+
+  process.stdout.write('\n')
+  process.stdout.write('  [3] Operator memory\n')
+  process.stdout.write('      The entity may save your preferences and information across\n')
+  process.stdout.write('      sessions. The entity will NEVER share your secrets (API keys,\n')
+  process.stdout.write('      tokens, passwords). NOTE: you are also responsible for not\n')
+  process.stdout.write('      sharing secrets directly in conversation — the entity cannot\n')
+  process.stdout.write('      protect what it never receives.\n')
+  const memoryRes = await select(rl, 'Authorise?', [
+    { label: 'No' },
+    { label: 'Yes' },
+  ], 0)
+  const operatorMemory = memoryRes.index === 1
+
+  process.stdout.write('\n')
+  process.stdout.write('  [4] Scope renewal interval\n')
+  process.stdout.write('      These authorisations will expire and the entity will pause\n')
+  process.stdout.write('      until you renew them. Enter 0 to disable expiry.\n')
+  let renewalDays = 0
+  while (true) {
+    const renewalInput = await prompt(rl, 'Renewal interval in days', { default: '30' })
+    try {
+      renewalDays = parseInt(renewalInput, 10)
+      if (renewalDays >= 0) break
+    } catch {
+      // ignore
+    }
+    warn('Please enter a non-negative integer.')
+  }
 
   return {
     autonomousEvolution,
@@ -299,17 +328,43 @@ async function runInit(): Promise<void> {
   const rl = makeRl()
   try {
     header('FCP — Filesystem Cognitive Platform', 'HACA v1.0 Reference Implementation')
-    warn('Experimental software. Review security before production use.')
+    process.stdout.write('\n  FCP is a reference implementation of HACA and may contain\n')
+    process.stdout.write('  errors. HACA is an open architecture specification for\n')
+    process.stdout.write('  persistent cognitive entities.\n')
+    process.stdout.write('\n  Contributions are welcome. Report issues and security\n')
+    process.stdout.write('  vulnerabilities at: https://github.com/HACA-org/HACA\n')
+    hr()
+    process.stdout.write('\n')
+    warn('WARNING: EXPERIMENTAL SYSTEM')
+    hr()
+    process.stdout.write('\n  Despite integrated safety mechanisms, this is experimental\n')
+    process.stdout.write('  software. Use may result in data loss, host environment\n')
+    process.stdout.write('  damage, or leakage of sensitive information.\n')
+    process.stdout.write('\n  Do not use in production without a prior security review.\n')
+    process.stdout.write('  By continuing, you acknowledge and accept these risks.\n')
+    hr()
+    process.stdout.write('\n')
+    const continueRes = await select(rl, 'Continue?', [
+      { label: 'No' },
+      { label: 'Yes' },
+    ], 1)
+    if (continueRes.index === 0) {
+      process.stdout.write(`\n${chalk.dim('Cancelled.')}\n\n`)
+      return
+    }
     process.stdout.write('\n')
 
-    // ── Entity ID ────────────────────────────────────────────────────────────
+    // ── Step 1: Entity ID ────────────────────────────────────────────────────
+    hr('1. Entity ID')
+    process.stdout.write('\n  Entities are installed at ~/.fcp/<entity_id>/\n\n')
+
     const existing = await listEntities()
     const currentDef = await getDefault()
     if (existing.length > 0) {
-      process.stdout.write(`${chalk.dim('Existing entities:')}\n`)
+      process.stdout.write(`  ${chalk.dim('Existing entities:')}\n`)
       for (const eid of existing) {
         const marker = eid === currentDef ? chalk.cyan(' (default)') : ''
-        process.stdout.write(`  ${eid}${marker}\n`)
+        process.stdout.write(`    ${eid}${marker}\n`)
       }
       process.stdout.write('\n')
     }
@@ -324,31 +379,45 @@ async function runInit(): Promise<void> {
     const isExisting = existsSync(entityRoot)
 
     if (isExisting) {
-      process.stdout.write(`\n${chalk.dim(`Existing entity at ${entityRoot}`)}\n\n`)
-      const resetRes = await select(rl, 'Factory reset (wipe and re-init)?', [
-        { label: 'No' },
-        { label: 'Yes' },
+      process.stdout.write(`\n  ${chalk.yellow('⚠')} Existing FCP entity detected at ${entityRoot}\n\n`)
+      const actionRes = await select(rl, 'Select an action', [
+        { label: 'Cancel' },
+        { label: 'Factory reset — wipe entity root and re-initialise from scratch' },
       ], 0)
-      const reset = resetRes.index === 1
+      const reset = actionRes.index === 1
       if (!reset) {
         process.stdout.write(`\n${chalk.dim('Cancelled.')}\n\n`)
         return
       }
 
+      hr('Factory reset')
+      process.stdout.write(`\n  Wiping ${entityRoot} ...\n`)
       // Wipe content but preserve .git
       const items = await fs.readdir(entityRoot, { withFileTypes: true })
       for (const item of items) {
         if (item.name === '.git') continue
         await fs.rm(path.join(entityRoot, item.name), { recursive: true, force: true })
       }
+      info('Entity wiped. Re-initialising...')
+      process.stdout.write('\n')
     }
 
-    // ── Profile ──────────────────────────────────────────────────────────────
-    const profiles = [
-      { label: 'HACA-Core', description: 'Zero-autonomy, transparent topology' },
-      { label: 'HACA-Evolve', description: 'Supervised autonomy, opaque topology' },
-    ]
-    const profileRes = await select(rl, 'Select profile:', profiles, 0)
+    // ── Step 2: Profile ──────────────────────────────────────────────────────
+    hr('2. Profile')
+    process.stdout.write('\n')
+    process.stdout.write('  HACA-Core — Zero-autonomy\n')
+    process.stdout.write('    Every structural change and evolution requires explicit Operator\n')
+    process.stdout.write('    approval. Designed for enterprise and adversarial environments.\n')
+    process.stdout.write('\n')
+    process.stdout.write('  HACA-Evolve — Supervised autonomy\n')
+    process.stdout.write('    The entity acts and evolves independently within a declared scope,\n')
+    process.stdout.write('    under Operator supervision. Designed for long-term assistants\n')
+    process.stdout.write('    and companions.\n')
+    process.stdout.write('\n')
+    const profileRes = await select(rl, 'Profile', [
+      { label: 'HACA-Core   — Zero-autonomy' },
+      { label: 'HACA-Evolve — Supervised autonomy' },
+    ], 0)
     const profile: Profile = profileRes.index === 1 ? 'haca-evolve' : 'haca-core'
     const topology = profile === 'haca-evolve' ? 'opaque' : 'transparent'
 
@@ -377,27 +446,26 @@ async function runInit(): Promise<void> {
     // Set default if none
     if (!currentDef) await setDefault(entityId)
 
-    // ── Summary ──────────────────────────────────────────────────────────────
+    // ── Step 5: Summary ─────────────────────────────────────────────────────
     process.stdout.write('\n')
     hr()
-    info('Entity scaffold created')
+    info('Entity created successfully')
     hr()
-    process.stdout.write(`  ${chalk.dim('entity')}:   ${chalk.cyan(entityId)}\n`)
-    process.stdout.write(`  ${chalk.dim('profile')}:  ${profile}\n`)
-    process.stdout.write(`  ${chalk.dim('backend')}:  ${backend}\n`)
+    process.stdout.write(`  entity:         ${chalk.cyan(entityId)}\n`)
+    process.stdout.write(`  path:           ${entityRoot}\n`)
+    process.stdout.write(`  profile:        ${profile}\n`)
+    process.stdout.write(`  backend:        ${backend}\n`)
     if (authorizationScope) {
-      const scope = [
-        `evolution=${authorizationScope.autonomousEvolution}`,
-        `skills=${authorizationScope.autonomousSkills}`,
-        `memory=${authorizationScope.operatorMemory}`,
-        `renewal=${authorizationScope.renewalDays}d`,
-      ].join(' ')
-      process.stdout.write(`  ${chalk.dim('scope')}:    ${scope}\n`)
+      process.stdout.write(`  scope:\n`)
+      process.stdout.write(`    autonomous evolution:  ${authorizationScope.autonomousEvolution ? 'yes' : 'no'}\n`)
+      process.stdout.write(`    autonomous skills:     ${authorizationScope.autonomousSkills ? 'yes' : 'no'}\n`)
+      process.stdout.write(`    operator memory:       ${authorizationScope.operatorMemory ? 'yes' : 'no'}\n`)
+      const renewal = authorizationScope.renewalDays
+      process.stdout.write(`    renewal:               ${renewal > 0 ? `every ${renewal} days` : 'disabled'}\n`)
     }
-    process.stdout.write(`  ${chalk.dim('path')}:     ${entityRoot}\n`)
     hr()
-    process.stdout.write(`\n${chalk.dim('First boot will run FAP (First Activation Protocol).')}\n`)
-    process.stdout.write(`${chalk.dim('Run:')}  ${chalk.cyan('fcp')}\n\n`)
+    process.stdout.write('\n  First boot will run FAP (First Activation Protocol).\n')
+    process.stdout.write(`  Run:  ${chalk.cyan('fcp')}\n\n`)
 
   } finally {
     rl.close()
