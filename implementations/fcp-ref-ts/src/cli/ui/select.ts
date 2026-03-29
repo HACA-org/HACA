@@ -40,11 +40,11 @@ export async function selectInteractive(
       if (idx === selectedIdx) {
         const label = chalk.cyan(`▸ ${opt.label}`)
         const desc = opt.description ? chalk.dim(` — ${opt.description}`) : ''
-        return `  ${num} ${label}${desc}`
+        return `    ${num} ${label}${desc}`
       } else {
         const label = opt.label
         const desc = opt.description ? chalk.dim(` — ${opt.description}`) : ''
-        return `  ${num}   ${label}${desc}`
+        return `    ${num}   ${label}${desc}`
       }
     }
 

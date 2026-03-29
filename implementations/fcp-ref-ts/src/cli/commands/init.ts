@@ -210,6 +210,7 @@ async function promptApiKey(rl: ReturnType<typeof makeRl>, provider: string): Pr
 // ─── Step 4: CPE backend and model ────────────────────────────────────────────
 
 async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
+  process.stdout.write('\n')
   hr('4. CPE backend and model')
   process.stdout.write('\n')
   const providers = [
@@ -245,6 +246,7 @@ async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
     providerPrefix = 'anthropic'
   }
 
+  process.stdout.write('\n')
   const modelOptions = models.map(m => ({ label: m }))
   const modelRes = await select(rl, 'Select model:', modelOptions, 0)
   const model = models[modelRes.index]!
@@ -255,19 +257,20 @@ async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
 // ─── Authorization scope picker (HACA-Evolve only) ───────────────────────────
 
 async function pickAuthScope(rl: ReturnType<typeof makeRl>): Promise<AuthorizationScope> {
+  process.stdout.write('\n')
   hr('3. Autonomous scope')
   process.stdout.write('\n  Define what this entity is authorised to do autonomously.\n')
-  process.stdout.write('  These permissions can be revoked by re-initialising.\n\n')
+  process.stdout.write('  These permissions can be revoked by re-initialising.\n')
 
-  process.stdout.write('  [1] Autonomous structural evolution\n')
+  process.stdout.write('\n  [1] Autonomous structural evolution\n')
   process.stdout.write('      The entity may modify its own entity root freely, including\n')
   process.stdout.write('      its own code. WARNING: this grants unrestricted write access\n')
   process.stdout.write('      to the entire entity root.\n')
   const evolvRes = await select(rl, 'Authorise?', [
-    { label: 'No' },
     { label: 'Yes' },
-  ], 0)
-  const autonomousEvolution = evolvRes.index === 1
+    { label: 'No' },
+  ], 1)
+  const autonomousEvolution = evolvRes.index === 0
 
   process.stdout.write('\n')
   process.stdout.write('  [2] Autonomous skill creation and installation\n')
@@ -275,10 +278,10 @@ async function pickAuthScope(rl: ReturnType<typeof makeRl>): Promise<Authorizati
   process.stdout.write('      WARNING: skills run as TypeScript code with full access to the\n')
   process.stdout.write('      entity root. Only enable if you trust the entity\'s judgment.\n')
   const skillsRes = await select(rl, 'Authorise?', [
-    { label: 'No' },
     { label: 'Yes' },
-  ], 0)
-  const autonomousSkills = skillsRes.index === 1
+    { label: 'No' },
+  ], 1)
+  const autonomousSkills = skillsRes.index === 0
 
   process.stdout.write('\n')
   process.stdout.write('  [3] Operator memory\n')
@@ -288,10 +291,10 @@ async function pickAuthScope(rl: ReturnType<typeof makeRl>): Promise<Authorizati
   process.stdout.write('      sharing secrets directly in conversation — the entity cannot\n')
   process.stdout.write('      protect what it never receives.\n')
   const memoryRes = await select(rl, 'Authorise?', [
-    { label: 'No' },
     { label: 'Yes' },
-  ], 0)
-  const operatorMemory = memoryRes.index === 1
+    { label: 'No' },
+  ], 1)
+  const operatorMemory = memoryRes.index === 0
 
   process.stdout.write('\n')
   process.stdout.write('  [4] Scope renewal interval\n')
@@ -345,16 +348,17 @@ async function runInit(): Promise<void> {
     hr()
     process.stdout.write('\n')
     const continueRes = await select(rl, 'Continue?', [
-      { label: 'No' },
       { label: 'Yes' },
-    ], 1)
-    if (continueRes.index === 0) {
+      { label: 'No' },
+    ], 0)
+    if (continueRes.index === 1) {
       process.stdout.write(`\n${chalk.dim('Cancelled.')}\n\n`)
       return
     }
     process.stdout.write('\n')
 
     // ── Step 1: Entity ID ────────────────────────────────────────────────────
+    process.stdout.write('\n')
     hr('1. Entity ID')
     process.stdout.write('\n  Entities are installed at ~/.fcp/<entity_id>/\n\n')
 
@@ -369,6 +373,7 @@ async function runInit(): Promise<void> {
       process.stdout.write('\n')
     }
 
+    process.stdout.write('\n')
     const rawId = await prompt(rl, 'Entity ID', { default: 'my-entity', hint: 'alphanumeric, hyphens' })
     const entityId = rawId.toLowerCase().replace(/\s+/g, '-')
     if (!entityId || entityId.includes('/') || entityId.includes('..')) {
@@ -383,7 +388,7 @@ async function runInit(): Promise<void> {
       const actionRes = await select(rl, 'Select an action', [
         { label: 'Cancel' },
         { label: 'Factory reset — wipe entity root and re-initialise from scratch' },
-      ], 0)
+      ], 1)
       const reset = actionRes.index === 1
       if (!reset) {
         process.stdout.write(`\n${chalk.dim('Cancelled.')}\n\n`)
@@ -403,6 +408,7 @@ async function runInit(): Promise<void> {
     }
 
     // ── Step 2: Profile ──────────────────────────────────────────────────────
+    process.stdout.write('\n')
     hr('2. Profile')
     process.stdout.write('\n')
     process.stdout.write('  HACA-Core — Zero-autonomy\n')
@@ -413,7 +419,7 @@ async function runInit(): Promise<void> {
     process.stdout.write('    The entity acts and evolves independently within a declared scope,\n')
     process.stdout.write('    under Operator supervision. Designed for long-term assistants\n')
     process.stdout.write('    and companions.\n')
-    process.stdout.write('\n')
+    process.stdout.write('\n\n')
     const profileRes = await select(rl, 'Profile', [
       { label: 'HACA-Core   — Zero-autonomy' },
       { label: 'HACA-Evolve — Supervised autonomy' },
