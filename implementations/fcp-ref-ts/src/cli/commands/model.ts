@@ -8,10 +8,12 @@ import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import type { Command } from 'commander'
+import chalk from 'chalk'
 import { readJson, writeJson, ensureDir, atomicWrite, fileExists } from '../../store/io.js'
 import { createLayout } from '../../types/store.js'
 import { refreshIntegrityDoc } from '../../sil/sil.js'
 import { CLIError } from '../../types/cli.js'
+import { prompt, select, hr, info, warn } from '../ui/prompt.js'
 
 const FCP_HOME     = path.join(os.homedir(), '.fcp')
 const ENTITIES_DIR = path.join(FCP_HOME, 'entities')
@@ -56,26 +58,10 @@ function listOllamaModels(): string[] {
   }
 }
 
-// ─── Readline helpers ─────────────────────────────────────────────────────────
+// ─── Readline setup ───────────────────────────────────────────────────────────
 
 function makeRl() {
   return createInterface({ input: process.stdin, output: process.stdout })
-}
-
-function ask(rl: ReturnType<typeof makeRl>, question: string, def = ''): Promise<string> {
-  return new Promise(resolve => {
-    rl.question(def ? `${question} [${def}]: ` : `${question}: `, a => {
-      resolve(a.trim() || def)
-    })
-  })
-}
-
-function hr(label = '') {
-  if (label) {
-    process.stdout.write(`\n  ── ${label} ${'─'.repeat(Math.max(0, 54 - label.length))}\n`)
-  } else {
-    process.stdout.write(`  ${'─'.repeat(60)}\n`)
-  }
 }
 
 // ─── API key management ───────────────────────────────────────────────────────
@@ -111,57 +97,57 @@ async function promptApiKey(rl: ReturnType<typeof makeRl>, provider: string): Pr
   if (!envVar) return
 
   if (process.env[envVar]) {
-    process.stdout.write(`  ${envVar} already set in environment — skipping.\n`)
+    info(`${envVar} already set in environment`)
     return
   }
 
   const existing = await readEnvFile()
   if (existing.has(envVar)) {
     const masked = '*'.repeat(8) + (existing.get(envVar) ?? '').slice(-4)
-    process.stdout.write(`  ${envVar} already saved (${masked}) — skipping.\n`)
+    info(`${envVar} already saved (${masked})`)
     return
   }
 
-  process.stdout.write(`\n  ${provider} requires an API key (stored in ~/.fcp/.env).\n`)
-  const key = await ask(rl, `  ${envVar}`)
+  process.stdout.write(`\n  ${provider} requires an API key (stored in ~/.fcp/.env).\n\n`)
+  const key = await prompt(rl, `  ${envVar}`, { hint: 'sk-...' })
   if (key) {
     existing.set(envVar, key)
     await writeEnvFile(existing)
-    process.stdout.write(`  → Saved to ~/.fcp/.env\n`)
+    info(`Saved to ~/.fcp/.env`)
   } else {
-    process.stdout.write(`  Skipped. Set ${envVar} in your shell or ~/.fcp/.env before running.\n`)
+    warn(`Skipped. Set ${envVar} in your shell or ~/.fcp/.env before running`)
   }
 }
 
 // ─── Backend picker ───────────────────────────────────────────────────────────
 
 async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
-  hr('CPE Backend')
-  process.stdout.write('\n  Provider:\n')
-  process.stdout.write('    1. Anthropic\n')
-  process.stdout.write('    2. OpenAI\n')
-  process.stdout.write('    3. Google\n')
-  process.stdout.write('    4. Ollama (local)\n\n')
+  const providers = [
+    { label: 'Anthropic', description: 'Claude models' },
+    { label: 'OpenAI', description: 'GPT-4, o1 models' },
+    { label: 'Google', description: 'Gemini models' },
+    { label: 'Ollama', description: 'Local models' },
+  ]
 
-  const providerRaw = await ask(rl, '  Provider', '1')
-
+  const providerRes = await select(rl, 'CPE Backend — Select provider:', providers)
+  const providerIdx = providerRes.index
   let models: string[]
   let providerPrefix: string
 
-  if (providerRaw === '2') {
+  if (providerIdx === 1) {
     models = OPENAI_MODELS
     providerPrefix = 'openai'
-  } else if (providerRaw === '3') {
+  } else if (providerIdx === 2) {
     models = GOOGLE_MODELS
     providerPrefix = 'google'
-  } else if (providerRaw === '4') {
+  } else if (providerIdx === 3) {
     providerPrefix = 'ollama'
-    process.stdout.write('\n  Detecting local Ollama models...\n')
+    process.stdout.write(`\n${chalk.dim('  Detecting local Ollama models...')}\n`)
     models = listOllamaModels()
     if (models.length === 0) {
-      process.stdout.write('  No Ollama models found (is Ollama running?).\n')
-      process.stdout.write('  Enter model name manually.\n\n')
-      const manual = await ask(rl, '  Model', 'llama3.2')
+      warn('No Ollama models found (is Ollama running?)')
+      process.stdout.write(`\n`)
+      const manual = await prompt(rl, '  Model name', { default: 'llama3.2', hint: 'e.g., mistral, neural-chat' })
       return `ollama:${manual}`
     }
   } else {
@@ -169,13 +155,9 @@ async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
     providerPrefix = 'anthropic'
   }
 
-  process.stdout.write('\n  Available models:\n')
-  models.forEach((m, i) => process.stdout.write(`    ${i + 1}. ${m}\n`))
-  process.stdout.write('\n')
-
-  const modelRaw = await ask(rl, '  Model number or name', '1')
-  const idx = parseInt(modelRaw, 10) - 1
-  const model = (idx >= 0 && idx < models.length) ? models[idx]! : modelRaw
+  const modelOptions = models.map(m => ({ label: m }))
+  const modelRes = await select(rl, 'Select model:', modelOptions, 0)
+  const model = models[modelRes.index]!
 
   return `${providerPrefix}:${model}`
 }
