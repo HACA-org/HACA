@@ -21,7 +21,7 @@ type RL = ReturnType<typeof createInterface>
  */
 export async function prompt(rl: RL, question: string, opts: PromptOptions = {}): Promise<string> {
   const hint = opts.hint || (opts.default ? `[${opts.default}]` : '')
-  const line = hint ? `${question} ${chalk.dim(hint)}: ` : `${question}: `
+  const line = hint ? `  ${question} ${chalk.dim(hint)}: ` : `  ${question}: `
   return new Promise(resolve => {
     rl.question(line, a => {
       resolve((a.trim() || opts.default || '').trim())
@@ -35,7 +35,7 @@ export async function prompt(rl: RL, question: string, opts: PromptOptions = {})
  */
 export async function confirm(rl: RL, question: string, defaultYes = true): Promise<boolean> {
   const hint = defaultYes ? 'Y/n' : 'y/N'
-  const line = `${question} ${chalk.dim(`[${hint}]`)}: `
+  const line = `  ${question} ${chalk.dim(`[${hint}]`)}: `
   return new Promise(resolve => {
     rl.question(line, a => {
       const s = a.trim().toLowerCase()

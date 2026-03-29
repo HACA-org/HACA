@@ -197,7 +197,7 @@ async function promptApiKey(rl: ReturnType<typeof makeRl>, provider: string): Pr
   }
 
   process.stdout.write(`\n  ${chalk.bold(provider)} requires an API key (stored in ${chalk.dim('~/.fcp/.env')}).\n\n`)
-  const key = await prompt(rl, `  ${envVar}`, { hint: 'sk-...' })
+  const key = await prompt(rl, envVar, { hint: 'sk-...' })
   if (key) {
     existing.set(envVar, key)
     await writeEnvFile(existing)
@@ -235,7 +235,7 @@ async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
     if (models.length === 0) {
       warn('No Ollama models found (is Ollama running?)')
       process.stdout.write(`\n`)
-      const manual = await prompt(rl, '  Model name', { default: 'llama3.2', hint: 'e.g., mistral, neural-chat' })
+      const manual = await prompt(rl, 'Model name', { default: 'llama3.2', hint: 'e.g., mistral, neural-chat' })
       return `ollama:${manual}`
     }
   } else {
@@ -258,23 +258,23 @@ async function pickAuthScope(rl: ReturnType<typeof makeRl>): Promise<Authorizati
 
   const autonomousEvolution = await confirm(
     rl,
-    '  Allow file evolution (fileWrite, fileDelete, jsonMerge)',
+    'Allow file evolution (fileWrite, fileDelete, jsonMerge)',
     false,
   )
   const autonomousSkills = await confirm(
     rl,
-    '  Allow skill installation (skillInstall)',
+    'Allow skill installation (skillInstall)',
     false,
   )
   const operatorMemory = await confirm(
     rl,
-    '  Allow memory promotion (promoteSlugs)',
+    'Allow memory promotion (promoteSlugs)',
     false,
   )
 
   process.stdout.write('\n')
   const renewalDays = parseInt(
-    await prompt(rl, '  Renewal period (days)', { default: '0', hint: '0 = no expiry' }),
+    await prompt(rl, 'Renewal period (days)', { default: '0', hint: '0 = no expiry' }),
     10,
   ) || 0
 
