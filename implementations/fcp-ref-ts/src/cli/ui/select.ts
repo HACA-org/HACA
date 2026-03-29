@@ -1,6 +1,7 @@
 // Interactive selection with arrow key navigation.
-// Uses raw terminal control to capture arrow keys without waiting for Enter.
+// Uses sisteransi for elegant cursor control (inspired by terkelg/prompts).
 import chalk from 'chalk'
+import { cursor } from 'sisteransi'
 
 export interface SelectOption {
   label: string
@@ -9,7 +10,8 @@ export interface SelectOption {
 
 /**
  * Interactive arrow-key selection.
- * Supports: ↑↓ to navigate, Enter to select, q/Ctrl-C to cancel.
+ * Supports: ↑↓ to navigate, Enter to select, q/Ctrl-C to cancel, 1-9 for number input.
+ * Uses cursor save/restore for clean redraw without terminal artifacts.
  */
 export async function selectInteractive(
   question: string,
@@ -22,8 +24,9 @@ export async function selectInteractive(
   const stdin = process.stdin
   const stdout = process.stdout
 
-  // Display question
+  // Display question and save cursor position
   stdout.write(`\n${question}\n`)
+  stdout.write(cursor.save)
 
   // Set up raw mode
   stdin.setRawMode(true)
@@ -45,24 +48,23 @@ export async function selectInteractive(
       }
     }
 
-    function redraw() {
-      // Move cursor up to the first option line
-      stdout.write(`\x1b[${options.length}A`)
-      // Clear all option lines and redraw them
+    function render() {
+      // Restore cursor position, clear from cursor to end of display, then redraw
+      stdout.write(cursor.restore)
+      stdout.write(cursor.hide)
       for (let i = 0; i < options.length; i++) {
-        stdout.write('\r\x1b[K')
         stdout.write(renderOption(i))
         if (i < options.length - 1) {
           stdout.write('\n')
         }
       }
+      stdout.write(cursor.show)
     }
 
     function cleanup() {
       stdin.removeListener('data', dataHandler!)
       stdin.setRawMode(false)
       stdin.pause()
-      stdout.write('\x1b[?25h') // show cursor
     }
 
     let buffer = ''
@@ -76,7 +78,7 @@ export async function selectInteractive(
         if (buffer.startsWith('\x1b[A')) {
           // Up arrow
           selectedIdx = (selectedIdx - 1 + options.length) % options.length
-          redraw()
+          render()
           buffer = buffer.slice(3)
           continue
         }
@@ -84,7 +86,7 @@ export async function selectInteractive(
         if (buffer.startsWith('\x1b[B')) {
           // Down arrow
           selectedIdx = (selectedIdx + 1) % options.length
-          redraw()
+          render()
           buffer = buffer.slice(3)
           continue
         }
@@ -94,6 +96,7 @@ export async function selectInteractive(
         // Ctrl-C
         if (char === '\x03') {
           cleanup()
+          stdout.write(cursor.show)
           resolve({ index: defaultIdx, label: options[defaultIdx]!.label })
           return
         }
@@ -101,6 +104,7 @@ export async function selectInteractive(
         // 'q' to quit
         if (char.toLowerCase() === 'q') {
           cleanup()
+          stdout.write(cursor.show)
           resolve({ index: defaultIdx, label: options[defaultIdx]!.label })
           return
         }
@@ -108,6 +112,7 @@ export async function selectInteractive(
         // Enter (CR or LF)
         if (char === '\r' || char === '\n') {
           cleanup()
+          stdout.write(cursor.show)
           stdout.write(`\n${chalk.dim('Selected:')} ${chalk.cyan(options[selectedIdx]!.label)}\n\n`)
           resolve({ index: selectedIdx, label: options[selectedIdx]!.label })
           return
@@ -117,7 +122,7 @@ export async function selectInteractive(
         const num = parseInt(char, 10)
         if (!isNaN(num) && num >= 1 && num <= options.length) {
           selectedIdx = num - 1
-          redraw()
+          render()
           buffer = buffer.slice(1)
           continue
         }
@@ -130,12 +135,12 @@ export async function selectInteractive(
     stdin.on('data', dataHandler)
 
     // Initial render
-    stdout.write('\x1b[?25l') // hide cursor
     for (let i = 0; i < options.length; i++) {
       stdout.write(renderOption(i))
       if (i < options.length - 1) {
         stdout.write('\n')
       }
     }
+    stdout.write(cursor.show)
   })
 }
