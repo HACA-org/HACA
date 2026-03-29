@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import type { Command } from 'commander'
-import { writeJson, ensureDir, atomicWrite } from '../../store/io.js'
+import { writeJson, ensureDir, atomicWrite, fileExists } from '../../store/io.js'
 import { makeBaselineJson } from '../templates/baseline.js'
 import {
   makeIntegrityDoc, personaIdentity, personaValues,
@@ -169,6 +169,66 @@ async function gitInitAndCommit(root: string, entityId: string): Promise<void> {
   }
 }
 
+// ─── API key management ───────────────────────────────────────────────────────
+
+const FCP_ENV_FILE = path.join(FCP_HOME, '.env')
+
+const API_KEY_VARS: Record<string, string> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai:    'OPENAI_API_KEY',
+  google:    'GOOGLE_API_KEY',
+}
+
+// Read current ~/.fcp/.env as a key→value map (unparsed lines preserved).
+async function readEnvFile(): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  if (!await fileExists(FCP_ENV_FILE)) return map
+  const raw = await fs.readFile(FCP_ENV_FILE, 'utf8')
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eq = trimmed.indexOf('=')
+    if (eq < 1) continue
+    map.set(trimmed.slice(0, eq).trim(), trimmed.slice(eq + 1).trim())
+  }
+  return map
+}
+
+async function writeEnvFile(entries: Map<string, string>): Promise<void> {
+  await ensureDir(FCP_HOME)
+  const lines = Array.from(entries.entries()).map(([k, v]) => `${k}=${v}`)
+  await atomicWrite(FCP_ENV_FILE, lines.join('\n') + '\n')
+}
+
+// Prompt for API key for the chosen provider (skip if already set in env or .env file).
+async function promptApiKey(rl: ReturnType<typeof makeRl>, provider: string): Promise<void> {
+  const envVar = API_KEY_VARS[provider]
+  if (!envVar) return  // ollama — no key needed
+
+  // Already set in shell env — skip
+  if (process.env[envVar]) {
+    process.stdout.write(`  ${envVar} already set in environment — skipping.\n`)
+    return
+  }
+
+  const existing = await readEnvFile()
+  if (existing.has(envVar)) {
+    const masked = '*'.repeat(8) + (existing.get(envVar) ?? '').slice(-4)
+    process.stdout.write(`  ${envVar} already saved (${masked}) — skipping.\n`)
+    return
+  }
+
+  process.stdout.write(`\n  ${provider} requires an API key (stored in ~/.fcp/.env).\n`)
+  const key = await ask(rl, `  ${envVar}`)
+  if (key) {
+    existing.set(envVar, key)
+    await writeEnvFile(existing)
+    process.stdout.write(`  → Saved to ~/.fcp/.env\n`)
+  } else {
+    process.stdout.write(`  Skipped. Set ${envVar} in your shell or ~/.fcp/.env before running.\n`)
+  }
+}
+
 // ─── Model picker ─────────────────────────────────────────────────────────────
 
 async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
@@ -274,7 +334,7 @@ async function runInit(): Promise<void> {
     }
 
     const entityRoot = path.join(ENTITIES_DIR, entityId)
-    const isExisting = existsSync(path.join(entityRoot, 'state', 'baseline.json'))
+    const isExisting = existsSync(entityRoot)
 
     if (isExisting) {
       process.stdout.write(`\n  Existing entity at ${entityRoot}.\n`)
@@ -305,6 +365,8 @@ async function runInit(): Promise<void> {
 
     // ── CPE Backend ───────────────────────────────────────────────────────────
     const backend = await pickBackend(rl)
+    const backendProvider = backend.split(':')[0]!
+    await promptApiKey(rl, backendProvider)
 
     // ── Scaffold ─────────────────────────────────────────────────────────────
     hr('Creating entity')
