@@ -53,7 +53,9 @@ async function resolveEntityRoot(entityId?: string): Promise<string> {
   throw new CLIError('No entity found. Run `fcp init` to create one.', 1)
 }
 
-function makeConsoleIO(): SessionIO {
+// Single readline instance shared across BootIO (FAP prompts) and SessionIO (operator input).
+// Prevents multiple listeners on stdin and ensures clean close at the end.
+function makeSharedRL() {
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false })
   const lineQueue: string[] = []
   const resolvers: Array<(s: string) => void> = []
@@ -66,16 +68,34 @@ function makeConsoleIO(): SessionIO {
     }
   })
 
+  function nextLine(): Promise<string> {
+    return new Promise(resolve => {
+      if (lineQueue.length > 0) {
+        resolve(lineQueue.shift()!)
+      } else {
+        resolvers.push(resolve)
+      }
+    })
+  }
+
+  return { rl, nextLine }
+}
+
+function makeBootIO(nextLine: () => Promise<string>): import('../../types/boot.js').BootIO {
+  return {
+    write: (msg) => process.stdout.write(msg + '\n'),
+    prompt: async (question) => {
+      process.stdout.write(question)
+      return (await nextLine()).trim()
+    },
+  }
+}
+
+function makeConsoleIO(nextLine: () => Promise<string>): SessionIO {
   return {
     prompt(): Promise<string> {
       process.stdout.write('\n> ')
-      return new Promise<string>(resolve => {
-        if (lineQueue.length > 0) {
-          resolve(lineQueue.shift()!)
-        } else {
-          resolvers.push(resolve)
-        }
-      })
+      return nextLine()
     },
 
     write(text: string): void {
@@ -106,89 +126,81 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
   const baselineRaw = await readJson(layout.state.baseline)
   const baseline    = parseBaseline(baselineRaw)
 
-  // Boot — FAP on cold start, 8-phase sequence on warm start.
-  // prompt() is used by FAP step 4 (operator enrollment) on first run.
-  const io: import('../../types/boot.js').BootIO = {
-    write: (msg) => process.stdout.write(msg + '\n'),
-    prompt: (question) => new Promise(resolve => {
-      process.stdout.write(question)
-      const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false })
-      rl.once('line', line => { rl.close(); resolve(line.trim()) })
-    }),
-  }
+  // Single readline for the entire lifecycle: FAP prompts + session input + proposal gate.
+  const { rl, nextLine } = makeSharedRL()
 
-  const bootResult = await startEntity({ layout, logger, io, sleepCycle: runSleepCycle })
+  try {
+    const bootIO = makeBootIO(nextLine)
+    const bootResult = await startEntity({ layout, logger, io: bootIO, sleepCycle: runSleepCycle })
 
-  if (!bootResult.ok) {
-    throw new CLIError(`Boot failed (phase ${bootResult.phase}): ${bootResult.reason}`, 1)
-  }
+    if (!bootResult.ok) {
+      throw new CLIError(`Boot failed (phase ${bootResult.phase}): ${bootResult.reason}`, 1)
+    }
 
-  const { sessionId, contextMessages } = bootResult
-  const cpe    = resolveAdapter(baseline.cpe.backend)
-  const policy = await loadAllowlistPolicy(layout)
-  const tools  = [
-    fileReadHandler, fileWriteHandler, webFetchHandler,
-    shellRunHandler, agentRunHandler, skillCreateHandler, skillAuditHandler,
-    memoryRecallHandler, memoryWriteHandler, closurePayloadHandler,
-    evolutionProposalHandler, sessionCloseHandler,
-  ]
-  const profile = baseline.cpe.topology === 'opaque' ? 'HACA-Evolve' : 'HACA-Core'
+    const { sessionId, contextMessages } = bootResult
+    const cpe    = resolveAdapter(baseline.cpe.backend)
+    const policy = await loadAllowlistPolicy(layout)
+    const tools  = [
+      fileReadHandler, fileWriteHandler, webFetchHandler,
+      shellRunHandler, agentRunHandler, skillCreateHandler, skillAuditHandler,
+      memoryRecallHandler, memoryWriteHandler, closurePayloadHandler,
+      evolutionProposalHandler, sessionCloseHandler,
+    ]
+    const profile = baseline.cpe.topology === 'opaque' ? 'HACA-Evolve' : 'HACA-Core'
 
-  process.stdout.write(`FCP — ${profile} — session ${sessionId}\n`)
-  process.stdout.write('Type your message and press Enter. Ctrl-C to force exit.\n\n')
+    process.stdout.write(`FCP — ${profile} — session ${sessionId}\n`)
+    process.stdout.write('Type your message and press Enter. Ctrl-C to force exit.\n\n')
 
-  const result = await runSessionLoop({
-    layout, baseline, cpe, policy, tools, logger,
-    io:            makeConsoleIO(),
-    sessionId,
-    profile,
-    contextWindow: cpe.contextWindow,
-    ...(contextMessages ? { contextMessages } : {}),
-  })
+    const result = await runSessionLoop({
+      layout, baseline, cpe, policy, tools, logger,
+      io:            makeConsoleIO(nextLine),
+      sessionId,
+      profile,
+      contextWindow: cpe.contextWindow,
+      ...(contextMessages ? { contextMessages } : {}),
+    })
 
-  // ── HACA-Core: present pending proposals for Operator approval ──────────────
-  // HACA-Evolve proposals are auto-approved at queue time; skip the gate.
-  // This gate runs synchronously on the terminal before the sleep cycle starts.
-  if (!baseline.authorizationScope) {
-    const pending = await readPendingProposals(layout)
-    if (pending.length > 0) {
-      process.stdout.write(`\n── Evolution Proposals (${pending.length}) ──\n`)
-      for (const proposal of pending) {
-        if (proposal.approvedAt) continue  // already approved in prior session
-        process.stdout.write(`\nProposal ${proposal.id}\n`)
-        process.stdout.write(`  ${proposal.description}\n`)
-        process.stdout.write(`  Ops (${proposal.ops.length}): ${proposal.ops.map(o => o.type).join(', ')}\n`)
-        process.stdout.write('  Approve? [y/N] ')
-        const answer = await new Promise<string>(resolve => {
-          const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false })
-          rl.once('line', line => { rl.close(); resolve(line.trim().toLowerCase()) })
-        })
-        if (answer === 'y') {
-          await approveProposal(layout, proposal.id)
-          // EVOLUTION_AUTH is written by endure.ts when the proposal is committed.
-          process.stdout.write('  → Approved.\n')
-        } else {
-          await appendIntegrityLog(layout, {
-            event: 'EVOLUTION_REJECTED', id: proposal.id, digest: proposal.digest,
-            ts: new Date().toISOString(), reason: 'operator_declined',
-          })
-          process.stdout.write('  → Rejected.\n')
+    // ── HACA-Core: present pending proposals for Operator approval ────────────
+    // HACA-Evolve proposals are auto-approved at queue time; skip the gate.
+    // This gate runs synchronously on the terminal before the sleep cycle starts.
+    if (!baseline.authorizationScope) {
+      const pending = await readPendingProposals(layout)
+      if (pending.length > 0) {
+        process.stdout.write(`\n── Evolution Proposals (${pending.length}) ──\n`)
+        for (const proposal of pending) {
+          if (proposal.approvedAt) continue  // already approved in prior session
+          process.stdout.write(`\nProposal ${proposal.id}\n`)
+          process.stdout.write(`  ${proposal.description}\n`)
+          process.stdout.write(`  Ops (${proposal.ops.length}): ${proposal.ops.map(o => o.type).join(', ')}\n`)
+          process.stdout.write('  Approve? [y/N] ')
+          const answer = (await nextLine()).trim().toLowerCase()
+          if (answer === 'y') {
+            await approveProposal(layout, proposal.id)
+            process.stdout.write('  → Approved.\n')
+          } else {
+            await appendIntegrityLog(layout, {
+              event: 'EVOLUTION_REJECTED', id: proposal.id, digest: proposal.digest,
+              ts: new Date().toISOString(), reason: 'operator_declined',
+            })
+            process.stdout.write('  → Rejected.\n')
+          }
         }
       }
     }
-  }
 
-  // Sleep cycle: memory consolidation → GC → Endure (HACA-Arch §6.4)
-  const sleepOpts = {
-    layout,
-    baseline,
-    logger,
-    sessionId,
-    contextWindow: cpe.contextWindow,
-    compact:       result.closed === 'normal' && result.compact,
-    ...(result.closed === 'normal' ? { closurePayload: result.closurePayload } : {}),
+    // Sleep cycle: memory consolidation → GC → Endure (HACA-Arch §6.4)
+    await runSleepCycle({
+      layout,
+      baseline,
+      logger,
+      sessionId,
+      contextWindow: cpe.contextWindow,
+      compact:       result.closed === 'normal' && result.compact,
+      ...(result.closed === 'normal' ? { closurePayload: result.closurePayload } : {}),
+    })
+  } finally {
+    rl.close()
   }
-  await runSleepCycle(sleepOpts)
 }
 
 export { runFcp }
@@ -197,9 +209,9 @@ export function registerRun(program: Command): void {
   program
     .command('run')
     .description('Start an FCP session (default command)')
-    .option('--entity <id>', 'Entity ID to run')
     .option('--verbose', 'Verbose logging')
-    .action(async (opts: { entity?: string; verbose?: boolean }) => {
-      await runFcp(opts)
+    .action(async function (this: Command, opts: { verbose?: boolean }) {
+      const entity = (this.optsWithGlobals() as { entity?: string }).entity
+      await runFcp({ ...(entity ? { entity } : {}), ...(opts.verbose ? { verbose: true } : {}) })
     })
 }

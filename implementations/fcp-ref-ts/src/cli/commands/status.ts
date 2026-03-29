@@ -66,9 +66,10 @@ export async function runStatus(entityId?: string): Promise<void> {
 
 export function registerStatus(program: Command): void {
   program
-    .command('status [entity]')
-    .description('Show entity status')
-    .action(async (entity?: string) => {
+    .command('status')
+    .description('Show entity status (uses default entity)')
+    .action(async function (this: Command) {
+      const entity = (this.optsWithGlobals() as { entity?: string }).entity
       await runStatus(entity)
     })
 }

@@ -4,6 +4,8 @@ import { registerInit }   from './commands/init.js'
 import { registerRun, runFcp } from './commands/run.js'
 import { registerStatus } from './commands/status.js'
 import { registerDoctor } from './commands/doctor.js'
+import { registerModel }    from './commands/model.js'
+import { registerEntities } from './commands/entities.js'
 
 export function buildProgram(): Command {
   const program = new Command()
@@ -23,6 +25,13 @@ export function buildProgram(): Command {
   registerRun(program)
   registerStatus(program)
   registerDoctor(program)
+  registerModel(program)
+  registerEntities(program)
+
+  program
+    .command('help')
+    .description('Show this help message')
+    .action(() => { program.help() })
 
   return program
 }
