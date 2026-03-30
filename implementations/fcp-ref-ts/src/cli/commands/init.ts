@@ -14,7 +14,7 @@ import { makeBaselineJson } from '../templates/baseline.js'
 import {
   makeIntegrityDoc, personaIdentity, personaValues,
   personaConstraints, personaProtocol, bootMd, GITIGNORE,
-  type Profile,
+  type PersonaProfile,
 } from '../templates/integrity.js'
 import { CLIError } from '../../types/cli.js'
 import type { AuthorizationScope } from '../../types/formats/baseline.js'
@@ -63,11 +63,11 @@ function listOllamaModels(): string[] {
 }
 
 // ─── Readline setup ───────────────────────────────────────────────────────────
-// Use a single readline instance throughout init flow to avoid stdin state issues.
-// selectInteractive uses raw mode; a shared readline prevents state corruption.
+// Creates readline for the init flow. terminal:true is required so that readline
+// properly manages stdin state after selectInteractive toggles raw mode.
 
 function makeRl() {
-  return createInterface({ input: process.stdin, output: process.stdout, terminal: false })
+  return createInterface({ input: process.stdin, output: process.stdout, terminal: true })
 }
 
 // ─── Entity registry ──────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ async function setDefault(id: string): Promise<void> {
 
 // ─── Scaffold helpers ─────────────────────────────────────────────────────────
 
-async function scaffoldEntity(root: string, profile: Profile): Promise<void> {
+async function scaffoldEntity(root: string, profile: PersonaProfile): Promise<void> {
   const dirs = [
     path.join(root, 'memory', 'episodic'),
     path.join(root, 'memory', 'semantic'),
@@ -212,7 +212,6 @@ async function promptApiKey(rl: ReturnType<typeof makeRl>, provider: string): Pr
 async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
   process.stdout.write('\n')
   hr('4. CPE backend and model')
-  process.stdout.write('\n')
   const providers = [
     { label: 'Anthropic', description: 'Claude models' },
     { label: 'OpenAI', description: 'GPT-4, o1 models' },
@@ -246,7 +245,6 @@ async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
     providerPrefix = 'anthropic'
   }
 
-  process.stdout.write('\n')
   const modelOptions = models.map(m => ({ label: m }))
   const modelRes = await select(rl, 'Select model:', modelOptions, 0)
   const model = models[modelRes.index]!
@@ -259,7 +257,7 @@ async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
 async function pickAuthScope(rl: ReturnType<typeof makeRl>): Promise<AuthorizationScope> {
   process.stdout.write('\n')
   hr('3. Autonomous scope')
-  process.stdout.write('\n  Define what this entity is authorised to do autonomously.\n')
+  process.stdout.write('  Define what this entity is authorised to do autonomously.\n')
   process.stdout.write('  These permissions can be revoked by re-initialising.\n')
 
   process.stdout.write('\n  [1] Autonomous structural evolution\n')
@@ -299,15 +297,14 @@ async function pickAuthScope(rl: ReturnType<typeof makeRl>): Promise<Authorizati
   process.stdout.write('\n')
   process.stdout.write('  [4] Scope renewal interval\n')
   process.stdout.write('      These authorisations will expire and the entity will pause\n')
-  process.stdout.write('      until you renew them. Enter 0 to disable expiry.\n')
+  process.stdout.write('      until you renew them.\n')
   let renewalDays = 0
   while (true) {
-    const renewalInput = await prompt(rl, 'Renewal interval in days', { default: '30' })
-    try {
-      renewalDays = parseInt(renewalInput, 10)
-      if (renewalDays >= 0) break
-    } catch {
-      // ignore
+    const renewalInput = await prompt(rl, 'Renewal interval in days', { default: '30', hint: '0 to no expiry' })
+    const parsed = Number(renewalInput)
+    if (Number.isInteger(parsed) && parsed >= 0) {
+      renewalDays = parsed
+      break
     }
     warn('Please enter a non-negative integer.')
   }
@@ -350,7 +347,7 @@ async function runInit(): Promise<void> {
     const continueRes = await select(rl, 'Continue?', [
       { label: 'Yes' },
       { label: 'No' },
-    ], 0)
+    ], 1)
     if (continueRes.index === 1) {
       process.stdout.write(`\n${chalk.dim('Cancelled.')}\n\n`)
       return
@@ -373,11 +370,10 @@ async function runInit(): Promise<void> {
       process.stdout.write('\n')
     }
 
-    process.stdout.write('\n')
     const rawId = await prompt(rl, 'Entity ID', { default: 'my-entity', hint: 'alphanumeric, hyphens' })
     const entityId = rawId.toLowerCase().replace(/\s+/g, '-')
-    if (!entityId || entityId.includes('/') || entityId.includes('..')) {
-      throw new CLIError('Invalid entity ID', 1)
+    if (!entityId || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(entityId)) {
+      throw new CLIError('Invalid entity ID (use lowercase alphanumeric and hyphens, 1-63 chars)', 1)
     }
 
     const entityRoot = path.join(ENTITIES_DIR, entityId)
@@ -410,7 +406,6 @@ async function runInit(): Promise<void> {
     // ── Step 2: Profile ──────────────────────────────────────────────────────
     process.stdout.write('\n')
     hr('2. Profile')
-    process.stdout.write('\n')
     process.stdout.write('  HACA-Core — Zero-autonomy\n')
     process.stdout.write('    Every structural change and evolution requires explicit Operator\n')
     process.stdout.write('    approval. Designed for enterprise and adversarial environments.\n')
@@ -419,12 +414,12 @@ async function runInit(): Promise<void> {
     process.stdout.write('    The entity acts and evolves independently within a declared scope,\n')
     process.stdout.write('    under Operator supervision. Designed for long-term assistants\n')
     process.stdout.write('    and companions.\n')
-    process.stdout.write('\n\n')
+    process.stdout.write('\n')
     const profileRes = await select(rl, 'Profile', [
       { label: 'HACA-Core   — Zero-autonomy' },
       { label: 'HACA-Evolve — Supervised autonomy' },
     ], 0)
-    const profile: Profile = profileRes.index === 1 ? 'haca-evolve' : 'haca-core'
+    const profile: PersonaProfile = profileRes.index === 1 ? 'haca-evolve' : 'haca-core'
     const topology = profile === 'haca-evolve' ? 'opaque' : 'transparent'
 
     // ── Authorization scope (HACA-Evolve only) ────────────────────────────────
@@ -449,8 +444,8 @@ async function runInit(): Promise<void> {
     // git init + first commit
     await gitInitAndCommit(entityRoot, entityId)
 
-    // Set default if none
-    if (!currentDef) await setDefault(entityId)
+    // Set as default
+    await setDefault(entityId)
 
     // ── Step 5: Summary ─────────────────────────────────────────────────────
     process.stdout.write('\n')
@@ -459,7 +454,8 @@ async function runInit(): Promise<void> {
     hr()
     process.stdout.write(`  entity:         ${chalk.cyan(entityId)}\n`)
     process.stdout.write(`  path:           ${entityRoot}\n`)
-    process.stdout.write(`  profile:        ${profile}\n`)
+    const profileVersion = profile === 'haca-evolve' ? 'HACA-Evolve-1.0.0' : 'HACA-Core-1.0.0'
+    process.stdout.write(`  profile:        ${profileVersion}\n`)
     process.stdout.write(`  backend:        ${backend}\n`)
     if (authorizationScope) {
       process.stdout.write(`  scope:\n`)
@@ -467,13 +463,16 @@ async function runInit(): Promise<void> {
       process.stdout.write(`    autonomous skills:     ${authorizationScope.autonomousSkills ? 'yes' : 'no'}\n`)
       process.stdout.write(`    operator memory:       ${authorizationScope.operatorMemory ? 'yes' : 'no'}\n`)
       const renewal = authorizationScope.renewalDays
-      process.stdout.write(`    renewal:               ${renewal > 0 ? `every ${renewal} days` : 'disabled'}\n`)
+      process.stdout.write(`    renewal:               ${renewal > 0 ? `every ${renewal} days` : 'no expiry (0)'}\n`)
     }
     hr()
     process.stdout.write('\n  First boot will run FAP (First Activation Protocol).\n')
     process.stdout.write(`  Run:  ${chalk.cyan('fcp')}\n\n`)
 
   } finally {
+    // Ensure terminal state is restored even on crash
+    try { process.stdin.setRawMode?.(false) } catch { /* ignore */ }
+    process.stdout.write('\x1b[?25h') // Ensure cursor is visible
     rl.close()
   }
 }

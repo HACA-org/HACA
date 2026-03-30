@@ -49,10 +49,11 @@ export async function selectInteractive(
     }
 
     function render() {
-      // Restore cursor position, clear from cursor to end of display, then redraw
+      // Restore cursor position, clear each line, then redraw
       stdout.write(cursor.restore)
       stdout.write(cursor.hide)
       for (let i = 0; i < options.length; i++) {
+        stdout.write('\x1b[2K')  // Clear entire line to prevent ghost characters
         stdout.write(renderOption(i))
         if (i < options.length - 1) {
           stdout.write('\n')
@@ -69,8 +70,12 @@ export async function selectInteractive(
 
     let buffer = ''
     let dataHandler: ((chunk: string) => void) | null = null
+    let resolved = false
 
     dataHandler = (chunk: string) => {
+      // Guard against processing after resolution
+      if (resolved) return
+
       buffer += chunk
 
       while (buffer.length > 0) {
@@ -95,16 +100,16 @@ export async function selectInteractive(
 
         // Ctrl-C — cancel selection
         if (char === '\x03') {
+          resolved = true
           cleanup()
           stdout.write(cursor.show + '\n')
-          const err = new Error('Selection cancelled by user') as any
-          err.code = 'SELECTION_CANCELLED'
           resolve({ index: -1, label: '' })  // Signal cancellation via index
           return
         }
 
         // 'q' to quit
         if (char.toLowerCase() === 'q') {
+          resolved = true
           cleanup()
           stdout.write(cursor.show + '\n')
           resolve({ index: -1, label: '' })  // Signal cancellation via index
@@ -113,9 +118,10 @@ export async function selectInteractive(
 
         // Enter (CR or LF)
         if (char === '\r' || char === '\n') {
+          resolved = true
           cleanup()
           stdout.write(cursor.show)
-          stdout.write(`\n${chalk.dim('Selected:')} ${chalk.cyan(options[selectedIdx]!.label)}\n\n`)
+          stdout.write(`\n  ${chalk.dim('Selected:')} ${chalk.cyan(options[selectedIdx]!.label)}\n\n`)
           resolve({ index: selectedIdx, label: options[selectedIdx]!.label })
           return
         }
@@ -136,13 +142,7 @@ export async function selectInteractive(
 
     stdin.on('data', dataHandler)
 
-    // Initial render
-    for (let i = 0; i < options.length; i++) {
-      stdout.write(renderOption(i))
-      if (i < options.length - 1) {
-        stdout.write('\n')
-      }
-    }
-    stdout.write(cursor.show)
+    // Initial render — use the same render() path for consistency
+    render()
   })
 }

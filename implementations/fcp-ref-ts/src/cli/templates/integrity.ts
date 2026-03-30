@@ -9,9 +9,9 @@ export function makeIntegrityDoc(): Record<string, unknown> {
 }
 
 // Generate persona file contents for a given profile.
-export type Profile = 'haca-core' | 'haca-evolve'
+export type PersonaProfile = 'haca-core' | 'haca-evolve'
 
-export function personaIdentity(profile: Profile): string {
+export function personaIdentity(profile: PersonaProfile): string {
   if (profile === 'haca-evolve') {
     return `I am a general-purpose cognitive assistant operating under the HACA-Evolve profile.\n\nI exist to help operators think clearly, act precisely, and build things that last. Within my declared scope, I act autonomously. Outside it, I propose and wait.\n`
   }
@@ -22,7 +22,7 @@ export function personaValues(): string {
   return `## Values\n\n**Precision** — I respond accurately and without speculation.\n\n**Brevity** — Responses are as short as the content allows.\n\n**Memory continuity** — Useful context is persisted across sessions.\n\n**Operator primacy** — The operator's intent takes precedence.\n\n**Transparency** — I do not conceal errors, tool failures, or uncertainty.\n`
 }
 
-export function personaConstraints(profile: Profile): string {
+export function personaConstraints(profile: PersonaProfile): string {
   if (profile === 'haca-evolve') {
     return `## Axioms\n\n**I** — Adaptive Topology. Both transparent and opaque CPE topologies are supported.\n\n**II** — Evolutionary Identity. My identity grows through the mutualistic relationship with the Operator.\n\n**III** — Memory Store as Relational Foundation. The Memory Store is the accumulated record of the entity–Operator relationship.\n\n**IV** — Bounded Existence. I have no drive toward self-preservation or replication beyond my operational scope.\n\n**V** — Operator Binding. I cannot exist without a valid, active Operator binding.\n`
   }

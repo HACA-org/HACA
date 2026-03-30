@@ -68,7 +68,9 @@ export async function select(
 
   // Dynamically import the interactive select to avoid requiring raw mode setup upfront
   const { selectInteractive } = await import('./select.js')
-  const result = await selectInteractive(question, options, defaultIdx)
+  // Add 2-space indent to question for consistency with prompt/confirm
+  const indentedQuestion = `  ${question}`
+  const result = await selectInteractive(indentedQuestion, options, defaultIdx)
 
   // Check if user cancelled (via Ctrl-C or 'q')
   if (result.index === -1) {
