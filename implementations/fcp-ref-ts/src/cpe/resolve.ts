@@ -2,7 +2,7 @@ import * as fs   from 'node:fs'
 import * as path from 'node:path'
 import * as os   from 'node:os'
 import type { CPEAdapter } from '../types/cpe.js'
-import { CPEConfigError }  from '../types/cpe.js'
+import { CPEConfigError, CPEInvokeError } from '../types/cpe.js'
 import { createAnthropicAdapter } from './anthropic.js'
 import { createOpenAIAdapter }    from './openai.js'
 import { createGoogleAdapter }    from './google.js'
@@ -44,26 +44,59 @@ function requireEnv(name: string, provider: string): string {
   return val
 }
 
+// Wrap an adapter so that network errors (fetch throws TypeError) and JSON
+// parse errors (resp.json() throws SyntaxError) are caught and re-thrown as
+// CPEInvokeError — keeping callers free of provider-specific error handling.
+function wrapAdapter(adapter: CPEAdapter): CPEAdapter {
+  return {
+    provider:      adapter.provider,
+    model:         adapter.model,
+    contextWindow: adapter.contextWindow,
+    async invoke(req) {
+      try {
+        return await adapter.invoke(req)
+      } catch (e: unknown) {
+        if (e instanceof CPEInvokeError) throw e
+        if (e instanceof TypeError) {
+          // fetch() throws TypeError for network errors (DNS, connection refused, etc.)
+          throw new CPEInvokeError(`${adapter.provider}: network error — ${(e as Error).message}`, undefined, e)
+        }
+        if (e instanceof SyntaxError) {
+          // resp.json() throws SyntaxError on malformed JSON
+          throw new CPEInvokeError(`${adapter.provider}: malformed JSON in response — ${(e as Error).message}`, undefined, e)
+        }
+        throw new CPEInvokeError(`${adapter.provider}: unexpected error — ${String(e)}`, undefined, e)
+      }
+    },
+  }
+}
+
 export function resolveAdapter(backend: string): CPEAdapter {
   loadFcpEnv()
   const { provider, model } = parseBackend(backend)
 
+  let raw: CPEAdapter
   switch (provider) {
     case 'anthropic':
-      return createAnthropicAdapter(model, requireEnv('ANTHROPIC_API_KEY', 'anthropic'))
+      raw = createAnthropicAdapter(model, requireEnv('ANTHROPIC_API_KEY', 'anthropic'))
+      break
 
     case 'openai':
-      return createOpenAIAdapter(model, requireEnv('OPENAI_API_KEY', 'openai'))
+      raw = createOpenAIAdapter(model, requireEnv('OPENAI_API_KEY', 'openai'))
+      break
 
     case 'google':
-      return createGoogleAdapter(model, requireEnv('GOOGLE_API_KEY', 'google'))
+      raw = createGoogleAdapter(model, requireEnv('GOOGLE_API_KEY', 'google'))
+      break
 
     case 'ollama':
-      return createOllamaAdapter(model, process.env['OLLAMA_BASE_URL'])
+      raw = createOllamaAdapter(model, process.env['OLLAMA_BASE_URL'])
+      break
 
     default:
       throw new CPEConfigError(
         `Unknown provider: "${provider}" — supported: anthropic, openai, google, ollama`,
       )
   }
+  return wrapAdapter(raw)
 }

@@ -86,6 +86,20 @@ describe('cpe/normalize', () => {
       expect(resp.toolUses[0]?.input).toEqual({ action: 'x' })
     })
 
+    it('throws CPEInvokeError on malformed tool arguments JSON', () => {
+      const raw = {
+        choices: [{
+          message: {
+            content: null,
+            tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'fcp_exec', arguments: '{bad json' } }],
+          },
+          finish_reason: 'tool_calls',
+        }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      }
+      expect(() => normalizeOpenAI(raw)).toThrow(CPEInvokeError)
+    })
+
     it('throws on empty choices', () => {
       expect(() => normalizeOpenAI({ choices: [], usage: {} })).toThrow(CPEInvokeError)
     })
@@ -122,6 +136,57 @@ describe('cpe/normalize', () => {
       expect(resp.toolUses[0]?.name).toBe('fcp_exec')
     })
 
+    it('uses function name in tool_use id', () => {
+      const raw = {
+        candidates: [{
+          content: {
+            role: 'model',
+            parts: [
+              { functionCall: { name: 'tool_a', args: {} } },
+              { functionCall: { name: 'tool_b', args: {} } },
+            ],
+          },
+          finishReason: 'STOP',
+        }],
+        usageMetadata: {},
+      }
+      const resp = normalizeGoogle(raw)
+      expect(resp.toolUses[0]?.id).toBe('gcall_tool_a_0')
+      expect(resp.toolUses[1]?.id).toBe('gcall_tool_b_1')
+    })
+
+    it('maps SAFETY and OTHER finishReason to end_turn', () => {
+      for (const finishReason of ['SAFETY', 'OTHER', 'RECITATION']) {
+        const raw = {
+          candidates: [{ content: { role: 'model', parts: [{ text: 'hi' }] }, finishReason }],
+          usageMetadata: {},
+        }
+        expect(normalizeGoogle(raw).stopReason).toBe('end_turn')
+      }
+    })
+
+    it('maps MAX_TOKENS finishReason to max_tokens', () => {
+      const raw = {
+        candidates: [{ content: { role: 'model', parts: [] }, finishReason: 'MAX_TOKENS' }],
+        usageMetadata: {},
+      }
+      expect(normalizeGoogle(raw).stopReason).toBe('max_tokens')
+    })
+
+    it('returns tool_use stopReason when tool calls present', () => {
+      const raw = {
+        candidates: [{
+          content: {
+            role: 'model',
+            parts: [{ functionCall: { name: 'fcp_exec', args: {} } }],
+          },
+          finishReason: 'STOP',
+        }],
+        usageMetadata: {},
+      }
+      expect(normalizeGoogle(raw).stopReason).toBe('tool_use')
+    })
+
     it('throws on empty candidates', () => {
       expect(() => normalizeGoogle({ candidates: [] })).toThrow(CPEInvokeError)
     })
@@ -153,6 +218,23 @@ describe('cpe/normalize', () => {
       expect(resp.stopReason).toBe('tool_use')
       expect(resp.toolUses).toHaveLength(1)
       expect(resp.toolUses[0]?.name).toBe('fcp_exec')
+    })
+
+    it('uses deterministic index-based tool_use ids', () => {
+      const raw = {
+        message: {
+          content: '',
+          tool_calls: [
+            { function: { name: 'tool_a', arguments: {} } },
+            { function: { name: 'tool_b', arguments: {} } },
+          ],
+        },
+        done_reason: 'stop',
+        done: true,
+      }
+      const resp = normalizeOllama(raw)
+      expect(resp.toolUses[0]?.id).toBe('ollama_tool_a_0')
+      expect(resp.toolUses[1]?.id).toBe('ollama_tool_b_1')
     })
 
     it('throws on missing message field', () => {

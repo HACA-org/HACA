@@ -73,11 +73,18 @@ export function normalizeOpenAI(raw: unknown): CPEResponse {
     ? toArray(rawCalls, 'tool_calls').map(tc => {
         const c  = toRecord(tc, 'tool_call')
         const fn = toRecord(c['function'], 'function')
+        const argsStr = String(fn['arguments'] ?? '{}')
+        let input: unknown
+        try {
+          input = JSON.parse(argsStr)
+        } catch (e: unknown) {
+          throw new CPEInvokeError(`OpenAI tool_call "${fn['name']}": malformed arguments JSON — ${(e as Error).message}`, undefined, e)
+        }
         return {
           type:  'tool_use' as const,
           id:    String(c['id']),
           name:  String(fn['name']),
-          input: JSON.parse(String(fn['arguments'])) as unknown,
+          input,
         }
       })
     : []
@@ -85,7 +92,7 @@ export function normalizeOpenAI(raw: unknown): CPEResponse {
   const u = toRecord(r['usage'], 'usage')
   return {
     stopReason: openaiStopMap[String(choice['finish_reason'])] ?? 'end_turn',
-    content,
+    content:    toolUses.length > 0 && content === '' ? '' : content,
     toolUses,
     usage: {
       inputTokens:  Number(u['prompt_tokens'])     || 0,
@@ -117,7 +124,7 @@ export function normalizeGoogle(raw: unknown): CPEResponse {
     )
     .map((p, i) => ({
       type:  'tool_use' as const,
-      id:    `gcall_${i}`,
+      id:    `gcall_${p.functionCall.name}_${i}`,
       name:  p.functionCall.name,
       input: p.functionCall.args,
     }))
@@ -126,8 +133,17 @@ export function normalizeGoogle(raw: unknown): CPEResponse {
   const uMeta  = typeof meta === 'object' && meta !== null ? meta as Record<string, unknown> : {}
   const finish = String((candidate as Record<string, unknown>)['finishReason'] ?? 'STOP')
 
+  const googleStopMap: Record<string, StopReason> = {
+    STOP:        'end_turn',
+    MAX_TOKENS:  'max_tokens',
+    TOOL_CODE:   'tool_use',
+    SAFETY:      'end_turn',
+    RECITATION:  'end_turn',
+    OTHER:       'end_turn',
+  }
+
   return {
-    stopReason: finish === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn',
+    stopReason: toolUses.length > 0 ? 'tool_use' : (googleStopMap[finish] ?? 'end_turn'),
     content: text,
     toolUses,
     usage: {
@@ -144,12 +160,12 @@ export function normalizeOllama(raw: unknown): CPEResponse {
 
   const rawCalls = message['tool_calls']
   const toolUses: ToolUseBlock[] = rawCalls != null
-    ? toArray(rawCalls, 'tool_calls').map(tc => {
+    ? toArray(rawCalls, 'tool_calls').map((tc, i) => {
         const c  = toRecord(tc, 'tool_call')
         const fn = toRecord(c['function'], 'function')
         return {
           type:  'tool_use' as const,
-          id:    `ollama_${String(fn['name'])}_${Date.now()}`,
+          id:    `ollama_${String(fn['name'])}_${i}`,
           name:  String(fn['name']),
           input: fn['arguments'] ?? {},
         }
@@ -157,9 +173,12 @@ export function normalizeOllama(raw: unknown): CPEResponse {
     : []
 
   const doneReason = String(r['done_reason'] ?? 'stop')
+  const ollamaStopReason: StopReason =
+    doneReason === 'length' ? 'max_tokens'
+    : toolUses.length > 0  ? 'tool_use'
+    : 'end_turn'
   return {
-    stopReason: doneReason === 'length' ? 'max_tokens'
-      : toolUses.length > 0 ? 'tool_use' : 'end_turn',
+    stopReason: ollamaStopReason,
     content,
     toolUses,
     usage: {

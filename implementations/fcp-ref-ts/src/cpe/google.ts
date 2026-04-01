@@ -70,10 +70,10 @@ export function createGoogleAdapter(model: string, apiKey: string): CPEAdapter {
     contextWindow: CONTEXT[model] ?? 1000000,
 
     async invoke(req: CPERequest): Promise<CPEResponse> {
-      const url  = `${BASE}/${model}:generateContent?key=${apiKey}`
+      const url  = `${BASE}/${model}:generateContent`
       const resp = await fetch(url, {
         method:  'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
         body:    JSON.stringify(toGeminiBody(req)),
       })
       if (!resp.ok) throw new CPEInvokeError(`Google API error ${resp.status}: ${resp.statusText}`, resp.status)

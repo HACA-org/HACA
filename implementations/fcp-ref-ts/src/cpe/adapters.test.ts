@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createAnthropicAdapter } from './anthropic.js'
 import { createOpenAIAdapter }    from './openai.js'
 import { createGoogleAdapter }    from './google.js'
 import { createOllamaAdapter }    from './ollama.js'
-import { CPEInvokeError }         from '../types/cpe.js'
+import { resolveAdapter }         from './resolve.js'
+import { CPEInvokeError, CPEConfigError } from '../types/cpe.js'
 import type { CPERequest }        from '../types/cpe.js'
 
 const minReq: CPERequest = {
@@ -113,17 +114,60 @@ describe('GoogleAdapter', () => {
     expect(resp.usage.inputTokens).toBe(30)
   })
 
-  it('includes api key in URL', async () => {
+  it('sends api key in x-goog-api-key header', async () => {
     mockFetch(googleResp)
     await createGoogleAdapter('gemini-2.0-flash', 'my-gkey').invoke(minReq)
-    const [url] = vi.mocked(fetch).mock.calls[0] as [string]
-    expect(url).toContain('key=my-gkey')
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit]
+    const headers = init.headers as Record<string, string>
+    expect(headers['x-goog-api-key']).toBe('my-gkey')
+    expect(url).not.toContain('key=')
   })
 
   it('throws CPEInvokeError on non-2xx', async () => {
     mockFetch({}, 403)
     await expect(createGoogleAdapter('gemini-2.0-flash', 'key').invoke(minReq))
       .rejects.toBeInstanceOf(CPEInvokeError)
+  })
+})
+
+// --- resolveAdapter wrapper ---
+describe('resolveAdapter (error wrapping)', () => {
+  beforeEach(() => {
+    process.env['ANTHROPIC_API_KEY'] = 'test-key'
+  })
+  afterEach(() => {
+    delete process.env['ANTHROPIC_API_KEY']
+    vi.unstubAllGlobals()
+  })
+
+  it('wraps TypeError (network error) as CPEInvokeError', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')))
+    const adapter = resolveAdapter('anthropic:claude-sonnet-4-6')
+    await expect(adapter.invoke(minReq)).rejects.toBeInstanceOf(CPEInvokeError)
+  })
+
+  it('wraps SyntaxError (malformed JSON) as CPEInvokeError', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, status: 200, statusText: 'OK',
+      json: () => Promise.reject(new SyntaxError('bad json')),
+    }))
+    const adapter = resolveAdapter('anthropic:claude-sonnet-4-6')
+    await expect(adapter.invoke(minReq)).rejects.toBeInstanceOf(CPEInvokeError)
+  })
+
+  it('passes CPEInvokeError through unchanged', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 429, statusText: 'Too Many Requests',
+      json: () => Promise.resolve({}),
+    }))
+    const adapter = resolveAdapter('anthropic:claude-sonnet-4-6')
+    const err = await adapter.invoke(minReq).catch(e => e)
+    expect(err).toBeInstanceOf(CPEInvokeError)
+    expect((err as CPEInvokeError).statusCode).toBe(429)
+  })
+
+  it('throws CPEConfigError for unknown provider', () => {
+    expect(() => resolveAdapter('unknown:model')).toThrow(CPEConfigError)
   })
 })
 
