@@ -13,7 +13,14 @@ function formatEntry(
     msg,
   }
   if (data !== undefined) entry['data'] = data
-  return JSON.stringify(entry) + '\n'
+  try {
+    return JSON.stringify(entry) + '\n'
+  } catch {
+    // Fallback for non-serializable values (circular refs, Symbols, etc.)
+    const safe: Record<string, unknown> = { ...context, level, ts: entry['ts'], msg }
+    if (data !== undefined) safe['data'] = String(data)
+    return JSON.stringify(safe) + '\n'
+  }
 }
 
 export function createLogger(context: Record<string, unknown> = {}): Logger {

@@ -26,7 +26,12 @@ export async function loadDriftProbes(layout: Layout): Promise<DriftProbe[]> {
 // ─── Probe evaluation ────────────────────────────────────────────────────────
 
 async function evalProbe(probe: DriftProbe, layout: Layout): Promise<DriftReport> {
-  const targetPath = path.join(layout.root, probe.target)
+  // Validate probe.target stays inside layout.root (prevent path traversal)
+  const targetPath = path.resolve(layout.root, probe.target)
+  const rootNorm   = layout.root.endsWith(path.sep) ? layout.root : layout.root + path.sep
+  if (!targetPath.startsWith(rootNorm)) {
+    throw new Error(`Drift probe target escapes entity root: "${probe.target}"`)
+  }
   if (!await fileExists(targetPath)) {
     return { probeId: probe.id, layer: 'deterministic', score: 1.0, exceeds: true }
   }
@@ -43,8 +48,14 @@ async function evalProbe(probe: DriftProbe, layout: Layout): Promise<DriftReport
     } else if (det.type === 'string') {
       score = content.includes(det.value) ? 0.0 : 1.0
     } else if (det.type === 'pattern') {
-      const re = new RegExp(det.value)
-      score = re.test(content) ? 0.0 : 1.0
+      // Wrap in try-catch: invalid regex syntax throws SyntaxError.
+      // Note: complex patterns may still cause ReDoS — keep probe patterns simple.
+      try {
+        const re = new RegExp(det.value)
+        score = re.test(content) ? 0.0 : 1.0
+      } catch {
+        throw new Error(`Drift probe "${probe.id}" has invalid regex pattern: ${det.value}`)
+      }
     }
 
     return { probeId: probe.id, layer: 'deterministic', score, exceeds: score > 0 }

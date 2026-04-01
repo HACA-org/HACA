@@ -31,14 +31,24 @@ export const memoryRecallHandler: ToolHandler = {
 
     for (const hit of semanticHits) {
       const abs = path.join(ctx.layout.root, hit.path)
-      const content = await fs.readFile(abs, 'utf8').catch(() => '')
-      if (content) sections.push(`[semantic:${hit.slug}]\n${content}`)
+      try {
+        const content = await fs.readFile(abs, 'utf8')
+        if (content) sections.push(`[semantic:${hit.slug}]\n${content}`)
+      } catch (e: unknown) {
+        const code = (e as NodeJS.ErrnoException).code
+        if (code !== 'ENOENT') ctx.logger.warn('mil:memory_recall:read_error', { path: hit.path, error: String(e) })
+      }
     }
 
     for (const p of episodicPaths) {
       const abs = path.join(ctx.layout.root, p)
-      const content = await fs.readFile(abs, 'utf8').catch(() => '')
-      if (content) sections.push(`[episodic:${path.basename(p, '.md')}]\n${content}`)
+      try {
+        const content = await fs.readFile(abs, 'utf8')
+        if (content) sections.push(`[episodic:${path.basename(p, '.md')}]\n${content}`)
+      } catch (e: unknown) {
+        const code = (e as NodeJS.ErrnoException).code
+        if (code !== 'ENOENT') ctx.logger.warn('mil:memory_recall:read_error', { path: p, error: String(e) })
+      }
     }
 
     if (sections.length === 0) return { ok: true, output: `No memory found for query: "${query}"` }

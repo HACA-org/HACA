@@ -4,7 +4,8 @@ import type { ClosurePayload } from './formats/memory.js'
 import type { CPEAdapter, ToolUseBlock } from './cpe.js'
 import type { Logger }        from './logger.js'
 import type { AllowlistPolicy, ToolHandler, ToolResult } from './exec.js'
-import type { Heartbeat }     from '../sil/heartbeat.js'
+import type { Heartbeat }     from './sil.js'
+import type { Profile }       from './cli.js'
 
 export type CloseReason =
   | 'normal'
@@ -14,15 +15,16 @@ export type CloseReason =
 
 // Internal events emitted by the session loop; consumed by the TUI.
 export type SessionEvent =
-  | { type: 'cycle_start';   cycleNum: number }
+  | { type: 'cycle_start';      cycleNum: number }
   | { type: 'cpe_invoke' }
-  | { type: 'cpe_response';  content: string; toolUses: ToolUseBlock[] }
-  | { type: 'token_update';  inputTokens: number; outputTokens: number; budgetPct: number }
-  | { type: 'tool_dispatch'; skillName: string; input: unknown }
-  | { type: 'tool_result';   skillName: string; result: ToolResult }
-  | { type: 'operator_msg';  content: string }
-  | { type: 'session_close'; reason: CloseReason }
-  | { type: 'error';         error: unknown }
+  | { type: 'cpe_response';     content: string; toolUses: ToolUseBlock[] }
+  | { type: 'token_update';     inputTokens: number; outputTokens: number; budgetPct: number }
+  | { type: 'tool_dispatch';    skillName: string; input: unknown }
+  | { type: 'tool_result';      skillName: string; result: ToolResult }
+  | { type: 'operator_msg';     content: string }
+  | { type: 'session_close';    reason: CloseReason }
+  | { type: 'error';            error: unknown }
+  | { type: 'workspace_update'; path: string }
 
 // Per-cycle bookkeeping; never escapes the loop module.
 export interface CycleState {
@@ -51,7 +53,7 @@ export interface SessionOptions {
   readonly logger:     Logger
   readonly io:         SessionIO
   readonly sessionId:  string
-  readonly profile:        'HACA-Core' | 'HACA-Evolve'
+  readonly profile:        Profile
   // Actual model context window in tokens (from CPEAdapter.contextWindow).
   readonly contextWindow:  number
   // Initial messages from boot context assembly (Phase 5).

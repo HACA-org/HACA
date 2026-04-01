@@ -34,6 +34,11 @@ export interface HeartbeatResult {
   readonly vitals:     ReadonlyArray<{ check: string } & VitalResult>
 }
 
+export interface Heartbeat {
+  shouldRun(cycleCount: number): Promise<boolean>
+  run(cycleCount: number, inputTokens: number, contextWindow: number): Promise<HeartbeatResult>
+}
+
 export interface EndureProposal {
   readonly id:          string
   readonly description: string

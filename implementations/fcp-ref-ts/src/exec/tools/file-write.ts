@@ -2,6 +2,8 @@
 // Gate: asks on first write of session (inside workspace) + always if outside workspace.
 import * as path from 'node:path'
 import { ensureDir, atomicWrite } from '../../store/io.js'
+
+const MAX_WRITE_BYTES = 10 * 1024 * 1024  // 10 MB
 import { resolveWorkspace, checkInsideWorkspace } from '../workspace.js'
 import { resolveToolApproval } from '../../session/approval.js'
 import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
@@ -34,7 +36,7 @@ export const fileWriteHandler: ToolHandler = {
     if (!workspace) return { ok: false, error: 'workspace_focus is not set' }
 
     const abs = path.isAbsolute(args.path) ? args.path : path.join(workspace, args.path)
-    const outsideWorkspace = checkInsideWorkspace(abs, workspace) !== null
+    const outsideWorkspace = await checkInsideWorkspace(abs, workspace) !== null
 
     if (outsideWorkspace) {
       // Outside workspace — always ask
@@ -55,6 +57,10 @@ export const fileWriteHandler: ToolHandler = {
       // 'session' → mark done so subsequent writes are silent
       // 'one-time' → don't mark done, next write will ask again
       if (decision.tier === 'session') ctx.firstWriteDone.value = true
+    }
+
+    if (Buffer.byteLength(args.content, 'utf8') > MAX_WRITE_BYTES) {
+      return { ok: false, error: `content too large (max ${MAX_WRITE_BYTES} bytes)` }
     }
 
     try {

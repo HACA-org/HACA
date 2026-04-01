@@ -7,7 +7,7 @@ import { fileExists, readJson, writeJson } from '../store/io.js'
 import type { Layout }            from '../types/store.js'
 import type { Baseline }          from '../types/formats/baseline.js'
 import type { Logger }            from '../types/logger.js'
-import type { VitalCheck, HeartbeatContext, HeartbeatResult } from '../types/sil.js'
+import type { VitalCheck, HeartbeatContext, HeartbeatResult, Heartbeat } from '../types/sil.js'
 
 const HeartbeatStateSchema = z.object({
   lastTs:     z.string().datetime(),
@@ -26,10 +26,7 @@ async function loadState(layout: Layout): Promise<HeartbeatState> {
   }
 }
 
-export interface Heartbeat {
-  shouldRun(cycleCount: number): Promise<boolean>
-  run(cycleCount: number, inputTokens: number, contextWindow: number): Promise<HeartbeatResult>
-}
+export type { Heartbeat } from '../types/sil.js'
 
 export function createHeartbeat(
   layout:   Layout,

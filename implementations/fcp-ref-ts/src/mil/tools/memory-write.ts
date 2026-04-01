@@ -37,7 +37,7 @@ export const memoryWriteHandler: ToolHandler = {
     try {
       const dirs = await fs.readdir(ctx.layout.memory.episodic, { withFileTypes: true })
       const sessionDir = dirs
-        .filter(d => d.isDirectory() && d.name.includes(sessionDirPrefix))
+        .filter(d => d.isDirectory() && d.name.endsWith(`-${sessionDirPrefix}`))
         .map(d => d.name)
         .sort()
         .at(-1)

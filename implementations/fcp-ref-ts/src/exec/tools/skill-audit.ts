@@ -5,7 +5,7 @@
 //           used by CPE to validate a skill before proposing skillInstall
 import * as path from 'node:path'
 import { fileExists, readJson } from '../../store/io.js'
-import { resolveWorkspace } from '../workspace.js'
+import { resolveWorkspace, checkInsideWorkspace } from '../workspace.js'
 import { SkillIndexSchema, SkillManifestSchema } from '../../types/formats/skills.js'
 import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
 
@@ -104,6 +104,8 @@ export const skillAuditHandler: ToolHandler = {
       if (!workspace) return { ok: false, error: 'workspace_focus is not set' }
 
       const absDir = path.isAbsolute(pathParam) ? pathParam : path.join(workspace, pathParam)
+      const outsideErr = await checkInsideWorkspace(absDir, workspace)
+      if (outsideErr) return { ok: false, error: `path is outside workspace_focus: ${absDir}` }
       const result = await auditSkillDir(absDir, ctx.logger)  // no skillName — manifest is source of truth
       if (!result.ok) return result
       return { ok: true, output: JSON.stringify(result.report, null, 2) }

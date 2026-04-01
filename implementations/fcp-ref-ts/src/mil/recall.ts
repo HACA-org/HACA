@@ -35,7 +35,7 @@ export async function recall(layout: Layout, query: string): Promise<RecallResul
   return { found: true, matches: matches.sort((a, b) => b.relevance - a.relevance) }
 }
 
-export function createMemoryStore(layout: Layout, sessionId: string, _logger: Logger): MemoryStore {
+export function createMemoryStore(layout: Layout, sessionId: string, logger: Logger): MemoryStore {
   return {
     recall: (query)          => recall(layout, query),
 
@@ -57,7 +57,7 @@ export function createMemoryStore(layout: Layout, sessionId: string, _logger: Lo
         try {
           const dirs = await fs.readdir(layout.memory.episodic, { withFileTypes: true })
           const sessionDir = dirs
-            .filter(d => d.isDirectory() && d.name.includes(sessionDirPrefix))
+            .filter(d => d.isDirectory() && d.name.endsWith(`-${sessionDirPrefix}`))
             .map(d => d.name)
             .sort()
             .at(-1)
@@ -66,6 +66,9 @@ export function createMemoryStore(layout: Layout, sessionId: string, _logger: Lo
             episodicContent = await fs.readFile(fp, 'utf8').catch(() => null)
           }
         } catch { /* episodic dir missing — fall through to placeholder */ }
+        if (episodicContent === null) {
+          logger.warn('mil:recall:promote_missing', { slug, sessionId })
+        }
         await writeSemantic(layout, slug, episodicContent ?? `# ${slug}\nPromoted from session ${sessionId}.`)
       }
     },

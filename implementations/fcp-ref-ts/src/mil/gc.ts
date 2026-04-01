@@ -4,7 +4,7 @@
 // Called by the sleep cycle orchestrator; only runs when compact was triggered.
 // Target: reduce session history to ~22% of model context window.
 import * as fs from 'node:fs/promises'
-import { fileExists } from '../store/io.js'
+import { fileExists, atomicWrite } from '../store/io.js'
 import type { Layout } from '../types/store.js'
 import type { Logger } from '../types/logger.js'
 
@@ -32,13 +32,18 @@ export async function compactSessionHistory(
   }
 
   const raw = await fs.readFile(layout.memory.sessionJsonl, 'utf8')
-  const lines = raw.split('\n').filter(l => l.trim() !== '')
+  // Normalize CRLF → LF before splitting
+  const lines = raw.replace(/\r\n/g, '\n').split('\n').filter(l => l.trim() !== '')
   const originalLines = lines.length
 
-  // Parse each line; skip unparseable ones
+  // Parse each line; log and skip corrupt ones
+  let corruptCount = 0
   const records: unknown[] = []
   for (const line of lines) {
-    try { records.push(JSON.parse(line)) } catch { /* skip corrupt lines */ }
+    try { records.push(JSON.parse(line)) } catch { corruptCount++ }
+  }
+  if (corruptCount > 0) {
+    logger.warn('mil:gc:corrupt_lines', { file: layout.memory.sessionJsonl, count: corruptCount })
   }
 
   // Derive how many message lines to keep.
@@ -52,10 +57,13 @@ export async function compactSessionHistory(
   const conversation = records.filter(r => !isBookkeeping(r))
 
   const kept = conversation.slice(-keepCount).map(truncateRecord)
-  const result = [...bookkeeping.slice(0, 1), ...kept]   // keep first bookkeeping entry (session_open)
+  // Keep first session_open + last session_close (if present) around the conversation
+  const sessionOpen  = bookkeeping.filter(r => (r as Record<string, unknown>)['type'] === 'session_open').slice(0, 1)
+  const sessionClose = bookkeeping.filter(r => (r as Record<string, unknown>)['type'] === 'session_close').slice(-1)
+  const result = [...sessionOpen, ...kept, ...sessionClose]
 
   const out = result.map(r => JSON.stringify(r)).join('\n') + '\n'
-  await fs.writeFile(layout.memory.sessionJsonl, out, 'utf8')
+  await atomicWrite(layout.memory.sessionJsonl, out)
 
   logger.info('mil:gc', { originalLines, keptLines: result.length, keepCount })
   return { originalLines, keptLines: result.length }

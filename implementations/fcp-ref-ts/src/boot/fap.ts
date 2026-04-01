@@ -111,8 +111,8 @@ export async function runFAP(opts: FAPOptions): Promise<FAPResult> {
     io.write('FAP 7/8: genesis omega')
     const imprintHash = sha256Digest(await fs.readFile(layout.memory.imprint))
     const genesis = { seq: 0, ts: now, type: 'genesis' as const, imprintHash, prevHash: null }
-    await appendJsonl(layout.state.integrityChain, genesis)
     created.push(layout.state.integrityChain)
+    await appendJsonl(layout.state.integrityChain, genesis)
     log.info('fap:step7:ok', { imprintHash })
 
     // ── Step 8: First Session Token ──────────────────────────────────────────
@@ -128,7 +128,11 @@ export async function runFAP(opts: FAPOptions): Promise<FAPResult> {
   } catch (err: unknown) {
     log.error('fap:failed — rolling back', { err: String(err) })
     for (const f of [...created].reverse()) {
-      await fs.unlink(f).catch(() => undefined)
+      try {
+        await fs.unlink(f)
+      } catch (unlinkErr: unknown) {
+        log.warn('fap:rollback:unlink_failed', { file: f, err: String(unlinkErr) })
+      }
     }
     if (err instanceof FAPError) return { ok: false, step: err.step, reason: err.message }
     return { ok: false, step: 0, reason: String(err) }

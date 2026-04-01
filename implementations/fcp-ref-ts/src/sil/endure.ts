@@ -65,19 +65,31 @@ export async function approveProposal(layout: Layout, id: string): Promise<boole
   return true
 }
 
+// ─── path safety ─────────────────────────────────────────────────────────────
+
+/** Resolve a relative path under root and assert no traversal escapes root. */
+function safeJoin(root: string, relPath: string): string {
+  const abs = path.resolve(root, relPath)
+  const rootNorm = root.endsWith(path.sep) ? root : root + path.sep
+  if (!abs.startsWith(rootNorm) && abs !== root) {
+    throw new Error(`Path traversal detected: "${relPath}" resolves outside entity root`)
+  }
+  return abs
+}
+
 // ─── op execution ─────────────────────────────────────────────────────────────
 
 async function executeOp(op: EvolutionOp, root: string, workspaceFocus: string, logger: Logger): Promise<void> {
   switch (op.type) {
     case 'fileWrite': {
-      const abs = path.join(root, op.path)
+      const abs = safeJoin(root, op.path)
       await ensureDir(path.dirname(abs))
       await atomicWrite(abs, op.content)
       break
     }
 
     case 'fileDelete': {
-      const abs = path.join(root, op.path)
+      const abs = safeJoin(root, op.path)
       await fs.unlink(abs).catch((e: NodeJS.ErrnoException) => {
         if (e.code !== 'ENOENT') throw e
       })
@@ -85,7 +97,7 @@ async function executeOp(op: EvolutionOp, root: string, workspaceFocus: string, 
     }
 
     case 'jsonMerge': {
-      const abs = path.join(root, op.path)
+      const abs = safeJoin(root, op.path)
       let existing: Record<string, unknown> = {}
       if (await fileExists(abs)) {
         try { existing = await readJson(abs) as Record<string, unknown> } catch { /* start empty */ }
@@ -97,6 +109,10 @@ async function executeOp(op: EvolutionOp, root: string, workspaceFocus: string, 
     }
 
     case 'skillInstall': {
+      // Validate skill name: only lowercase alphanumeric, hyphens, underscores
+      if (!/^[a-z][a-z0-9_-]*$/.test(op.name)) {
+        throw new Error(`skillInstall invalid name: "${op.name}"`)
+      }
       // Validate the staged skill before installing
       const stageDir = path.join(workspaceFocus, 'tmp', 'fcp-stage', op.name)
       const audit    = await auditSkillDir(stageDir, logger, op.name)

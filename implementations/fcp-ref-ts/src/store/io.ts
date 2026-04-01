@@ -82,12 +82,13 @@ export async function readJsonl(filePath: string): Promise<unknown[]> {
   }
   return content
     .split('\n')
-    .filter(line => line.trim().length > 0)
-    .map((line, i) => {
+    .map((line, i) => ({ line, lineNum: i + 1 }))
+    .filter(({ line }) => line.trim().length > 0)
+    .map(({ line, lineNum }) => {
       try {
         return JSON.parse(line) as unknown
       } catch (e: unknown) {
-        throw new IOError('read', filePath, `Malformed JSON at line ${i + 1}: ${filePath}`, e)
+        throw new IOError('read', filePath, `Malformed JSON at line ${lineNum}: ${filePath}`, e)
       }
     })
 }

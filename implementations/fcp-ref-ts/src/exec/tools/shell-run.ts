@@ -55,7 +55,7 @@ export const shellRunHandler: ToolHandler = {
     let cwd = workspace
     if (parsed.cwd) {
       const abs = path.isAbsolute(parsed.cwd) ? parsed.cwd : path.join(workspace, parsed.cwd)
-      const cwdErr = checkInsideWorkspace(abs, workspace)
+      const cwdErr = await checkInsideWorkspace(abs, workspace)
       if (cwdErr) {
         // cwd outside workspace — ask operator
         const decision = await resolveToolApproval(

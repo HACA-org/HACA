@@ -34,7 +34,7 @@ export const fileReadHandler: ToolHandler = {
     if (!workspace) return { ok: false, error: 'workspace_focus is not set' }
 
     const abs = path.isAbsolute(filePath) ? filePath : path.join(workspace, filePath)
-    const outsideWorkspace = checkInsideWorkspace(abs, workspace) !== null
+    const outsideWorkspace = await checkInsideWorkspace(abs, workspace) !== null
 
     if (outsideWorkspace) {
       const decision = await resolveToolApproval(

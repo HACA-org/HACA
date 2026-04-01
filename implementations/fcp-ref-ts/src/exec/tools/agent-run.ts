@@ -23,6 +23,19 @@ import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const MAX_OUT_BYTES      = 256 * 1024
+const MAX_ERR_BYTES      = 64 * 1024
+
+// Safe environment for skill scripts: only pass through non-sensitive vars.
+// Secrets like API keys, tokens, and credentials are never inherited.
+const SECRET_PATTERN = /(?:key|token|secret|password|passwd|credential|auth|apikey|access_key|private)/i
+
+function buildSkillEnv(input: string): NodeJS.ProcessEnv {
+  const safe: NodeJS.ProcessEnv = { FCP_SKILL_INPUT: input }
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!SECRET_PATTERN.test(k)) safe[k] = v
+  }
+  return safe
+}
 
 // Canonical persona injected for text-execution skills.
 // The agent receives the .md instructions and must execute them exactly.
@@ -53,14 +66,17 @@ async function runScript(
     let stderr = ''
     const child = spawn('node', [scriptPath], {
       cwd:   ctx.layout.root,
-      env:   { ...process.env, FCP_SKILL_INPUT: inputJson },
+      env:   buildSkillEnv(inputJson),
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf8')
       if (stdout.length > MAX_OUT_BYTES) child.kill('SIGTERM')
     })
-    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8')
+      if (stderr.length > MAX_ERR_BYTES) child.kill('SIGTERM')
+    })
     const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs)
     child.on('close', (code) => {
       clearTimeout(timer)
@@ -179,6 +195,16 @@ export const agentRunHandler: ToolHandler = {
     }
 
     const skillDir = path.join(ctx.layout.skills.dir, parsed.skill)
+
+    // Verify skill directory is actually inside skills/ (guards against symlink escape)
+    try {
+      const realSkillDir    = await fs.realpath(skillDir)
+      const realSkillsRoot  = await fs.realpath(ctx.layout.skills.dir)
+      const skillsNorm      = realSkillsRoot.endsWith(path.sep) ? realSkillsRoot : realSkillsRoot + path.sep
+      if (!realSkillDir.startsWith(skillsNorm)) {
+        return { ok: false, error: `skill directory resolves outside skills root: ${parsed.skill}` }
+      }
+    } catch { /* skill dir doesn't exist — will fail below */ }
 
     if (manifest.execution === 'text') {
       // text skills execute read-only inside the skill dir — gate already granted above is fine

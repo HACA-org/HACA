@@ -22,22 +22,34 @@ import type { EndureProposal } from '../../types/sil.js'
 // ─── scope classification ─────────────────────────────────────────────────────
 
 function opsRequiredScope(ops: EvolutionOp[]): {
-  needsEvolution: boolean
-  needsSkills:    boolean
+  needsEvolution:    boolean
+  needsSkills:       boolean
+  needsMemoryAccess: boolean
 } {
-  let needsEvolution = false
-  let needsSkills    = false
+  let needsEvolution    = false
+  let needsSkills       = false
+  let needsMemoryAccess = false
   for (const op of ops) {
-    if (op.type === 'skillInstall') needsSkills    = true
-    else                           needsEvolution = true
+    if (op.type === 'skillInstall') {
+      needsSkills = true
+    } else {
+      // fileWrite/fileDelete/jsonMerge targeting memory/ require operatorMemory scope
+      const p = 'path' in op ? op.path : ''
+      if (p.startsWith('memory/') || p === 'memory') {
+        needsMemoryAccess = true
+      } else {
+        needsEvolution = true
+      }
+    }
   }
-  return { needsEvolution, needsSkills }
+  return { needsEvolution, needsSkills, needsMemoryAccess }
 }
 
 function scopeCoversOps(scope: AuthorizationScope, ops: EvolutionOp[]): boolean {
-  const { needsEvolution, needsSkills } = opsRequiredScope(ops)
-  if (needsEvolution && !scope.autonomousEvolution) return false
-  if (needsSkills    && !scope.autonomousSkills)    return false
+  const { needsEvolution, needsSkills, needsMemoryAccess } = opsRequiredScope(ops)
+  if (needsEvolution    && !scope.autonomousEvolution) return false
+  if (needsSkills       && !scope.autonomousSkills)    return false
+  if (needsMemoryAccess && !scope.operatorMemory)      return false
   if (scope.renewalDays > 0) {
     const grantedMs  = new Date(scope.grantedAt).getTime()
     const expiresMs  = grantedMs + scope.renewalDays * 86_400_000

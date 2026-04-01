@@ -1,10 +1,8 @@
 // fcp run — boot entity, run session loop, run sleep cycle.
 // Wires: startEntity → runSessionLoop → runSleepCycle.
-// TUI (Fase 9) replaces the inline stdin/stdout IO.
+// TTY: full TUI with scroll region + fixed bar. Non-TTY: plain line I/O.
 import * as path from 'node:path'
-import * as os from 'node:os'
 import * as fs from 'node:fs/promises'
-import { existsSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import type { Command } from 'commander'
 import { createLayout } from '../../types/store.js'
@@ -23,38 +21,11 @@ import { runSessionLoop }    from '../../session/loop.js'
 import { runSleepCycle }     from '../../session/sleep.js'
 import type { SessionIO, SessionEvent } from '../../types/session.js'
 import { CLIError } from '../../types/cli.js'
+import { resolveEntityRoot } from '../entity.js'
+import { createTUI, SessionCloseSignal } from '../../tui/tui.js'
 
-const FCP_HOME     = path.join(os.homedir(), '.fcp')
-const ENTITIES_DIR = path.join(FCP_HOME, 'entities')
-const DEFAULT_FILE = path.join(FCP_HOME, 'default')
+// ─── Non-TTY fallback IO ──────────────────────────────────────────────────────
 
-async function resolveEntityRoot(entityId?: string): Promise<string> {
-  if (entityId) {
-    const root = path.join(ENTITIES_DIR, entityId)
-    if (!existsSync(root)) throw new CLIError(`Entity not found: ${entityId}`, 1)
-    return root
-  }
-
-  if (existsSync(DEFAULT_FILE)) {
-    const id = (await fs.readFile(DEFAULT_FILE, 'utf8')).trim()
-    if (id) {
-      const root = path.join(ENTITIES_DIR, id)
-      if (existsSync(root)) return root
-    }
-  }
-
-  // Single entity fallback
-  if (existsSync(ENTITIES_DIR)) {
-    const entries = await fs.readdir(ENTITIES_DIR, { withFileTypes: true })
-    const dirs = entries.filter(e => e.isDirectory())
-    if (dirs.length === 1) return path.join(ENTITIES_DIR, dirs[0]!.name)
-  }
-
-  throw new CLIError('No entity found. Run `fcp init` to create one.', 1)
-}
-
-// Single readline instance shared across BootIO (FAP prompts) and SessionIO (operator input).
-// Prevents multiple listeners on stdin and ensures clean close at the end.
 function makeSharedRL() {
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false })
   const lineQueue: string[] = []
@@ -114,6 +85,8 @@ function makeConsoleIO(nextLine: () => Promise<string>): SessionIO {
   }
 }
 
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
 async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<void> {
   const entityRoot = await resolveEntityRoot(opts.entity)
   const layout     = createLayout(entityRoot)
@@ -126,11 +99,19 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
   const baselineRaw = await readJson(layout.state.baseline)
   const baseline    = parseBaseline(baselineRaw)
 
-  // Single readline for the entire lifecycle: FAP prompts + session input + proposal gate.
-  const { rl, nextLine } = makeSharedRL()
+  const useTUI = process.stdout.isTTY === true
+
+  // Non-TTY: shared readline for the entire lifecycle
+  const shared = useTUI ? null : makeSharedRL()
+  const nextLine = shared?.nextLine ?? (() => Promise.resolve(''))
 
   try {
-    const bootIO = makeBootIO(nextLine)
+    // ── Boot ──────────────────────────────────────────────────────────────────
+    const bootIO = useTUI
+      ? { write: (msg: string) => process.stdout.write(msg + '\n'),
+          prompt: async (q: string) => { process.stdout.write(q); return '' } }
+      : makeBootIO(nextLine)
+
     const bootResult = await startEntity({ layout, logger, io: bootIO, sleepCycle: runSleepCycle })
 
     if (!bootResult.ok) {
@@ -148,27 +129,56 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
     ]
     const profile = baseline.cpe.topology === 'opaque' ? 'HACA-Evolve' : 'HACA-Core'
 
-    process.stdout.write(`FCP — ${profile} — session ${sessionId}\n`)
-    process.stdout.write('Type your message and press Enter. Ctrl-C to force exit.\n\n')
+    // ── IO: TUI or console ────────────────────────────────────────────────────
+    let io: SessionIO
+    let teardown: (() => void) | null = null
 
-    const result = await runSessionLoop({
-      layout, baseline, cpe, policy, tools, logger,
-      io:            makeConsoleIO(nextLine),
-      sessionId,
-      profile,
-      contextWindow: cpe.contextWindow,
-      ...(contextMessages ? { contextMessages } : {}),
-    })
+    if (useTUI) {
+      const tui = createTUI({
+        sessionId,
+        profile,
+        contextWindow: cpe.contextWindow,
+        provider:      cpe.provider,
+        model:         cpe.model,
+        fcpVersion:    '1.0.0',
+      })
+      io       = tui
+      teardown = () => tui.teardown()
+    } else {
+      process.stdout.write(`FCP — ${profile} — session ${sessionId}\n`)
+      process.stdout.write('Type your message and press Enter. Ctrl-C to force exit.\n\n')
+      io = makeConsoleIO(nextLine)
+    }
+
+    // ── Session loop ──────────────────────────────────────────────────────────
+    let result: Awaited<ReturnType<typeof runSessionLoop>>
+    try {
+      result = await runSessionLoop({
+        layout, baseline, cpe, policy, tools, logger,
+        io,
+        sessionId,
+        profile,
+        contextWindow: cpe.contextWindow,
+        ...(contextMessages ? { contextMessages } : {}),
+      })
+    } catch (e) {
+      if (e instanceof SessionCloseSignal) {
+        // Operator used /exit — treat as normal close
+        teardown?.()
+        return
+      }
+      throw e
+    } finally {
+      teardown?.()
+    }
 
     // ── HACA-Core: present pending proposals for Operator approval ────────────
-    // HACA-Evolve proposals are auto-approved at queue time; skip the gate.
-    // This gate runs synchronously on the terminal before the sleep cycle starts.
     if (!baseline.authorizationScope) {
       const pending = await readPendingProposals(layout)
       if (pending.length > 0) {
         process.stdout.write(`\n── Evolution Proposals (${pending.length}) ──\n`)
         for (const proposal of pending) {
-          if (proposal.approvedAt) continue  // already approved in prior session
+          if (proposal.approvedAt) continue
           process.stdout.write(`\nProposal ${proposal.id}\n`)
           process.stdout.write(`  ${proposal.description}\n`)
           process.stdout.write(`  Ops (${proposal.ops.length}): ${proposal.ops.map(o => o.type).join(', ')}\n`)
@@ -199,7 +209,7 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
       ...(result.closed === 'normal' ? { closurePayload: result.closurePayload } : {}),
     })
   } finally {
-    rl.close()
+    shared?.rl.close()
   }
 }
 
