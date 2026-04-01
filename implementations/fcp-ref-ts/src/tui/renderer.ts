@@ -69,6 +69,20 @@ export const C_YELLOW  = 33
 export const C_RED     = 31
 export const C_MAGENTA = 35
 
+// ─── Scroll region (DECSTBM) ──────────────────────────────────────────────────
+
+export function setScrollRegion(top: number, bottom: number): string {
+  return `${ESC}[${top};${bottom}r`
+}
+
+export function resetScrollRegion(): string {
+  return `${ESC}[r`
+}
+
+export function scrollUp(n = 1): string {
+  return `${ESC}[${n}S`
+}
+
 // Write a line at a specific row, truncated to terminal width.
 export function writeLine(out: Output, row: number, text: string, col = 1): void {
   const maxLen = out.columns - col + 1

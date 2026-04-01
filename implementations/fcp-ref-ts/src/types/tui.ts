@@ -17,30 +17,94 @@ export interface AppMessage {
   readonly ts:      string
 }
 
+// ─── Dynamic area ─────────────────────────────────────────────────────────────
+
+export type DynamicContentType =
+  | 'slash-autocomplete'
+  | 'slash-result'
+  | 'approval'
+  | 'notification'
+  | 'file-scope'
+  | 'info'
+
+export interface DynamicContent {
+  readonly type:       DynamicContentType
+  readonly lines:      string[]      // max 5 lines
+  readonly expiresAt?: number        // Date.now() + ttlMs; undefined = manual clear
+}
+
+// ─── Footer ───────────────────────────────────────────────────────────────────
+
+export interface FooterData {
+  readonly workspace:    string
+  readonly provider:     string
+  readonly model:        string
+  readonly cycleNum:     number
+  readonly inputTokens:  number
+  readonly outputTokens: number
+  readonly contextPct:   number      // budgetPct 0-100
+  readonly sessionTime:  string      // formatted elapsed "5m 32s"
+  readonly sessionId:    string
+  readonly profile:      Profile
+  readonly fcpVersion:   string
+  readonly status:       TUIStatus
+}
+
+// ─── App state ────────────────────────────────────────────────────────────────
+
 export interface AppState {
   readonly status:        TUIStatus
   readonly sessionId:     string
   readonly cycleCount:    number
   readonly inputTokens:   number
   readonly outputTokens:  number
-  readonly contextWindow: number   // model context window; 0 = unknown
-  readonly budgetPct:     number   // 0-100, relative to contextWindow * 0.95
+  readonly contextWindow: number     // model context window; 0 = unknown
+  readonly budgetPct:     number     // 0-100, relative to contextWindow * 0.95
   readonly profile:       Profile
   readonly messages:      AppMessage[]
+
+  // Extended fields for the new TUI footer/dynamic area
+  readonly provider:      string     // e.g. "anthropic"
+  readonly model:         string     // e.g. "claude-sonnet-4-20250514"
+  readonly workspace:     string     // workspace_focus path or ""
+  readonly fcpVersion:    string     // from package.json
+  readonly sessionStart:  number     // Date.now() at session start
 }
 
-export function initialAppState(sessionId: string, profile: Profile, contextWindow: number): AppState {
+export interface TUIInitOptions {
+  readonly sessionId:     string
+  readonly profile:       Profile
+  readonly contextWindow: number
+  readonly provider?:     string
+  readonly model?:        string
+  readonly workspace?:    string
+  readonly fcpVersion?:   string
+}
+
+export function initialAppState(opts: TUIInitOptions): AppState {
   return {
     status:        'idle',
-    sessionId,
+    sessionId:     opts.sessionId,
     cycleCount:    0,
     inputTokens:   0,
     outputTokens:  0,
-    contextWindow,
+    contextWindow: opts.contextWindow,
     budgetPct:     0,
-    profile,
+    profile:       opts.profile,
     messages:      [],
+    provider:      opts.provider   ?? '',
+    model:         opts.model      ?? '',
+    workspace:     opts.workspace  ?? '',
+    fcpVersion:    opts.fcpVersion ?? '',
+    sessionStart:  Date.now(),
   }
+}
+
+// Backwards-compatible overload for existing call sites and tests.
+export function initialAppStateLegacy(
+  sessionId: string, profile: Profile, contextWindow: number,
+): AppState {
+  return initialAppState({ sessionId, profile, contextWindow })
 }
 
 export function applyEvent(state: AppState, event: SessionEvent): AppState {
@@ -82,5 +146,7 @@ export function applyEvent(state: AppState, event: SessionEvent): AppState {
       return { ...state, status: 'closing' }
     case 'error':
       return { ...state, status: 'idle' }
+    case 'workspace_update':
+      return { ...state, workspace: event.path }
   }
 }
