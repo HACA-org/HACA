@@ -1,16 +1,11 @@
-// Fixed bar — renders the 9-row zone pinned at the bottom of the terminal:
-// separator, input, separator, footer, dynamic (5 lines).
-// All writes use absolute cursor positioning (outside the scroll region).
+// Footer data formatting — pure functions that produce styled strings.
+// No terminal positioning or rendering — blessed handles that.
 import chalk from 'chalk'
-import type { Output } from './renderer.js'
-import type { TUILayout } from './layout.js'
 import type { FooterData } from '../types/tui.js'
-import { moveTo, eraseLine } from './renderer.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 // Strip ANSI escape sequences to compute visible string length.
-// Covers: CSI sequences (colors, styles, cursor), OSC, and other common escapes.
 export function stripped(s: string): string {
   // eslint-disable-next-line no-control-regex
   return s.replace(/\x1b(?:\[[0-9;]*[A-Za-z]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[^[\]])/g, '')
@@ -34,8 +29,6 @@ export function formatElapsed(startMs: number): string {
 }
 
 function shortenModel(model: string): string {
-  // "claude-sonnet-4-20250514" → "sonnet-4"
-  // "gpt-4o-2024-08-06" → "gpt-4o"
   return model.replace(/^claude-/, '').replace(/-\d{8}$/, '')
 }
 
@@ -49,17 +42,14 @@ function shortenWorkspace(ws: string): string {
 // ─── Footer line composition ──────────────────────────────────────────────────
 
 export function formatFooter(data: FooterData, cols: number): string {
-  // Build segments from left to right; drop rightmost if too wide.
   const segments: string[] = [
-    chalk.dim('ws:') + chalk.cyan(shortenWorkspace(data.workspace)),
-    chalk.dim(data.provider + ':') + chalk.white(shortenModel(data.model)),
-    chalk.dim('#') + String(data.cycleNum),
-    chalk.dim('↑') + fmtK(data.inputTokens) + chalk.dim(' ↓') + fmtK(data.outputTokens),
-    budgetColor(data.contextPct, `${data.contextPct}%`),
-    chalk.dim(data.sessionTime),
-    chalk.dim(data.sessionId.slice(0, 8)),
-    data.profile === 'HACA-Evolve' ? chalk.cyan('Evolve') : chalk.green('Core'),
-    chalk.dim('FCP ' + data.fcpVersion),
+    chalk.dim('ws: ') + chalk.cyan(shortenWorkspace(data.workspace)),
+    chalk.white(data.provider + ':' + shortenModel(data.model)),
+    chalk.dim('cycle: ') + chalk.white(String(data.cycleNum)),
+    chalk.dim('in: ') + chalk.white(fmtK(data.inputTokens)) + chalk.dim(' / out: ') + chalk.white(fmtK(data.outputTokens)),
+    chalk.dim('ctx: ') + budgetColor(data.contextPct, `${data.contextPct}%`),
+    chalk.dim('time: ') + chalk.white(data.sessionTime),
+    chalk.dim('session: ') + chalk.white(data.sessionId.slice(0, 8)),
   ]
 
   const sep = chalk.dim(' │ ')
@@ -68,64 +58,9 @@ export function formatFooter(data: FooterData, cols: number): string {
   for (let i = 0; i < segments.length; i++) {
     const part = (i > 0 ? sep : ' ') + segments[i]!
     const partVis = stripped(part).length
-    if (visLen + partVis > cols - 1) break  // drop if would overflow
+    if (visLen + partVis > cols - 1) break
     line += part
     visLen += partVis
   }
   return line
-}
-
-// ─── Rendering ────────────────────────────────────────────────────────────────
-
-function renderSeparator(out: Output, row: number, cols: number): void {
-  out.write(moveTo(row, 1) + eraseLine() + chalk.dim('─'.repeat(cols)))
-}
-
-export function renderInputRow(
-  out: Output, row: number, inputText: string, label = '> ',
-): void {
-  out.write(moveTo(row, 1) + eraseLine() + chalk.bold(label) + inputText)
-}
-
-export function renderFooterRow(
-  out: Output, row: number, data: FooterData, cols: number,
-): void {
-  out.write(moveTo(row, 1) + eraseLine() + formatFooter(data, cols))
-}
-
-export function renderDynamicArea(
-  out: Output, startRow: number, lines: string[], cols: number,
-): void {
-  for (let i = 0; i < 5; i++) {
-    out.write(moveTo(startRow + i, 1) + eraseLine())
-    const line = lines[i]
-    if (line) {
-      const vis = stripped(line)
-      out.write(vis.length > cols ? line.slice(0, cols - 1) + '…' : line)
-    }
-  }
-}
-
-// Render the entire fixed bar (9 rows).
-export function renderFixedBar(
-  out: Output,
-  layout: TUILayout,
-  footer: FooterData,
-  inputText: string,
-  dynamicLines: string[],
-  inputLabel?: string,
-): void {
-  renderSeparator(out, layout.sepAboveInput, layout.columns)
-  renderInputRow(out, layout.inputRow, inputText, inputLabel)
-  renderSeparator(out, layout.sepBelowInput, layout.columns)
-  renderFooterRow(out, layout.footerRow, footer, layout.columns)
-  renderDynamicArea(out, layout.dynamicStart, dynamicLines, layout.columns)
-}
-
-// Position cursor at the end of the input text (for live typing).
-export function positionInputCursor(
-  out: Output, inputRow: number, inputText: string, label = '> ',
-): void {
-  const col = stripped(label).length + inputText.length + 1
-  out.write(moveTo(inputRow, col))
 }

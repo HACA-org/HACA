@@ -1,117 +1,11 @@
-// TUI unit tests — renderer primitives, layout, format, fixed-bar, dynamic, slash, applyEvent.
+// TUI unit tests — format, fixed-bar helpers, dynamic, slash, applyEvent.
+// Blessed rendering is not unit-tested here (requires a real TTY).
 import { describe, it, expect } from 'vitest'
-import { moveTo, eraseToEOL, bold, dim, color, C_CYAN, writeLine,
-         setScrollRegion, resetScrollRegion } from './renderer.js'
-import { computeLayout, chatLines, MIN_ROWS } from './layout.js'
 import { initialAppState, applyEvent } from '../types/tui.js'
-import type { Output } from './renderer.js'
 import { DynamicArea } from './dynamic.js'
 import { dispatch, matchPrefix, autocomplete } from './slash.js'
 import { formatElapsed, fmtK, budgetColor, stripped, formatFooter } from './fixed-bar.js'
 import { formatAssistant, formatOperator, formatToolUse, formatSystem } from './format.js'
-import { appendLine } from './scroll-writer.js'
-
-function makeOutput(cols: number, rows: number): Output & { written: string[] } {
-  const written: string[] = []
-  return {
-    write: (s) => { written.push(s) },
-    get columns() { return cols },
-    get rows()    { return rows },
-    written,
-  }
-}
-
-// ─── Renderer primitives ──────────────────────────────────────────────────────
-
-describe('TUI — renderer', () => {
-  it('moveTo generates correct escape sequence', () => {
-    expect(moveTo(5, 10)).toBe('\x1b[5;10H')
-  })
-
-  it('eraseToEOL generates correct escape sequence', () => {
-    expect(eraseToEOL()).toBe('\x1b[K')
-  })
-
-  it('bold wraps text in ANSI bold codes', () => {
-    const result = bold('hello')
-    expect(result).toMatch(/hello/)
-    expect(result).toMatch(/\x1b\[1m/)
-  })
-
-  it('dim wraps text in ANSI dim codes', () => {
-    const result = dim('hello')
-    expect(result).toMatch(/hello/)
-  })
-
-  it('color wraps text in ANSI color codes', () => {
-    expect(color('hi', C_CYAN)).toContain('36m')
-  })
-
-  it('writeLine truncates long text', () => {
-    const out = makeOutput(20, 10)
-    writeLine(out, 1, 'This is a very long string that exceeds width')
-    const joined = out.written.join('')
-    expect(joined).toContain('…')
-  })
-
-  it('setScrollRegion generates DECSTBM sequence', () => {
-    expect(setScrollRegion(1, 15)).toBe('\x1b[1;15r')
-  })
-
-  it('resetScrollRegion generates reset sequence', () => {
-    expect(resetScrollRegion()).toBe('\x1b[r')
-  })
-})
-
-// ─── Layout ───────────────────────────────────────────────────────────────────
-
-describe('TUI — layout', () => {
-  it('computeLayout allocates 9 fixed rows at bottom', () => {
-    const out    = makeOutput(80, 24)
-    const layout = computeLayout(out)
-    expect(layout.scrollTop).toBe(1)
-    expect(layout.scrollBottom).toBe(15)    // 24 - 9
-    expect(layout.sepAboveInput).toBe(16)   // 24 - 8
-    expect(layout.inputRow).toBe(17)        // 24 - 7
-    expect(layout.sepBelowInput).toBe(18)   // 24 - 6
-    expect(layout.footerRow).toBe(19)       // 24 - 5
-    expect(layout.dynamicStart).toBe(20)    // 24 - 4
-    expect(layout.dynamicEnd).toBe(24)      // 24
-  })
-
-  it('chatLines returns scroll region height', () => {
-    const out    = makeOutput(80, 24)
-    const layout = computeLayout(out)
-    expect(chatLines(layout)).toBe(15)      // scrollBottom - scrollTop + 1
-  })
-
-  it('enforces minimum dimensions', () => {
-    const out    = makeOutput(10, 10)
-    const layout = computeLayout(out)
-    expect(layout.rows).toBeGreaterThanOrEqual(MIN_ROWS)
-    expect(layout.scrollBottom).toBeGreaterThan(0)
-  })
-
-  it('dynamic area has exactly 5 rows', () => {
-    const out    = makeOutput(80, 30)
-    const layout = computeLayout(out)
-    expect(layout.dynamicEnd - layout.dynamicStart + 1).toBe(5)
-  })
-})
-
-// ─── Scroll writer ───────────────────────────────────────────────────────────
-
-describe('TUI — scroll-writer', () => {
-  it('appendLine emits moveTo + newline + eraseLine + content', () => {
-    const out = makeOutput(80, 24)
-    appendLine(out, 15, 'Hello world')
-    const joined = out.written.join('')
-    expect(joined).toContain('\x1b[15;1H')   // moveTo(15,1)
-    expect(joined).toContain('\n')
-    expect(joined).toContain('\x1b[2K')      // eraseLine
-    expect(joined).toContain('Hello world')
-  })
-})
 
 // ─── Format ───────────────────────────────────────────────────────────────────
 
@@ -188,14 +82,13 @@ describe('TUI — fixed-bar', () => {
       profile: 'HACA-Core',
       fcpVersion: '1.0.0',
       status: 'thinking',
-    }, 120)
+    }, 140)
     const vis = stripped(footer)
-    expect(vis).toContain('anthropic')
-    expect(vis).toContain('#3')
-    expect(vis).toContain('12.0k')
-    expect(vis).toContain('42%')
-    expect(vis).toContain('a1b2c3d4')
-    expect(vis).toContain('Core')
+    expect(vis).toContain('anthropic:')
+    expect(vis).toContain('cycle: 3')
+    expect(vis).toContain('in: 12.0k')
+    expect(vis).toContain('ctx: 42%')
+    expect(vis).toContain('session: a1b2c3d4')
   })
 
   it('formatFooter truncates on narrow terminals', () => {
@@ -247,7 +140,6 @@ describe('TUI — dynamic', () => {
   it('auto-expires content with ttl', () => {
     const area = new DynamicArea()
     area.set('notification', ['expiring'], 1) // 1ms TTL
-    // Wait for expiry
     const start = Date.now()
     while (Date.now() - start < 5) { /* spin */ }
     expect(area.lines().every(l => l === '')).toBe(true)

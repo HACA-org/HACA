@@ -14,7 +14,7 @@ export const AuthorizationScopeSchema = z.object({
 
 export const OperatorBoundSchema = z.object({
   operatorName:  z.string().min(1),
-  operatorEmail: z.string().email(),
+  operatorEmail: z.string().min(1),
   operatorHash:  z.string().startsWith('sha256:'),
 })
 

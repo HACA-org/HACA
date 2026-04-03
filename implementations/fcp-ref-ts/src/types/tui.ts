@@ -79,6 +79,7 @@ export interface TUIInitOptions {
   readonly model?:        string
   readonly workspace?:    string
   readonly fcpVersion?:   string
+  readonly headerLines?:  string[]   // lines to render at top of scroll region on init
 }
 
 export function initialAppState(opts: TUIInitOptions): AppState {

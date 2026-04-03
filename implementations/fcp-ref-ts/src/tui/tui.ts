@@ -1,42 +1,186 @@
-// TUI orchestrator — implements SessionIO with DECSTBM scroll region + fixed bottom bar.
-// Scroll region (rows 1..R-9): natural terminal scrolling with scrollback.
-// Fixed bar (9 rows): separator, input, separator, footer, dynamic (5 lines).
+// TUI orchestrator — blessed-based fullscreen terminal UI.
+//
+// Layout:
+//   ┌─────────────────────────────┐
+//   │ chatLog (blessed.log)       │  scrollable, mouse scroll, auto-scroll
+//   │ ...messages...              │
+//   ├─────────────────────────────┤
+//   │ ─ separator ─               │  1 row
+//   ├─────────────────────────────┤
+//   │ > input (blessed.textbox)   │  1 row
+//   ├─────────────────────────────┤
+//   │ footer (blessed.box)        │  1 row, key:value
+//   ├─────────────────────────────┤
+//   │ dynamic (blessed.box)       │  5 rows — slash, scope, notifications
+//   └─────────────────────────────┘
+//
+// Resize is handled automatically by blessed's screen.render().
+import blessed from 'neo-blessed'
+import type { Widgets } from 'blessed'
 import type { SessionIO, SessionEvent } from '../types/session.js'
 import type { TUIInitOptions } from '../types/tui.js'
 import { applyEvent, initialAppState } from '../types/tui.js'
 import type { AppState, FooterData } from '../types/tui.js'
-import {
-  makeStdoutOutput, eraseScreen, moveTo, hideCursor, showCursor,
-  setScrollRegion, resetScrollRegion,
-} from './renderer.js'
-import { computeLayout, MIN_ROWS } from './layout.js'
-import type { TUILayout } from './layout.js'
-import { appendLines } from './scroll-writer.js'
-import {
-  renderFixedBar, positionInputCursor, formatElapsed,
-} from './fixed-bar.js'
+import { formatFooter, formatElapsed } from './fixed-bar.js'
 import { formatAssistant, formatOperator, formatToolUse, formatToolResult, formatSystem } from './format.js'
-import { DynamicArea } from './dynamic.js'
 import { dispatch, autocomplete, matchPrefix } from './slash.js'
 import type { SlashResult } from './slash.js'
-import { TUIInput } from './input.js'
+import { DynamicArea } from './dynamic.js'
 
 export type { TUIInitOptions as TUIOptions }
 
-// Signal thrown when a slash command requests session close.
 export class SessionCloseSignal {
   constructor(public readonly reason: 'normal' | 'operator_forced') {}
 }
 
 export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void } {
-  const out     = makeStdoutOutput()
-  let   state   = initialAppState(opts)
-  let   input:  TUIInput | null = null
-  const dynamic = new DynamicArea()
-  let   layout  = computeLayout(out)
-  let   inputLabel = '> '
+  let state = initialAppState(opts)
+  const dynamicArea = new DynamicArea()
 
-  const isTTY = process.stdout.isTTY && out.rows >= MIN_ROWS
+  const isTTY = process.stdout.isTTY === true
+
+  // ── Non-TTY fallback ────────────────────────────────────────────────────────
+
+  if (!isTTY) {
+    return {
+      async prompt(): Promise<string> {
+        return new Promise(resolve => {
+          process.stdout.write('> ')
+          process.stdin.once('data', (d: Buffer) => resolve(d.toString().trim()))
+        })
+      },
+      write(text: string): void {
+        process.stdout.write(text + '\n')
+      },
+      emit(event: SessionEvent): void {
+        state = applyEvent(state, event)
+        switch (event.type) {
+          case 'cpe_response':
+            if (event.content) process.stdout.write('Agent: ' + event.content + '\n')
+            break
+          case 'operator_msg':
+            // Already echoed by the prompt — no duplication needed
+            break
+          case 'tool_dispatch':
+            process.stdout.write(`[tool] ${event.skillName}\n`)
+            break
+          case 'tool_result': {
+            const ok = event.result.ok
+            const out = ok ? event.result.output : event.result.error
+            const short = out.length > 120 ? out.slice(0, 117) + '...' : out
+            process.stdout.write(`  ${event.skillName}: ${ok ? 'ok' : 'error'}${short ? ' — ' + short : ''}\n`)
+            break
+          }
+          case 'error': {
+            const msg = event.error instanceof Error ? event.error.message : String(event.error)
+            process.stdout.write(`[error] ${msg}\n`)
+            break
+          }
+          case 'session_close':
+            process.stdout.write(`[closed: ${event.reason}]\n`)
+            break
+          default:
+            // token_update, cycle_start, cpe_invoke, workspace_update — silent in non-TTY
+            break
+        }
+      },
+      teardown(): void { /* noop */ },
+    }
+  }
+
+  // ── Blessed screen ──────────────────────────────────────────────────────────
+
+  const DYNAMIC_LINES = 5
+  const FIXED_BOTTOM = 1 + 1 + 1 + DYNAMIC_LINES  // separator + input + footer + dynamic = 8
+
+  const screen = blessed.screen({
+    smartCSR: true,
+    fullUnicode: true,
+    title: 'FCP',
+  })
+
+  // Chat log — scrollable area filling most of the screen
+  const chatLog = blessed.log({
+    parent: screen,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: FIXED_BOTTOM,
+    tags: false,
+    scrollable: true,
+    alwaysScroll: true,
+    mouse: true,
+    scrollbar: {
+      style: { bg: 'grey' },
+    },
+    style: {
+      fg: 'white',
+    },
+  }) as Widgets.Log
+
+  // Separator line
+  const separatorBox = blessed.box({
+    parent: screen,
+    bottom: FIXED_BOTTOM - 1,  // 7
+    left: 0,
+    right: 0,
+    height: 1,
+    tags: false,
+    style: {
+      fg: 'grey',
+    },
+  })
+
+  // Input row — we manage text manually via key events for reliability
+  const inputRow = blessed.box({
+    parent: screen,
+    bottom: 1 + DYNAMIC_LINES,  // 6
+    left: 0,
+    right: 0,
+    height: 1,
+    tags: false,
+    style: {
+      fg: 'white',
+      bold: true,
+    },
+  })
+
+  // Footer — 1 row
+  const footerBox = blessed.box({
+    parent: screen,
+    bottom: DYNAMIC_LINES,  // 5
+    left: 0,
+    right: 0,
+    height: 1,
+    tags: false,
+    style: {
+      fg: 'white',
+    },
+  })
+
+  // Dynamic area — 5 rows at very bottom
+  const dynamicBox = blessed.box({
+    parent: screen,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: DYNAMIC_LINES,
+    tags: false,
+    style: {
+      fg: 'white',
+    },
+  })
+
+  // ── Manual input state ───────────────────────────────────────────────────
+  let inputBuffer = ''
+  let inputActive = false
+  let inputResolve: ((value: string) => void) | null = null
+  let inputReject: ((err: unknown) => void) | null = null
+
+  function refreshInput(): void {
+    inputRow.setContent(`> ${inputBuffer}█`)
+    screen.render()
+  }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -57,135 +201,197 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
     }
   }
 
-  function refreshBar(currentInput = ''): void {
-    renderFixedBar(out, layout, footerData(), currentInput, dynamic.lines(), inputLabel)
-    positionInputCursor(out, layout.inputRow, currentInput, inputLabel)
-    out.write(showCursor())
+  function refreshFooter(): void {
+    const cols = (screen as { width?: number }).width as number || 80
+    footerBox.setContent(formatFooter(footerData(), cols))
+    screen.render()
+  }
+
+  function refreshSeparator(): void {
+    const cols = (screen as { width?: number }).width as number || 80
+    separatorBox.setContent('─'.repeat(cols))
+  }
+
+  function refreshDynamic(): void {
+    const lines = dynamicArea.lines()
+    dynamicBox.setContent(lines.join('\n'))
+    screen.render()
   }
 
   function chatAppend(lines: string[]): void {
-    if (!isTTY) return
-    out.write(hideCursor())
-    appendLines(out, layout.scrollBottom, lines)
-    refreshBar(input?.current ?? '')
+    for (const line of lines) {
+      chatLog.log(line)
+    }
+    refreshFooter()
   }
 
   // ── Initialization ──────────────────────────────────────────────────────────
 
-  function initScreen(): void {
-    out.write(hideCursor())
-    out.write(eraseScreen())
-    out.write(moveTo(1, 1))
-    out.write(setScrollRegion(layout.scrollTop, layout.scrollBottom))
-    out.write(moveTo(layout.scrollBottom, 1))
-    refreshBar('')
+  // Render header lines
+  if (opts.headerLines && opts.headerLines.length > 0) {
+    for (const line of opts.headerLines) {
+      chatLog.log(line)
+    }
+    chatLog.log('')  // spacing after header
   }
 
-  if (isTTY) {
-    initScreen()
-    process.stdout.on('resize', () => {
-      layout = computeLayout(out)
-      out.write(resetScrollRegion())
-      out.write(eraseScreen())
-      out.write(setScrollRegion(layout.scrollTop, layout.scrollBottom))
-      refreshBar(input?.current ?? '')
+  // Ctrl-C to exit
+  screen.key(['C-c'], () => {
+    screen.destroy()
+    process.exit(0)
+  })
+
+  refreshSeparator()
+  refreshFooter()
+  refreshDynamic()
+
+  // Refresh separator on resize
+  screen.on('resize', () => {
+    refreshSeparator()
+    refreshFooter()
+    refreshDynamic()
+    if (inputActive) refreshInput()
+  })
+
+  // ── Input handling via raw key events ────────────────────────────────────
+
+  function handleSlashAutocomplete(): void {
+    if (inputBuffer.startsWith('/')) {
+      const suggestions = autocomplete(inputBuffer)
+      if (suggestions.length > 0) {
+        dynamicArea.set('slash-autocomplete', suggestions)
+      } else {
+        dynamicArea.clear()
+      }
+      refreshDynamic()
+    } else if (dynamicArea.currentType === 'slash-autocomplete') {
+      dynamicArea.clear()
+      refreshDynamic()
+    }
+  }
+
+  async function handleSubmit(): Promise<void> {
+    const raw = inputBuffer.trim()
+    inputBuffer = ''
+    inputActive = false  // prevent double-submit race
+
+    if (!raw) {
+      inputActive = true  // re-enable for next keystroke
+      refreshInput()
+      return
+    }
+
+    // Slash command?
+    if (raw.startsWith('/')) {
+      dynamicArea.clear()
+      refreshDynamic()
+
+      const result = await dispatch(raw, state)
+      switch (result.action) {
+        case 'display':
+          for (const line of result.lines) chatLog.log(line)
+          screen.render()
+          inputActive = true
+          refreshInput()
+          return
+        case 'exit':
+          if (inputReject) {
+            const rej = inputReject
+            inputResolve = null
+            inputReject = null
+            rej(new SessionCloseSignal(result.reason === 'normal' ? 'normal' : 'operator_forced'))
+          }
+          return
+        case 'clear':
+          chatLog.setContent('')
+          screen.render()
+          inputActive = true
+          refreshInput()
+          return
+        case 'passthrough':
+          if (inputResolve) {
+            const r = inputResolve
+            inputResolve = null
+            inputReject = null
+            r(result.text)
+          }
+          return
+        case 'none':
+          inputActive = true
+          refreshInput()
+          return
+      }
+      return
+    }
+
+    // Normal text — resolve prompt
+    dynamicArea.clear()
+    refreshDynamic()
+    if (inputResolve) {
+      const r = inputResolve
+      inputResolve = null
+      inputReject = null
+      inputActive = false
+      r(raw)
+    }
+  }
+
+  // Key listener — only processes keys when input is active
+  function onKeypress(_ch: string, key: { full: string; name: string; ctrl?: boolean; shift?: boolean; sequence?: string }): void {
+    if (!inputActive) return
+
+    if (key.name === 'return') {
+      handleSubmit().catch((e) => {
+        if (inputReject) inputReject(e)
+      })
+      return
+    }
+
+    if (key.name === 'backspace') {
+      if (inputBuffer.length > 0) {
+        inputBuffer = inputBuffer.slice(0, -1)
+        refreshInput()
+        handleSlashAutocomplete()
+      }
+      return
+    }
+
+    // Ignore control keys, arrows, etc.
+    if (key.ctrl || key.name === 'escape' || key.name === 'up' || key.name === 'down' ||
+        key.name === 'left' || key.name === 'right' || key.name === 'tab' ||
+        key.name === 'home' || key.name === 'end' || key.name === 'insert' ||
+        key.name === 'delete' || key.name === 'pageup' || key.name === 'pagedown') {
+      return
+    }
+
+    // Printable character — reject control chars (0x00-0x1f, 0x7f)
+    if (_ch && _ch.length > 0 && !/[\x00-\x1f\x7f]/.test(_ch)) {
+      inputBuffer += _ch
+      refreshInput()
+      handleSlashAutocomplete()
+    }
+  }
+
+  screen.on('keypress', onKeypress)
+
+  function promptUser(): Promise<string> {
+    return new Promise((resolve, reject) => {
+      inputActive = true
+      inputBuffer = ''
+      inputResolve = resolve
+      inputReject = reject
+      refreshInput()
     })
   }
 
   // ── SessionIO implementation ────────────────────────────────────────────────
 
   const tui: SessionIO & { teardown(): void } = {
-    async prompt(): Promise<string> {
-      if (!isTTY) {
-        // Non-TTY fallback: simple line-based I/O
-        return new Promise(resolve => {
-          process.stdout.write('> ')
-          process.stdin.once('data', (d: Buffer) => resolve(d.toString().trim()))
-        })
-      }
-
-      // Clear dynamic area on new prompt (unless showing persistent content)
-      if (dynamic.currentType !== 'approval') {
-        dynamic.clear()
-        refreshBar('')
-      }
-
-      // Prompt loop — slash commands are handled internally, only normal text returns
-      while (true) {
-        input = new TUIInput()
-        let tabIdx = -1  // for cycling through slash autocomplete matches
-        let tabMatches: string[] = []
-
-        input.on('change', (line: string) => {
-          tabIdx = -1  // reset tab cycling on any change
-          // Show slash autocomplete in dynamic area
-          if (line.startsWith('/')) {
-            const suggestions = autocomplete(line)
-            if (suggestions.length > 0) {
-              dynamic.set('slash-autocomplete', suggestions)
-              tabMatches = matchPrefix(line).map(c => c.name)
-            } else {
-              dynamic.clear()
-              tabMatches = []
-            }
-          } else if (dynamic.currentType === 'slash-autocomplete') {
-            dynamic.clear()
-            tabMatches = []
-          }
-          refreshBar(line)
-        })
-
-        input.on('tab', () => {
-          if (tabMatches.length > 0) {
-            tabIdx = (tabIdx + 1) % tabMatches.length
-            input!.fill(tabMatches[tabIdx]! + ' ')
-          }
-        })
-
-        const line = await input.nextLine()
-        input.close()
-        input = null
-
-        if (!line.startsWith('/')) {
-          dynamic.clear()
-          return line
-        }
-
-        // Dispatch slash command
-        const result: SlashResult = await dispatch(line, state)
-
-        switch (result.action) {
-          case 'display':
-            dynamic.set('slash-result', result.lines)
-            refreshBar('')
-            continue  // re-prompt
-
-          case 'exit':
-            throw new SessionCloseSignal(result.reason === 'normal' ? 'normal' : 'operator_forced')
-
-          case 'clear':
-            dynamic.clear()
-            out.write(eraseScreen())
-            out.write(setScrollRegion(layout.scrollTop, layout.scrollBottom))
-            out.write(moveTo(layout.scrollBottom, 1))
-            refreshBar('')
-            continue  // re-prompt
-
-          case 'passthrough':
-            dynamic.clear()
-            return result.text
-
-          case 'none':
-            continue  // re-prompt
-        }
-      }
+    prompt(): Promise<string> {
+      return promptUser()
     },
 
     write(text: string): void {
-      if (!isTTY) {
-        process.stdout.write(text + '\n')
-        return
-      }
       state = {
         ...state,
         messages: [
@@ -193,79 +399,59 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
           { role: 'system', content: text, ts: new Date().toISOString() },
         ],
       }
-      chatAppend(formatSystem(text, layout.columns))
+      const cols = (screen as { width?: number }).width as number || 80
+      chatAppend(formatSystem(text, cols))
     },
 
     emit(event: SessionEvent): void {
       state = applyEvent(state, event)
 
-      if (!isTTY) {
-        // Non-TTY: minimal text output
-        if (event.type === 'cpe_response' && event.content) {
-          process.stdout.write('Agent: ' + event.content + '\n')
-        } else if (event.type === 'tool_dispatch') {
-          process.stdout.write(`[tool] ${event.skillName}\n`)
-        } else if (event.type === 'session_close') {
-          process.stdout.write(`[closed: ${event.reason}]\n`)
-        }
-        return
-      }
+      const cols = (screen as { width?: number }).width as number || 80
 
-      // TTY: format event and render
       switch (event.type) {
         case 'cpe_response':
           if (event.content) {
-            chatAppend(formatAssistant(event.content, layout.columns))
+            chatAppend(formatAssistant(event.content, cols))
           }
-          if (event.toolUses.length > 0) {
-            for (const tu of event.toolUses) {
-              chatAppend(formatToolUse(tu.name, tu.input, layout.columns))
-            }
-          }
+          // tool_uses are rendered via separate tool_dispatch events — no duplication
           break
 
         case 'operator_msg':
-          chatAppend(formatOperator(event.content, layout.columns))
+          chatAppend(formatOperator(event.content, cols))
           break
 
         case 'tool_dispatch':
-          chatAppend(formatToolUse(event.skillName, event.input, layout.columns))
+          chatAppend(formatToolUse(event.skillName, event.input, cols))
           break
 
         case 'tool_result': {
           const ok = event.result.ok
           const output = ok ? event.result.output : event.result.error
-          chatAppend(formatToolResult(event.skillName, ok, output, layout.columns))
+          chatAppend(formatToolResult(event.skillName, ok, output, cols))
           break
         }
 
         case 'session_close':
-          chatAppend(formatSystem(`Session closed: ${event.reason}`, layout.columns))
+          chatAppend(formatSystem(`Session closed: ${event.reason}`, cols))
           break
 
         case 'error': {
           const msg = event.error instanceof Error ? event.error.message : String(event.error)
-          chatAppend(formatSystem(`Error: ${msg}`, layout.columns))
+          chatAppend(formatSystem(`Error: ${msg}`, cols))
           break
         }
 
         default:
-          // token_update, cycle_start, workspace_update, cpe_invoke — footer-only updates
+          // token_update, cycle_start, workspace_update, cpe_invoke — footer-only
+          refreshFooter()
           break
       }
-
-      // Always refresh the footer bar for status/token updates
-      refreshBar(input?.current ?? '')
     },
 
     teardown(): void {
-      input?.close()
-      if (isTTY) {
-        out.write(resetScrollRegion())
-        out.write(moveTo(layout.rows, 1))
-        out.write(showCursor())
-        out.write('\n')
-      }
+      inputActive = false
+      screen.removeListener('keypress', onKeypress)
+      screen.destroy()
     },
   }
 

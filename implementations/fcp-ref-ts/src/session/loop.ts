@@ -55,6 +55,8 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
 
   try {
     while (true) {
+      io.emit({ type: 'cycle_start', cycleNum: cycle.cycleNum + 1 })
+
       // ── Drain async inbox ────────────────────────────────────────────────
       let compactSignalReceived = false
       for (const msg of await drainInbox(layout)) {

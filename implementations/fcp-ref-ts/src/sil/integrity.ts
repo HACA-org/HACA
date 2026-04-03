@@ -13,7 +13,7 @@ import { ImprintRecordSchema } from '../types/formats/baseline.js'
 
 export interface DriftMismatch {
   readonly file:     string
-  readonly reason:   'missing' | 'hash_mismatch'
+  readonly reason:   'missing' | 'hash_mismatch' | 'untracked'
   readonly expected?: string
   readonly actual?:   string
 }
@@ -64,6 +64,14 @@ export async function verifyIntegrityDoc(layout: Layout): Promise<DriftResult> {
     }
   }
 
+  // Detect tracked files on disk that are NOT in the integrity doc.
+  const tracked = await getTrackedFiles(layout)
+  for (const rel of tracked) {
+    if (!(rel in doc.files)) {
+      mismatches.push({ file: rel, reason: 'untracked' })
+    }
+  }
+
   return { clean: mismatches.length === 0, mismatches }
 }
 
@@ -93,8 +101,13 @@ export async function verifyChainFromImprint(layout: Layout): Promise<ChainVerif
     return { valid: false, reason: 'memory/imprint.json not found' }
   }
 
-  const imprintRaw = await readJson(layout.memory.imprint)
-  const imprint    = ImprintRecordSchema.parse(imprintRaw)
+  let imprintRaw: unknown
+  try {
+    imprintRaw = await readJson(layout.memory.imprint)
+    ImprintRecordSchema.parse(imprintRaw)
+  } catch {
+    return { valid: false, reason: 'memory/imprint.json is malformed or unreadable' }
+  }
 
   const chain = await readChain(layout)
   if (chain.length === 0) return { valid: true }

@@ -23,6 +23,7 @@ import type { SessionIO, SessionEvent } from '../../types/session.js'
 import { CLIError } from '../../types/cli.js'
 import { resolveEntityRoot } from '../entity.js'
 import { createTUI, SessionCloseSignal } from '../../tui/tui.js'
+import { loadEntityStats, renderHeader, renderHeaderPlain } from '../../tui/header.js'
 
 // ─── Non-TTY fallback IO ──────────────────────────────────────────────────────
 
@@ -88,9 +89,10 @@ function makeConsoleIO(nextLine: () => Promise<string>): SessionIO {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<void> {
+  const verbose    = opts.verbose === true
   const entityRoot = await resolveEntityRoot(opts.entity)
   const layout     = createLayout(entityRoot)
-  const logger     = createLogger(opts.verbose ? {} : { test: false })
+  const logger     = createLogger(verbose ? {} : { test: false }, { silent: !verbose })
 
   // Load and validate baseline
   if (!await fileExists(layout.state.baseline)) {
@@ -107,10 +109,26 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
 
   try {
     // ── Boot ──────────────────────────────────────────────────────────────────
+    // In normal mode, suppress step-by-step FAP output; only show prompts.
+    // In verbose mode, show all FAP detail.
+    let isColdStart = false
     const bootIO = useTUI
-      ? { write: (msg: string) => process.stdout.write(msg + '\n'),
-          prompt: async (q: string) => { process.stdout.write(q); return '' } }
-      : makeBootIO(nextLine)
+      ? { write: (msg: string) => {
+            if (msg.startsWith('FAP')) isColdStart = true
+            if (verbose) process.stdout.write(msg + '\n')
+          },
+          prompt: (q: string) => new Promise<string>(resolve => {
+            const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true })
+            rl.question(q, (answer) => { rl.close(); resolve(answer) })
+          }) }
+      : { write: (msg: string) => {
+            if (msg.startsWith('FAP')) isColdStart = true
+            if (verbose) process.stdout.write(msg + '\n')
+          },
+          prompt: async (question: string) => {
+            process.stdout.write(question)
+            return (await nextLine()).trim()
+          } }
 
     const bootResult = await startEntity({ layout, logger, io: bootIO, sleepCycle: runSleepCycle })
 
@@ -129,6 +147,14 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
     ]
     const profile = baseline.cpe.topology === 'opaque' ? 'HACA-Evolve' : 'HACA-Core'
 
+    // ── Header ────────────────────────────────────────────────────────────────
+    const cols  = process.stdout.columns || 80
+    const stats = await loadEntityStats(layout, '1.0.0')
+    const hdrLines = renderHeader(stats, cols)
+    if (isColdStart && !verbose) {
+      hdrLines.push('  ✓ First Activation Protocol complete')
+    }
+
     // ── IO: TUI or console ────────────────────────────────────────────────────
     let io: SessionIO
     let teardown: (() => void) | null = null
@@ -141,12 +167,18 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
         provider:      cpe.provider,
         model:         cpe.model,
         fcpVersion:    '1.0.0',
+        headerLines:   hdrLines,
       })
       io       = tui
       teardown = () => tui.teardown()
     } else {
-      process.stdout.write(`FCP — ${profile} — session ${sessionId}\n`)
-      process.stdout.write('Type your message and press Enter. Ctrl-C to force exit.\n\n')
+      // Non-TTY: render plain header
+      const plainLines = renderHeaderPlain(stats, cols)
+      if (isColdStart && !verbose) {
+        plainLines.push('  ✓ First Activation Protocol complete')
+      }
+      for (const line of plainLines) process.stdout.write(line + '\n')
+      process.stdout.write('\n')
       io = makeConsoleIO(nextLine)
     }
 
