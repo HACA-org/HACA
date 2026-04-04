@@ -16,11 +16,10 @@
 //
 // Resize is handled automatically by blessed's screen.render().
 import blessed from 'neo-blessed'
-import type { Widgets } from 'blessed'
 import type { SessionIO, SessionEvent } from '../types/session.js'
 import type { TUIInitOptions } from '../types/tui.js'
 import { applyEvent, initialAppState } from '../types/tui.js'
-import type { AppState, FooterData } from '../types/tui.js'
+import type { FooterData } from '../types/tui.js'
 import { formatFooter, formatElapsed } from './fixed-bar.js'
 import { formatAssistant, formatOperator, formatToolUse, formatToolResult, formatSystem } from './format.js'
 import { dispatch, autocomplete, matchPrefix } from './slash.js'
@@ -59,7 +58,8 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
             if (event.content) process.stdout.write('Agent: ' + event.content + '\n')
             break
           case 'operator_msg':
-            // Already echoed by the prompt — no duplication needed
+            // Non-TTY: readline already echoes input, no additional output needed.
+            // TTY path renders via emit() case below.
             break
           case 'tool_dispatch':
             process.stdout.write(`[tool] ${event.skillName}\n`)
@@ -116,12 +116,18 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
     style: {
       fg: 'white',
     },
-  }) as Widgets.Log
+  })
+
+  // Layout offsets from bottom — all derived from FIXED_BOTTOM and DYNAMIC_LINES
+  // so changing either constant keeps everything in sync.
+  const BOTTOM_SEPARATOR = FIXED_BOTTOM - 1  // separator sits just above input
+  const BOTTOM_INPUT     = FIXED_BOTTOM - 2  // input above footer
+  const BOTTOM_FOOTER    = FIXED_BOTTOM - 3  // footer above dynamic area
 
   // Separator line
   const separatorBox = blessed.box({
     parent: screen,
-    bottom: FIXED_BOTTOM - 1,  // 7
+    bottom: BOTTOM_SEPARATOR,
     left: 0,
     right: 0,
     height: 1,
@@ -134,7 +140,7 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
   // Input row — we manage text manually via key events for reliability
   const inputRow = blessed.box({
     parent: screen,
-    bottom: 1 + DYNAMIC_LINES,  // 6
+    bottom: BOTTOM_INPUT,
     left: 0,
     right: 0,
     height: 1,
@@ -148,7 +154,7 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
   // Footer — 1 row
   const footerBox = blessed.box({
     parent: screen,
-    bottom: DYNAMIC_LINES,  // 5
+    bottom: BOTTOM_FOOTER,
     left: 0,
     right: 0,
     height: 1,
@@ -170,6 +176,12 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
       fg: 'white',
     },
   })
+
+  // ── Screen helpers ───────────────────────────────────────────────────────
+
+  function getCols(): number {
+    return (screen as unknown as { width?: number }).width ?? 80
+  }
 
   // ── Manual input state ───────────────────────────────────────────────────
   let inputBuffer = ''
@@ -202,14 +214,13 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
   }
 
   function refreshFooter(): void {
-    const cols = (screen as { width?: number }).width as number || 80
-    footerBox.setContent(formatFooter(footerData(), cols))
+    footerBox.setContent(formatFooter(footerData(), getCols()))
     screen.render()
   }
 
   function refreshSeparator(): void {
-    const cols = (screen as { width?: number }).width as number || 80
-    separatorBox.setContent('─'.repeat(cols))
+    separatorBox.setContent('─'.repeat(getCols()))
+    screen.render()
   }
 
   function refreshDynamic(): void {
@@ -294,14 +305,21 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
           inputActive = true
           refreshInput()
           return
-        case 'exit':
-          if (inputReject) {
-            const rej = inputReject
-            inputResolve = null
-            inputReject = null
+        case 'exit': {
+          const rej = inputReject
+          inputResolve = null
+          inputReject = null
+          inputRow.setContent('')
+          screen.render()
+          if (rej) {
             rej(new SessionCloseSignal(result.reason === 'normal' ? 'normal' : 'operator_forced'))
+          } else {
+            // No active prompt — signal is delivered via teardown path
+            screen.destroy()
+            process.exit(0)
           }
           return
+        }
         case 'clear':
           chatLog.setContent('')
           screen.render()
@@ -313,6 +331,8 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
             const r = inputResolve
             inputResolve = null
             inputReject = null
+            inputRow.setContent('')
+            screen.render()
             r(result.text)
           }
           return
@@ -324,14 +344,14 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
       return
     }
 
-    // Normal text — resolve prompt
+    // Normal text — clear input visually then resolve prompt
     dynamicArea.clear()
-    refreshDynamic()
+    inputRow.setContent('')
+    screen.render()
     if (inputResolve) {
       const r = inputResolve
       inputResolve = null
       inputReject = null
-      inputActive = false
       r(raw)
     }
   }
@@ -392,52 +412,43 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
     },
 
     write(text: string): void {
-      state = {
-        ...state,
-        messages: [
-          ...state.messages,
-          { role: 'system', content: text, ts: new Date().toISOString() },
-        ],
-      }
-      const cols = (screen as { width?: number }).width as number || 80
-      chatAppend(formatSystem(text, cols))
+      // write() is for out-of-band system messages (not tracked in AppState).
+      // State is only mutated via emit() + applyEvent() to keep a single update path.
+      chatAppend(formatSystem(text, getCols()))
     },
 
     emit(event: SessionEvent): void {
       state = applyEvent(state, event)
-
-      const cols = (screen as { width?: number }).width as number || 80
-
       switch (event.type) {
         case 'cpe_response':
           if (event.content) {
-            chatAppend(formatAssistant(event.content, cols))
+            chatAppend(formatAssistant(event.content, getCols()))
           }
           // tool_uses are rendered via separate tool_dispatch events — no duplication
           break
 
         case 'operator_msg':
-          chatAppend(formatOperator(event.content, cols))
+          chatAppend(formatOperator(event.content, getCols()))
           break
 
         case 'tool_dispatch':
-          chatAppend(formatToolUse(event.skillName, event.input, cols))
+          chatAppend(formatToolUse(event.skillName, event.input, getCols()))
           break
 
         case 'tool_result': {
           const ok = event.result.ok
           const output = ok ? event.result.output : event.result.error
-          chatAppend(formatToolResult(event.skillName, ok, output, cols))
+          chatAppend(formatToolResult(event.skillName, ok, output, getCols()))
           break
         }
 
         case 'session_close':
-          chatAppend(formatSystem(`Session closed: ${event.reason}`, cols))
+          chatAppend(formatSystem(`Session closed: ${event.reason}`, getCols()))
           break
 
         case 'error': {
           const msg = event.error instanceof Error ? event.error.message : String(event.error)
-          chatAppend(formatSystem(`Error: ${msg}`, cols))
+          chatAppend(formatSystem(`Error: ${msg}`, getCols()))
           break
         }
 
