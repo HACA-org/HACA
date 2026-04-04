@@ -1,5 +1,5 @@
 // Chat message formatting — converts content into styled terminal lines for
-// the scroll region. Replaces history.ts with a simpler line-at-a-time model.
+// the scroll region.
 import chalk from 'chalk'
 
 // ─── Word wrap ────────────────────────────────────────────────────────────────
@@ -12,7 +12,7 @@ function wrapText(text: string, maxWidth: number): string[] {
       continue
     }
     let current = ''
-    for (const rawWord of paragraph.split(' ')) {
+    for (const rawWord of paragraph.split(' ').filter(Boolean)) {
       // Split words longer than maxWidth into chunks
       const chunks: string[] = []
       let w = rawWord
@@ -40,14 +40,19 @@ function wrapText(text: string, maxWidth: number): string[] {
 
 // ─── Role formatting ──────────────────────────────────────────────────────────
 
+// All labels padded to the same visible width (6 = len('System')) + 2 spaces = 8.
+const LABEL_WIDTH = 8
+function padLabel(s: string): string { return s.padEnd(LABEL_WIDTH) }
+
 const ROLE_PREFIX = {
-  operator:  chalk.bold.cyan('You     ') + chalk.dim('▎ '),
-  assistant: chalk.bold.green('Agent   ') + chalk.dim('▎ '),
-  tool:      chalk.bold.yellow('Tool    ') + chalk.dim('▎ '),
-  system:    chalk.bold.dim('System  ') + chalk.dim('▎ '),
+  operator:  chalk.bold.cyan(padLabel('You'))     + chalk.dim('▎ '),
+  assistant: chalk.bold.green(padLabel('Agent'))   + chalk.dim('▎ '),
+  tool:      chalk.bold.yellow(padLabel('Tool'))   + chalk.dim('▎ '),
+  system:    chalk.bold.dim(padLabel('System'))    + chalk.dim('▎ '),
 } as const
 
-const CONT_PAD = '         ' + chalk.dim('▎ ')  // 8 spaces + ▎
+// Continuation indent: LABEL_WIDTH spaces + ▎ + space (matches prefix visible width)
+const CONT_PAD = ' '.repeat(LABEL_WIDTH) + chalk.dim('▎ ')
 
 function formatRole(role: keyof typeof ROLE_PREFIX, text: string, cols: number): string[] {
   const contentCols = Math.max(20, cols - 11) // prefix is ~11 visible chars
@@ -65,6 +70,7 @@ export function formatAssistant(content: string, cols: number): string[] {
 }
 
 export function formatOperator(content: string, cols: number): string[] {
+  if (!content) return []
   return formatRole('operator', content, cols)
 }
 
@@ -72,14 +78,22 @@ export function formatToolUse(name: string, input: unknown, cols: number): strin
   const summary = typeof input === 'object' && input !== null
     ? Object.keys(input as Record<string, unknown>).join(', ')
     : String(input ?? '')
-  const text = `${chalk.yellow(name)}${summary ? chalk.dim(` (${summary})`) : ''}`
+  const contentCols = Math.max(20, cols - LABEL_WIDTH - 2)
+  const suffix = summary ? ` (${summary})` : ''
+  const full = name + suffix
+  const display = full.length > contentCols ? full.slice(0, contentCols - 3) + '...' : full
+  // Re-apply colors: name in yellow, the (args) part dimmed
+  const nameEnd = Math.min(name.length, display.length)
+  const text = chalk.yellow(display.slice(0, nameEnd)) +
+    (display.length > nameEnd ? chalk.dim(display.slice(nameEnd)) : '')
   return [ROLE_PREFIX.tool + text]
 }
 
 export function formatToolResult(name: string, ok: boolean, output: string, cols: number): string[] {
   const status = ok ? chalk.green('ok') : chalk.red('error')
-  const short = output.length > cols - 30
-    ? output.slice(0, cols - 33) + '...'
+  const maxOutput = Math.max(0, cols - 33)
+  const short = output.length > maxOutput
+    ? output.slice(0, Math.max(0, maxOutput - 3)) + '...'
     : output
   return [CONT_PAD + `${chalk.dim(name)}: ${status}${short ? ' — ' + chalk.dim(short) : ''}`]
 }
