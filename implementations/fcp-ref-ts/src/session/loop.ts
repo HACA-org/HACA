@@ -55,8 +55,6 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
 
   try {
     while (true) {
-      io.emit({ type: 'cycle_start', cycleNum: cycle.cycleNum + 1 })
-
       // ── Drain async inbox ────────────────────────────────────────────────
       let compactSignalReceived = false
       for (const msg of await drainInbox(layout)) {
@@ -122,6 +120,7 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
         inputTokens: resp.usage.inputTokens,
         fingerprint: makeFingerprint(resp.toolUses),
       }
+      io.emit({ type: 'cycle_start', cycleNum: cycle.cycleNum })
       io.emit({ type: 'cpe_response', content: resp.content, toolUses: resp.toolUses })
       io.emit({
         type:         'token_update',
@@ -164,7 +163,8 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
           io.emit({ type: 'tool_result', skillName: tu.name, result: { ok: false, error: 'unknown' } })
           continue
         }
-        // MIL/SIL tools bypass the operator gate — gate is owned by EXEC tool handlers.
+        // MIL/SIL tools are logged as 'bypass'; EXEC tools as 'exec'. The actual
+        // gate enforcement happens inside the individual tool handlers, not here.
         const approved = MIL_SIL_TOOLS.has(tu.name) ? 'bypass' : 'exec'
         const result = await handler.execute(tu.input, execCtx)
         results.push({ type: 'tool_result', tool_use_id: tu.id, content: result.ok ? result.output : `Error: ${result.error}` })
@@ -195,7 +195,7 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
           const ts   = new Date().toISOString().replace(/[:.]/g, '-')
           const file = path.join(layout.io.inbox, `compact-${ts}.json`)
           await writeJson(file, COMPACT_SESSION_SIGNAL)
-          const compactMsg = !compactVital.ok ? compactVital.message : ''
+          const compactMsg = compactVital.ok === false ? compactVital.message : ''
           log.warn('session:compact_signal_injected', { pct: compactMsg })
           // Remove compact from criticals list so the other checks still run
           const otherCriticals = criticals.filter(v => v.check !== 'compact_session')
