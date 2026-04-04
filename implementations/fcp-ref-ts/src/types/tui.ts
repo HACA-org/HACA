@@ -67,6 +67,7 @@ export interface AppState {
   readonly workspace:     string     // workspace_focus path or ""
   readonly fcpVersion:    string     // from package.json
   readonly sessionStart:  number     // Date.now() at session start
+  readonly verbose:       boolean    // operator debug mode (toggle with /verbose)
 }
 
 export interface TUIInitOptions {
@@ -78,6 +79,7 @@ export interface TUIInitOptions {
   readonly workspace?:    string
   readonly fcpVersion?:   string
   readonly headerLines?:  string[]   // lines to render at top of scroll region on init
+  readonly verbose?:      boolean    // initial verbose state (e.g. from --verbose flag)
 }
 
 export function initialAppState(opts: TUIInitOptions): AppState {
@@ -96,6 +98,7 @@ export function initialAppState(opts: TUIInitOptions): AppState {
     workspace:     opts.workspace  ?? '',
     fcpVersion:    opts.fcpVersion ?? '',
     sessionStart:  Date.now(),
+    verbose:       opts.verbose ?? false,
   }
 }
 

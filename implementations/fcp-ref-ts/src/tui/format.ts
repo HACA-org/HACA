@@ -74,23 +74,47 @@ export function formatOperator(content: string, cols: number): string[] {
   return formatRole('operator', content, cols)
 }
 
-export function formatToolUse(name: string, input: unknown, cols: number): string[] {
+export function formatToolUse(name: string, input: unknown, cols: number, verbose = false): string[] {
+  const contentCols = Math.max(20, cols - LABEL_WIDTH - 2)
+  if (verbose && typeof input === 'object' && input !== null) {
+    // Verbose: show each key:value on its own continuation line
+    const lines: string[] = [ROLE_PREFIX.tool + chalk.yellow(name)]
+    for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+      const valStr = typeof v === 'string' ? v : JSON.stringify(v)
+      const line = `${chalk.dim(k + ': ')}${valStr}`
+      // Wrap long values
+      if (line.length > contentCols) {
+        lines.push(CONT_PAD + line.slice(0, contentCols - 3) + '...')
+      } else {
+        lines.push(CONT_PAD + line)
+      }
+    }
+    return lines
+  }
+  // Normal: show key names only, truncated
   const summary = typeof input === 'object' && input !== null
     ? Object.keys(input as Record<string, unknown>).join(', ')
     : String(input ?? '')
-  const contentCols = Math.max(20, cols - LABEL_WIDTH - 2)
   const suffix = summary ? ` (${summary})` : ''
   const full = name + suffix
   const display = full.length > contentCols ? full.slice(0, contentCols - 3) + '...' : full
-  // Re-apply colors: name in yellow, the (args) part dimmed
   const nameEnd = Math.min(name.length, display.length)
   const text = chalk.yellow(display.slice(0, nameEnd)) +
     (display.length > nameEnd ? chalk.dim(display.slice(nameEnd)) : '')
   return [ROLE_PREFIX.tool + text]
 }
 
-export function formatToolResult(name: string, ok: boolean, output: string, cols: number): string[] {
+export function formatToolResult(name: string, ok: boolean, output: string, cols: number, verbose = false): string[] {
   const status = ok ? chalk.green('ok') : chalk.red('error')
+  if (verbose) {
+    // Verbose: show full output, word-wrapped
+    const contentCols = Math.max(20, cols - LABEL_WIDTH - 2)
+    const header = CONT_PAD + `${chalk.dim(name)}: ${status}`
+    if (!output) return [header]
+    const wrapped = wrapText(output, contentCols)
+    return [header, ...wrapped.map(l => CONT_PAD + chalk.dim(l))]
+  }
+  // Normal: single line, truncated
   const maxOutput = Math.max(0, cols - 33)
   const short = output.length > maxOutput
     ? output.slice(0, Math.max(0, maxOutput - 3)) + '...'

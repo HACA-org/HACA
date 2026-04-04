@@ -168,6 +168,7 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
         model:         cpe.model,
         fcpVersion:    '1.0.0',
         headerLines:   hdrLines,
+        verbose,
       })
       io       = tui
       teardown = () => tui.teardown()

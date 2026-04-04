@@ -16,6 +16,7 @@
 //
 // Resize is handled automatically by blessed's screen.render().
 import blessed from 'neo-blessed'
+import chalk from 'chalk'
 import type { SessionIO, SessionEvent } from '../types/session.js'
 import type { TUIInitOptions } from '../types/tui.js'
 import { applyEvent, initialAppState } from '../types/tui.js'
@@ -303,6 +304,13 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
           inputActive = true
           refreshInput()
           return
+        case 'set_verbose':
+          state = { ...state, verbose: result.value }
+          chatAppend([chalk.dim(`  verbose: ${result.value ? chalk.green('on') : 'off'}`)])
+          inputActive = true
+          refreshInput()
+          return
+
         case 'exit': {
           const rej = inputReject
           inputResolve = null
@@ -430,13 +438,13 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
           break
 
         case 'tool_dispatch':
-          chatAppend(formatToolUse(event.skillName, event.input, getCols()))
+          chatAppend(formatToolUse(event.skillName, event.input, getCols(), state.verbose))
           break
 
         case 'tool_result': {
           const ok = event.result.ok
           const output = ok ? event.result.output : event.result.error
-          chatAppend(formatToolResult(event.skillName, ok, output, getCols()))
+          chatAppend(formatToolResult(event.skillName, ok, output, getCols(), state.verbose))
           break
         }
 

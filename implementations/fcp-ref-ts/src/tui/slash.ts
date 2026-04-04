@@ -12,6 +12,7 @@ export type SlashResult =
   | { action: 'exit';        reason: CloseReason }
   | { action: 'clear' }
   | { action: 'passthrough'; text: string }
+  | { action: 'set_verbose'; value: boolean }
   | { action: 'none' }
 
 export interface SlashCommand {
@@ -84,7 +85,25 @@ const clearCmd: SlashCommand = {
   },
 }
 
-const verboseCmd = stubCommand('/verbose', 'Toggle verbose output')
+const verboseCmd: SlashCommand = {
+  name: '/verbose',
+  aliases: [],
+  description: 'Toggle verbose debug output (on/off)',
+  async execute(args, state) {
+    const arg = args.trim().toLowerCase()
+    if (arg !== 'on' && arg !== 'off') {
+      return {
+        action: 'display',
+        lines: [
+          `  Usage: ${chalk.cyan('/verbose on')} ${chalk.dim('|')} ${chalk.cyan('/verbose off')}`,
+          `  Current: ${state.verbose ? chalk.green('on') : chalk.dim('off')}`,
+        ],
+      }
+    }
+    const value = arg === 'on'
+    return { action: 'set_verbose', value }
+  },
+}
 
 const COMMANDS: SlashCommand[] = [
   helpCmd,
