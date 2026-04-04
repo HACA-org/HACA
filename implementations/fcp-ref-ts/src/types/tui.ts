@@ -45,8 +45,6 @@ export interface FooterData {
   readonly contextPct:   number      // budgetPct 0-100
   readonly sessionTime:  string      // formatted elapsed "5m 32s"
   readonly sessionId:    string
-  readonly profile:      Profile
-  readonly fcpVersion:   string
   readonly status:       TUIStatus
 }
 

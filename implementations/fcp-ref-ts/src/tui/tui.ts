@@ -207,8 +207,6 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
       contextPct:   state.budgetPct,
       sessionTime:  formatElapsed(state.sessionStart),
       sessionId:    state.sessionId,
-      profile:      state.profile,
-      fcpVersion:   state.fcpVersion,
       status:       state.status,
     }
   }

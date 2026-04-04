@@ -41,22 +41,33 @@ function shortenWorkspace(ws: string): string {
 
 // ─── Footer line composition ──────────────────────────────────────────────────
 
+function statusLabel(status: import('../types/tui.js').TUIStatus): string {
+  switch (status) {
+    case 'thinking':     return chalk.yellow('thinking')
+    case 'tool_running': return chalk.cyan('tool')
+    case 'waiting_input': return chalk.green('ready')
+    case 'closing':      return chalk.red('closing')
+    case 'idle':         return chalk.dim('idle')
+  }
+}
+
 export function formatFooter(data: FooterData, cols: number): string {
   const segments: string[] = [
-    chalk.dim('ws: ') + chalk.cyan(shortenWorkspace(data.workspace)),
+    chalk.dim('ws: ')      + chalk.cyan(shortenWorkspace(data.workspace)),
     chalk.white(data.provider + ':' + shortenModel(data.model)),
-    chalk.dim('cycle: ') + chalk.white(String(data.cycleNum)),
-    chalk.dim('in: ') + chalk.white(fmtK(data.inputTokens)) + chalk.dim(' / out: ') + chalk.white(fmtK(data.outputTokens)),
-    chalk.dim('ctx: ') + budgetColor(data.contextPct, `${data.contextPct}%`),
-    chalk.dim('time: ') + chalk.white(data.sessionTime),
+    chalk.dim('cycle: ')   + chalk.white(String(data.cycleNum)),
+    chalk.dim('in: ')      + chalk.white(fmtK(data.inputTokens)) + chalk.dim(' / out: ') + chalk.white(fmtK(data.outputTokens)),
+    chalk.dim('ctx: ')     + budgetColor(data.contextPct, `${data.contextPct}%`),
+    chalk.dim('time: ')    + chalk.white(data.sessionTime),
     chalk.dim('session: ') + chalk.white(data.sessionId.slice(0, 8)),
+    statusLabel(data.status),
   ]
 
   const sep = chalk.dim(' │ ')
   let line = ''
   let visLen = 0
   for (let i = 0; i < segments.length; i++) {
-    const part = (i > 0 ? sep : ' ') + segments[i]!
+    const part = (i > 0 ? sep : '  ') + segments[i]!
     const partVis = stripped(part).length
     if (visLen + partVis > cols - 1) break
     line += part

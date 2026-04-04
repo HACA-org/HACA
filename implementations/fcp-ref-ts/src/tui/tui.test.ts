@@ -79,8 +79,6 @@ describe('TUI — fixed-bar', () => {
       contextPct: 42,
       sessionTime: '5m 32s',
       sessionId: 'a1b2c3d4-xxxx',
-      profile: 'HACA-Core',
-      fcpVersion: '1.0.0',
       status: 'thinking',
     }, 140)
     const vis = stripped(footer)
@@ -89,14 +87,14 @@ describe('TUI — fixed-bar', () => {
     expect(vis).toContain('in: 12.0k')
     expect(vis).toContain('ctx: 42%')
     expect(vis).toContain('session: a1b2c3d4')
+    expect(vis).toContain('thinking')
   })
 
   it('formatFooter truncates on narrow terminals', () => {
     const footer = formatFooter({
       workspace: '', provider: 'anthropic', model: 'sonnet',
       cycleNum: 1, inputTokens: 0, outputTokens: 0, contextPct: 0,
-      sessionTime: '0s', sessionId: 'abcd1234', profile: 'HACA-Core',
-      fcpVersion: '1.0.0', status: 'idle',
+      sessionTime: '0s', sessionId: 'abcd1234', status: 'idle',
     }, 40)
     const vis = stripped(footer)
     expect(vis.length).toBeLessThanOrEqual(40)
