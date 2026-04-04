@@ -1,7 +1,7 @@
 // Slash command router — intercepts '/' commands from the operator prompt
 // and dispatches platform commands without passing through the CPE.
 import chalk from 'chalk'
-import type { AppState, FooterData } from '../types/tui.js'
+import type { AppState } from '../types/tui.js'
 import type { CloseReason } from '../types/session.js'
 import { formatElapsed, fmtK, budgetColor } from './fixed-bar.js'
 
@@ -22,6 +22,17 @@ export interface SlashCommand {
 }
 
 // ─── Command definitions ──────────────────────────────────────────────────────
+
+function stubCommand(name: string, description: string, aliases: string[] = []): SlashCommand {
+  return {
+    name,
+    aliases,
+    description,
+    async execute() {
+      return { action: 'display', lines: [chalk.dim(`  ${name} — not yet implemented`)] }
+    },
+  }
+}
 
 const helpCmd: SlashCommand = {
   name: '/help',
@@ -46,7 +57,7 @@ const statusCmd: SlashCommand = {
       action: 'display',
       lines: [
         `  ${chalk.dim('session')}  ${state.sessionId.slice(0, 8)}  ${chalk.dim('cycle')} #${state.cycleCount}  ${chalk.dim('elapsed')} ${elapsed}`,
-        `  ${chalk.dim('tokens')}   ↑${fmtK(state.inputTokens)} ↓${fmtK(state.outputTokens)}  ${chalk.dim('budget')} ${budgetColor(state.budgetPct, state.budgetPct + '%')}`,
+        `  ${chalk.dim('tokens')}   ↑${fmtK(state.inputTokens)} ↓${fmtK(state.outputTokens)}  ${chalk.dim('budget')} ${budgetColor(state.budgetPct, `${state.budgetPct}%`)}`,
         `  ${chalk.dim('model')}    ${state.provider}:${state.model}`,
         `  ${chalk.dim('profile')}  ${state.profile}`,
         state.workspace ? `  ${chalk.dim('workspace')} ${state.workspace}` : `  ${chalk.dim('workspace')} (none)`,
@@ -73,25 +84,7 @@ const clearCmd: SlashCommand = {
   },
 }
 
-const verboseCmd: SlashCommand = {
-  name: '/verbose',
-  aliases: [],
-  description: 'Toggle verbose output',
-  async execute() {
-    return { action: 'display', lines: [chalk.dim('  verbose toggle — not yet implemented')] }
-  },
-}
-
-function stubCommand(name: string, description: string, aliases: string[] = []): SlashCommand {
-  return {
-    name,
-    aliases,
-    description,
-    async execute() {
-      return { action: 'display', lines: [chalk.dim(`  ${name} — not yet implemented`)] }
-    },
-  }
-}
+const verboseCmd = stubCommand('/verbose', 'Toggle verbose output')
 
 const COMMANDS: SlashCommand[] = [
   helpCmd,
@@ -101,10 +94,10 @@ const COMMANDS: SlashCommand[] = [
   verboseCmd,
   stubCommand('/model',    'List or switch CPE model'),
   stubCommand('/compact',  'Trigger context compaction'),
-  stubCommand('/skill',    'Manage skills', ['/skill list', '/skill add', '/skill audit']),
-  stubCommand('/endure',   'Manage evolution proposals', ['/endure list', '/endure approve']),
-  stubCommand('/inbox',    'Operator notifications', ['/inbox list', '/inbox view']),
-  stubCommand('/work',     'Workspace focus', ['/work set', '/work clear', '/work status']),
+  stubCommand('/skill',    'Manage skills (list, add, audit)'),
+  stubCommand('/endure',   'Manage evolution proposals (list, approve)'),
+  stubCommand('/inbox',    'Operator notifications (list, view)'),
+  stubCommand('/work',     'Workspace focus (set, clear, status)'),
   stubCommand('/snapshot', 'Create entity snapshot'),
   stubCommand('/memory',   'Browse memory store'),
 ]
