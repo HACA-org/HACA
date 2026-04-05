@@ -28,7 +28,7 @@ export function formatElapsed(startMs: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`
 }
 
-function shortenModel(model: string): string {
+export function shortenModel(model: string): string {
   return model.replace(/^claude-/, '').replace(/-\d{8}$/, '')
 }
 

@@ -3,7 +3,7 @@
 import chalk from 'chalk'
 import type { AppState } from '../types/tui.js'
 import type { CloseReason } from '../types/session.js'
-import { formatElapsed, fmtK, budgetColor } from './fixed-bar.js'
+import { formatElapsed, fmtK, budgetColor, shortenModel } from './fixed-bar.js'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,15 +53,19 @@ const statusCmd: SlashCommand = {
   aliases: [],
   description: 'Session status panel',
   async execute(_args, state) {
-    const elapsed = formatElapsed(state.sessionStart)
+    const kv = (key: string, value: string) =>
+      `  ${chalk.dim(key + ':')} ${value}`
     return {
       action: 'display',
       lines: [
-        `  ${chalk.dim('session')}  ${state.sessionId.slice(0, 8)}  ${chalk.dim('cycle')} #${state.cycleCount}  ${chalk.dim('elapsed')} ${elapsed}`,
-        `  ${chalk.dim('tokens')}   ↑${fmtK(state.inputTokens)} ↓${fmtK(state.outputTokens)}  ${chalk.dim('budget')} ${budgetColor(state.budgetPct, `${state.budgetPct}%`)}`,
-        `  ${chalk.dim('model')}    ${state.provider}:${state.model}`,
-        `  ${chalk.dim('profile')}  ${state.profile}`,
-        state.workspace ? `  ${chalk.dim('workspace')} ${state.workspace}` : `  ${chalk.dim('workspace')} (none)`,
+        kv('session',   state.sessionId.slice(0, 8)),
+        kv('cycle',     `#${state.cycleCount}  ${chalk.dim('elapsed:')} ${formatElapsed(state.sessionStart)}`),
+        kv('tokens',    `↑${fmtK(state.inputTokens)} ↓${fmtK(state.outputTokens)}  ${chalk.dim('budget:')} ${budgetColor(state.budgetPct, `${state.budgetPct}%`)}`),
+        kv('model',     `${state.provider}:${shortenModel(state.model)}`),
+        kv('profile',   state.profile),
+        kv('workspace', state.workspace || '(none)'),
+        kv('status',    state.status),
+        kv('verbose',   state.verbose ? chalk.green('on') : chalk.dim('off')),
       ],
     }
   },
