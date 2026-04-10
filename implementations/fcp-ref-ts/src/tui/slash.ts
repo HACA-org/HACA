@@ -2,15 +2,13 @@
 // and dispatches platform commands without passing through the CPE.
 import chalk from 'chalk'
 import type { AppState } from '../types/tui.js'
-import type { CloseReason } from '../types/session.js'
 import { formatElapsed, fmtK, budgetColor, shortenModel } from './fixed-bar.js'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type SlashResult =
   | { action: 'display';     lines: string[] }
-  | { action: 'exit';        reason: CloseReason }
-  | { action: 'clear' }
+  | { action: 'inject';      text: string }    // FCP injects instruction into the session loop
   | { action: 'passthrough'; text: string }
   | { action: 'set_verbose'; value: boolean }
   | { action: 'none' }
@@ -73,19 +71,25 @@ const statusCmd: SlashCommand = {
 
 const exitCmd: SlashCommand = {
   name: '/exit',
-  aliases: ['/bye', '/close'],
-  description: 'Close session normally',
+  aliases: ['/bye'],
+  description: 'Close session and run Sleep Cycle (no Closure Payload)',
   async execute() {
-    return { action: 'exit', reason: 'normal' }
+    return {
+      action: 'inject',
+      text: 'SYSTEM: Operator requested session close. Call fcp_session_close immediately.',
+    }
   },
 }
 
-const clearCmd: SlashCommand = {
-  name: '/clear',
-  aliases: ['/new', '/reset'],
-  description: 'Clear chat history',
+const newCmd: SlashCommand = {
+  name: '/new',
+  aliases: ['/clear'],
+  description: 'Save state, close session, and start a new one',
   async execute() {
-    return { action: 'clear' }
+    return {
+      action: 'inject',
+      text: 'SYSTEM: Operator requested a new session. Call fcp_closure_payload to save state, then call fcp_session_close with reboot: true.',
+    }
   },
 }
 
@@ -113,7 +117,7 @@ const COMMANDS: SlashCommand[] = [
   helpCmd,
   statusCmd,
   exitCmd,
-  clearCmd,
+  newCmd,
   verboseCmd,
   stubCommand('/model',    'List or switch CPE model'),
   stubCommand('/compact',  'Trigger context compaction'),

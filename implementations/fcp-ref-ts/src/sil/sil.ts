@@ -7,7 +7,7 @@ export { runEndureProtocol, readPendingProposals, approveProposal } from './endu
 export { verifyIntegrityDoc, verifyChainFromImprint, refreshIntegrityDoc, appendIntegrityLog } from './integrity.js'
 export { readChain, appendEndureCommit, appendModelChange } from './chain.js'
 
-export { SESSION_CLOSE_SIGNAL, sessionCloseHandler }   from './tools/session-close.js'
+export { SESSION_CLOSE_SIGNAL, SESSION_REBOOT_SIGNAL, sessionCloseHandler } from './tools/session-close.js'
 export { evolutionProposalHandler } from './tools/evolution-proposal.js'
 
 // Signal string written to inbox to request session compaction.

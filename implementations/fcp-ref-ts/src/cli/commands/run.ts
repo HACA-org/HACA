@@ -22,7 +22,7 @@ import { runSleepCycle }     from '../../session/sleep.js'
 import type { SessionIO, SessionEvent } from '../../types/session.js'
 import { CLIError } from '../../types/cli.js'
 import { resolveEntityRoot } from '../entity.js'
-import { createTUI, SessionCloseSignal } from '../../tui/tui.js'
+import { createTUI } from '../../tui/tui.js'
 import { loadEntityStats, renderHeader, renderHeaderPlain } from '../../tui/header.js'
 
 // ─── Non-TTY fallback IO ──────────────────────────────────────────────────────
@@ -156,11 +156,12 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
     }
 
     // ── IO: TUI or console ────────────────────────────────────────────────────
+    // TUI is created once and reused across reboots — operator sees continuous chat.
     let io: SessionIO
-    let teardown: (() => void) | null = null
+    let tui: (SessionIO & { teardown(): void; clearChat(): void }) | null = null
 
     if (useTUI) {
-      const tui = createTUI({
+      const t = createTUI({
         sessionId,
         profile,
         contextWindow: cpe.contextWindow,
@@ -170,10 +171,10 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
         headerLines:   hdrLines,
         verbose,
       })
-      io       = tui
-      teardown = () => tui.teardown()
+      tui = t
+      io  = t
     } else {
-      // Non-TTY: render plain header
+      // Non-TTY: render plain header once
       const plainLines = renderHeaderPlain(stats, cols)
       if (isColdStart && !verbose) {
         plainLines.push('  ✓ First Activation Protocol complete')
@@ -183,64 +184,82 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
       io = makeConsoleIO(nextLine)
     }
 
-    // ── Session loop ──────────────────────────────────────────────────────────
-    let result: Awaited<ReturnType<typeof runSessionLoop>>
-    try {
-      result = await runSessionLoop({
-        layout, baseline, cpe, policy, tools, logger,
-        io,
-        sessionId,
-        profile,
-        contextWindow: cpe.contextWindow,
-        ...(contextMessages ? { contextMessages } : {}),
-      })
-    } catch (e) {
-      if (e instanceof SessionCloseSignal) {
-        // Operator used /exit — treat as normal close
-        teardown?.()
-        return
-      }
-      throw e
-    } finally {
-      teardown?.()
-    }
+    // ── Session + reboot loop ─────────────────────────────────────────────────
+    // Runs session → sleep cycle → (optionally) boot → session again.
+    // Any component (slash command, endure, skill) can trigger a reboot by
+    // returning closed: 'reboot' from runSessionLoop.
+    let currentSessionId    = sessionId
+    let currentContextMsgs  = contextMessages
 
-    // ── HACA-Core: present pending proposals for Operator approval ────────────
-    if (!baseline.authorizationScope) {
-      const pending = await readPendingProposals(layout)
-      if (pending.length > 0) {
-        process.stdout.write(`\n── Evolution Proposals (${pending.length}) ──\n`)
-        for (const proposal of pending) {
-          if (proposal.approvedAt) continue
-          process.stdout.write(`\nProposal ${proposal.id}\n`)
-          process.stdout.write(`  ${proposal.description}\n`)
-          process.stdout.write(`  Ops (${proposal.ops.length}): ${proposal.ops.map(o => o.type).join(', ')}\n`)
-          process.stdout.write('  Approve? [y/N] ')
-          const answer = (await nextLine()).trim().toLowerCase()
-          if (answer === 'y') {
-            await approveProposal(layout, proposal.id)
-            process.stdout.write('  → Approved.\n')
-          } else {
-            await appendIntegrityLog(layout, {
-              event: 'EVOLUTION_REJECTED', id: proposal.id, digest: proposal.digest,
-              ts: new Date().toISOString(), reason: 'operator_declined',
-            })
-            process.stdout.write('  → Rejected.\n')
+    try {
+      while (true) {
+        const result = await runSessionLoop({
+          layout, baseline, cpe, policy, tools, logger,
+          io,
+          sessionId:      currentSessionId,
+          profile,
+          contextWindow:  cpe.contextWindow,
+          ...(currentContextMsgs ? { contextMessages: currentContextMsgs } : {}),
+        })
+
+        // ── HACA-Core: present pending proposals for Operator approval ────────
+        if (!baseline.authorizationScope) {
+          const pending = await readPendingProposals(layout)
+          if (pending.length > 0) {
+            process.stdout.write(`\n── Evolution Proposals (${pending.length}) ──\n`)
+            for (const proposal of pending) {
+              if (proposal.approvedAt) continue
+              process.stdout.write(`\nProposal ${proposal.id}\n`)
+              process.stdout.write(`  ${proposal.description}\n`)
+              process.stdout.write(`  Ops (${proposal.ops.length}): ${proposal.ops.map(o => o.type).join(', ')}\n`)
+              process.stdout.write('  Approve? [y/N] ')
+              const answer = (await nextLine()).trim().toLowerCase()
+              if (answer === 'y') {
+                await approveProposal(layout, proposal.id)
+                process.stdout.write('  → Approved.\n')
+              } else {
+                await appendIntegrityLog(layout, {
+                  event: 'EVOLUTION_REJECTED', id: proposal.id, digest: proposal.digest,
+                  ts: new Date().toISOString(), reason: 'operator_declined',
+                })
+                process.stdout.write('  → Rejected.\n')
+              }
+            }
           }
         }
-      }
-    }
 
-    // Sleep cycle: memory consolidation → GC → Endure (HACA-Arch §6.4)
-    await runSleepCycle({
-      layout,
-      baseline,
-      logger,
-      sessionId,
-      contextWindow: cpe.contextWindow,
-      compact:       result.closed === 'normal' && result.compact,
-      ...(result.closed === 'normal' ? { closurePayload: result.closurePayload } : {}),
-    })
+        // ── Sleep cycle ───────────────────────────────────────────────────────
+        await runSleepCycle({
+          layout,
+          baseline,
+          logger,
+          sessionId:     currentSessionId,
+          contextWindow: cpe.contextWindow,
+          compact:       result.closed === 'normal' && result.compact,
+          ...((result.closed === 'normal' || result.closed === 'reboot')
+            ? { closurePayload: result.closurePayload }
+            : {}),
+        })
+
+        if (result.closed !== 'reboot') break
+
+        // ── Reboot: re-run boot, clear chat, start new session ───────────────
+        const rebootResult = await startEntity({ layout, logger, io: bootIO, sleepCycle: runSleepCycle })
+        if (!rebootResult.ok) {
+          throw new CLIError(`Reboot boot failed (phase ${rebootResult.phase}): ${rebootResult.reason}`, 1)
+        }
+        currentSessionId   = rebootResult.sessionId
+        currentContextMsgs = rebootResult.contextMessages
+
+        // Clear chat visual and show fresh header for the new session
+        tui?.clearChat()
+        const newStats    = await loadEntityStats(layout, '1.0.0')
+        const newHdrLines = renderHeader(newStats, cols)
+        io.write(newHdrLines.join('\n'))
+      }
+    } finally {
+      tui?.teardown()
+    }
   } finally {
     shared?.rl.close()
   }

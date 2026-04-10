@@ -64,5 +64,6 @@ export interface SessionOptions {
 
 export type LoopResult =
   | { closed: 'normal';  closurePayload: ClosurePayload; compact: boolean }
+  | { closed: 'reboot';  closurePayload: ClosurePayload }
   | { closed: 'forced';  reason: CloseReason }
   | { closed: 'error';   error: unknown }

@@ -9,7 +9,7 @@ import { drainInbox } from './inbox.js'
 import { buildContext } from './context.js'
 import { estimateTokens, checkBudget } from './budget.js'
 import { makeFingerprint } from './fingerprint.js'
-import { SESSION_CLOSE_SIGNAL, COMPACT_SESSION_SIGNAL } from '../sil/sil.js'
+import { SESSION_CLOSE_SIGNAL, SESSION_REBOOT_SIGNAL, COMPACT_SESSION_SIGNAL } from '../sil/sil.js'
 import { ClosurePayloadSchema } from '../types/formats/memory.js'
 import type { SessionOptions, LoopResult, CycleState } from '../types/session.js'
 import type { CPEMessage, ToolResultBlock } from '../types/cpe.js'
@@ -49,7 +49,8 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
   const fingerprints: string[] = []
   let cycle: CycleState = { cycleNum: 0, inputTokens: 0, fingerprint: '' }
   // Set to true when the SIL compact check fires — prevents re-injection on next cycle.
-  let compactRequested = false
+  let compactRequested      = false
+  let sessionRebootTriggered = false
 
   log.info('session:start')
 
@@ -170,16 +171,15 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
         results.push({ type: 'tool_result', tool_use_id: tu.id, content: result.ok ? result.output : `Error: ${result.error}` })
         io.emit({ type: 'tool_result', skillName: tu.name, result })
         await appendJsonl(layout.memory.sessionJsonl, { type: 'tool_execution', tool: tu.name, approved, ts: new Date().toISOString() })
-        if (result.ok && result.output === SESSION_CLOSE_SIGNAL) {
-          sessionCloseTriggered = true
-        }
+        if (result.ok && result.output === SESSION_CLOSE_SIGNAL)  sessionCloseTriggered  = true
+        if (result.ok && result.output === SESSION_REBOOT_SIGNAL) sessionRebootTriggered = true
       }
 
       // Push tool results as user message
       messages.push({ role: 'user', content: results })
       await appendJsonl(layout.memory.sessionJsonl, { type: 'message', role: 'user', content: results, ts: new Date().toISOString() })
 
-      if (sessionCloseTriggered) break
+      if (sessionCloseTriggered || sessionRebootTriggered) break
 
       // ── Heartbeat ────────────────────────────────────────────────────────
       if (heartbeat && await heartbeat.shouldRun(cycle.cycleNum)) {
@@ -224,9 +224,9 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
     return { closed: 'error', error: e }
   }
 
-  // ── Normal / compact close ───────────────────────────────────────────────
+  // ── Normal / reboot / compact close ─────────────────────────────────────
   io.emit({ type: 'session_close', reason: 'normal' })
-  log.info('session:close', { cycles: cycle.cycleNum, compact: compactRequested })
+  log.info('session:close', { cycles: cycle.cycleNum, compact: compactRequested, reboot: sessionRebootTriggered })
 
   const raw = await fileExists(layout.state.pendingClosure)
     ? await readJson(layout.state.pendingClosure)
@@ -235,6 +235,9 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
   if (!parsed.success) {
     log.warn('session:no-closure-payload')
     return { closed: 'forced', reason: 'critical_condition' }
+  }
+  if (sessionRebootTriggered) {
+    return { closed: 'reboot', closurePayload: parsed.data }
   }
   return { closed: 'normal', closurePayload: parsed.data, compact: compactRequested }
 }

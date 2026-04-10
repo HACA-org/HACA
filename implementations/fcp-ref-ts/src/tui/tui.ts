@@ -29,11 +29,8 @@ import { DynamicArea } from './dynamic.js'
 
 export type { TUIInitOptions as TUIOptions }
 
-export class SessionCloseSignal {
-  constructor(public readonly reason: 'normal' | 'operator_forced') {}
-}
 
-export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void } {
+export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void; clearChat(): void } {
   let state = initialAppState(opts)
   const dynamicArea = new DynamicArea()
 
@@ -49,6 +46,7 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
           process.stdin.once('data', (d: Buffer) => resolve(d.toString().trim()))
         })
       },
+      clearChat(): void { /* noop in non-TTY */ },
       write(text: string): void {
         process.stdout.write(text + '\n')
       },
@@ -304,6 +302,20 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
           inputActive = true
           refreshInput()
           return
+        case 'inject':
+          // FCP injects an instruction directly into the session loop as operator input.
+          // The operator sees a status line; the CPE receives the instruction text.
+          chatAppend(formatSystem(result.text, getCols()))
+          if (inputResolve) {
+            const r = inputResolve
+            inputResolve = null
+            inputReject = null
+            inputRow.setContent('')
+            screen.render()
+            r(result.text)
+          }
+          return
+
         case 'set_verbose':
           state = { ...state, verbose: result.value }
           chatAppend([chalk.dim(`  verbose: ${result.value ? chalk.green('on') : 'off'}`)])
@@ -311,27 +323,6 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
           refreshInput()
           return
 
-        case 'exit': {
-          const rej = inputReject
-          inputResolve = null
-          inputReject = null
-          inputRow.setContent('')
-          screen.render()
-          if (rej) {
-            rej(new SessionCloseSignal(result.reason === 'normal' ? 'normal' : 'operator_forced'))
-          } else {
-            // No active prompt — signal is delivered via teardown path
-            screen.destroy()
-            process.exit(0)
-          }
-          return
-        }
-        case 'clear':
-          chatLog.setContent('')
-          screen.render()
-          inputActive = true
-          refreshInput()
-          return
         case 'passthrough':
           if (inputResolve) {
             const r = inputResolve
@@ -412,7 +403,7 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
 
   // ── SessionIO implementation ────────────────────────────────────────────────
 
-  const tui: SessionIO & { teardown(): void } = {
+  const tui: SessionIO & { teardown(): void; clearChat(): void } = {
     prompt(): Promise<string> {
       return promptUser()
     },
@@ -463,6 +454,11 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void 
           refreshFooter()
           break
       }
+    },
+
+    clearChat(): void {
+      chatLog.setContent('')
+      screen.render()
     },
 
     teardown(): void {

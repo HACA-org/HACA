@@ -186,19 +186,22 @@ describe('TUI — slash', () => {
     }
   })
 
-  it('dispatch /exit returns exit action', async () => {
+  it('dispatch /exit returns inject action', async () => {
     const result = await dispatch('/exit', mockState)
-    expect(result).toEqual({ action: 'exit', reason: 'normal' })
+    expect(result.action).toBe('inject')
+    if (result.action === 'inject') expect(result.text).toContain('fcp_session_close')
   })
 
   it('dispatch /bye is alias for /exit', async () => {
     const result = await dispatch('/bye', mockState)
-    expect(result).toEqual({ action: 'exit', reason: 'normal' })
+    expect(result.action).toBe('inject')
+    if (result.action === 'inject') expect(result.text).toContain('fcp_session_close')
   })
 
-  it('dispatch /clear returns clear action', async () => {
+  it('dispatch /new (/clear alias) returns inject action with reboot', async () => {
     const result = await dispatch('/clear', mockState)
-    expect(result).toEqual({ action: 'clear' })
+    expect(result.action).toBe('inject')
+    if (result.action === 'inject') expect(result.text).toContain('reboot: true')
   })
 
   it('dispatch unknown command returns error display', async () => {
