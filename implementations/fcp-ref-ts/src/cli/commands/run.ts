@@ -2,7 +2,7 @@
 // Wires: startEntity → runSessionLoop → runSleepCycle.
 // TTY: full TUI with scroll region + fixed bar. Non-TTY: plain line I/O.
 import * as path from 'node:path'
-import * as fs from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { createInterface } from 'node:readline'
 import type { Command } from 'commander'
 import { createLayout } from '../../types/store.js'
@@ -24,6 +24,9 @@ import { CLIError } from '../../types/cli.js'
 import { resolveEntityRoot } from '../entity.js'
 import { createTUI } from '../../tui/tui.js'
 import { loadEntityStats, renderHeader, renderHeaderPlain } from '../../tui/header.js'
+
+const require = createRequire(import.meta.url)
+const { version: fcpVersion } = require('../../../package.json') as { version: string }
 
 // ─── Non-TTY fallback IO ──────────────────────────────────────────────────────
 
@@ -51,16 +54,6 @@ function makeSharedRL() {
   }
 
   return { rl, nextLine }
-}
-
-function makeBootIO(nextLine: () => Promise<string>): import('../../types/boot.js').BootIO {
-  return {
-    write: (msg) => process.stdout.write(msg + '\n'),
-    prompt: async (question) => {
-      process.stdout.write(question)
-      return (await nextLine()).trim()
-    },
-  }
 }
 
 function makeConsoleIO(nextLine: () => Promise<string>): SessionIO {
@@ -149,7 +142,7 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
 
     // ── Header ────────────────────────────────────────────────────────────────
     const cols  = process.stdout.columns || 80
-    const stats = await loadEntityStats(layout, '1.0.0')
+    const stats = await loadEntityStats(layout, fcpVersion)
     const hdrLines = renderHeader(stats, cols)
     if (isColdStart && !verbose) {
       hdrLines.push('  ✓ First Activation Protocol complete')
@@ -167,7 +160,7 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
         contextWindow: cpe.contextWindow,
         provider:      cpe.provider,
         model:         cpe.model,
-        fcpVersion:    '1.0.0',
+        fcpVersion:    fcpVersion,
         headerLines:   hdrLines,
         verbose,
       })
@@ -206,23 +199,23 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
         if (!baseline.authorizationScope) {
           const pending = await readPendingProposals(layout)
           if (pending.length > 0) {
-            process.stdout.write(`\n── Evolution Proposals (${pending.length}) ──\n`)
+            io.write(`── Evolution Proposals (${pending.length}) ──`)
             for (const proposal of pending) {
               if (proposal.approvedAt) continue
-              process.stdout.write(`\nProposal ${proposal.id}\n`)
-              process.stdout.write(`  ${proposal.description}\n`)
-              process.stdout.write(`  Ops (${proposal.ops.length}): ${proposal.ops.map(o => o.type).join(', ')}\n`)
-              process.stdout.write('  Approve? [y/N] ')
-              const answer = (await nextLine()).trim().toLowerCase()
+              io.write(`Proposal ${proposal.id}`)
+              io.write(`  ${proposal.description}`)
+              io.write(`  Ops (${proposal.ops.length}): ${proposal.ops.map(o => o.type).join(', ')}`)
+              io.write('  Approve? [y/N]')
+              const answer = (await io.prompt()).trim().toLowerCase()
               if (answer === 'y') {
                 await approveProposal(layout, proposal.id)
-                process.stdout.write('  → Approved.\n')
+                io.write('  → Approved.')
               } else {
                 await appendIntegrityLog(layout, {
                   event: 'EVOLUTION_REJECTED', id: proposal.id, digest: proposal.digest,
                   ts: new Date().toISOString(), reason: 'operator_declined',
                 })
-                process.stdout.write('  → Rejected.\n')
+                io.write('  → Rejected.')
               }
             }
           }
@@ -253,7 +246,7 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
 
         // Clear chat visual and show fresh header for the new session
         tui?.clearChat()
-        const newStats    = await loadEntityStats(layout, '1.0.0')
+        const newStats    = await loadEntityStats(layout, fcpVersion)
         const newHdrLines = renderHeader(newStats, cols)
         io.write(newHdrLines.join('\n'))
       }

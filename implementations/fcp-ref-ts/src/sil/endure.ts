@@ -104,7 +104,7 @@ async function executeOp(op: EvolutionOp, root: string, workspaceFocus: string, 
       }
       const merged = Object.assign({}, existing, op.patch)
       await ensureDir(path.dirname(abs))
-      await atomicWrite(abs, JSON.stringify(merged, null, 2))
+      await atomicWrite(abs, JSON.stringify(merged, null, 2) + '\n')
       break
     }
 
@@ -140,7 +140,7 @@ async function executeOp(op: EvolutionOp, root: string, workspaceFocus: string, 
         manifest: path.join(op.name, 'manifest.json'),
         class:    audit.report.class,
       }]
-      await atomicWrite(indexPath, JSON.stringify(index, null, 2))
+      await atomicWrite(indexPath, JSON.stringify(index, null, 2) + '\n')
 
       // Clean up staging directory
       await fs.rm(stageDir, { recursive: true, force: true })

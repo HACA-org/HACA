@@ -51,15 +51,10 @@ export async function loadEntityStats(layout: Layout, fcpVersion: string): Promi
       const raw   = await fs.readFile(layout.state.integrityLog, 'utf8')
       const lines = raw.split('\n').filter(Boolean)
 
-      // Collect session boundaries: use all entries to derive sessions
-      const sleepEntries: string[] = []
       for (const line of lines) {
         try {
           const entry = JSON.parse(line) as Record<string, unknown>
-          if (entry['event'] === 'SLEEP_COMPLETE') {
-            totalSessions++
-            sleepEntries.push(entry['ts'] as string)
-          }
+          if (entry['event'] === 'SLEEP_COMPLETE') totalSessions++
         } catch { /* skip malformed lines */ }
       }
     } catch { /* ignore */ }

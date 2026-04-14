@@ -60,6 +60,7 @@ function toGeminiBody(req: CPERequest): unknown {
       }],
     } : {}),
     ...(req.system !== undefined ? { systemInstruction: { parts: [{ text: req.system }] } } : {}),
+    generationConfig: { maxOutputTokens: 8192 },
   }
 }
 

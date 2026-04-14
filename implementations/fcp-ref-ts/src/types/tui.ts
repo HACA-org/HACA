@@ -102,13 +102,6 @@ export function initialAppState(opts: TUIInitOptions): AppState {
   }
 }
 
-// Backwards-compatible overload for existing call sites and tests.
-export function initialAppStateLegacy(
-  sessionId: string, profile: Profile, contextWindow: number,
-): AppState {
-  return initialAppState({ sessionId, profile, contextWindow })
-}
-
 export function applyEvent(state: AppState, event: SessionEvent): AppState {
   switch (event.type) {
     case 'cycle_start':

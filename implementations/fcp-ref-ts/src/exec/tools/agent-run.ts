@@ -15,10 +15,9 @@ import { spawn } from 'node:child_process'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { fileExists, readJson } from '../../store/io.js'
-import { SkillManifestSchema } from '../../types/formats/skills.js'
+import { SkillIndexSchema, SkillManifestSchema } from '../../types/formats/skills.js'
 import { resolveToolApproval } from '../../session/approval.js'
 import { resolveAdapter } from '../../cpe/cpe.js'
-import { SkillIndexSchema } from '../../types/formats/skills.js'
 import type { ToolHandler, ToolResult, ExecContext } from '../../types/exec.js'
 
 const DEFAULT_TIMEOUT_MS = 30_000
