@@ -1,16 +1,12 @@
 // fcp list / fcp set / fcp unset / fcp remove — entity registry management.
 import * as path from 'node:path'
-import * as os from 'node:os'
 import * as fs from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import type { Command } from 'commander'
 import { fileExists, readJson, ensureDir, atomicWrite } from '../../store/io.js'
 import { createLayout } from '../../types/store.js'
 import { CLIError } from '../../types/cli.js'
-
-const FCP_HOME     = path.join(os.homedir(), '.fcp')
-const ENTITIES_DIR = path.join(FCP_HOME, 'entities')
-const DEFAULT_FILE = path.join(FCP_HOME, 'default')
+import { FCP_HOME, ENTITIES_DIR, DEFAULT_FILE } from '../entity.js'
 
 async function getDefault(): Promise<string | null> {
   if (!existsSync(DEFAULT_FILE)) return null

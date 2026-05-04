@@ -3,7 +3,6 @@
 // --fix resolves recoverable issues: rehashes integrity doc, removes stale tokens,
 // restores missing skills index, recreates missing directories.
 import * as path from 'node:path'
-import * as os from 'node:os'
 import * as fs from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import type { Command } from 'commander'
@@ -13,9 +12,7 @@ import { verifyIntegrityDoc, verifyChainFromImprint, refreshIntegrityDoc } from 
 import { parseBaseline, parseImprintRecord, ParseError } from '../../store/parse.js'
 import { sha256Digest } from '../../boot/integrity.js'
 import { CLIError } from '../../types/cli.js'
-
-const ENTITIES_DIR = path.join(os.homedir(), '.fcp', 'entities')
-const DEFAULT_FILE = path.join(os.homedir(), '.fcp', 'default')
+import { resolveEntityRoot } from '../entity.js'
 
 interface CheckResult {
   name:     string
@@ -278,28 +275,7 @@ function icon(c: CheckResult): string {
 }
 
 async function runDoctor(entityId: string | undefined, fix: boolean): Promise<void> {
-  let root: string
-
-  if (entityId) {
-    root = path.join(ENTITIES_DIR, entityId)
-    if (!existsSync(root)) throw new CLIError(`Entity not found: ${entityId}`, 1)
-  } else {
-    const defaultId = existsSync(DEFAULT_FILE)
-      ? (await fs.readFile(DEFAULT_FILE, 'utf8')).trim()
-      : null
-
-    if (defaultId) {
-      root = path.join(ENTITIES_DIR, defaultId)
-    } else if (existsSync(ENTITIES_DIR)) {
-      const entries = await fs.readdir(ENTITIES_DIR, { withFileTypes: true })
-      const dirs    = entries.filter(e => e.isDirectory())
-      if (dirs.length === 0) throw new CLIError('No entities found. Run `fcp init`.', 1)
-      root = path.join(ENTITIES_DIR, dirs[0]!.name)
-    } else {
-      throw new CLIError('No entities found. Run `fcp init`.', 1)
-    }
-  }
-
+  const root = await resolveEntityRoot(entityId)
   const groups = await runChecks(root, fix)
   const all    = groups.flatMap(g => g.results)
   const fails  = all.filter(c => c.status === 'fail' && c.fixable !== 'fixed').length

@@ -1,15 +1,12 @@
 // fcp status — display entity state overview without starting a session.
 import * as path from 'node:path'
-import * as os from 'node:os'
 import * as fs from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import type { Command } from 'commander'
 import { createLayout } from '../../types/store.js'
 import { fileExists, readJson } from '../../store/io.js'
 import { CLIError } from '../../types/cli.js'
-
-const ENTITIES_DIR = path.join(os.homedir(), '.fcp', 'entities')
-const DEFAULT_FILE = path.join(os.homedir(), '.fcp', 'default')
+import { ENTITIES_DIR, DEFAULT_FILE } from '../entity.js'
 
 async function listEntities(): Promise<string[]> {
   if (!existsSync(ENTITIES_DIR)) return []

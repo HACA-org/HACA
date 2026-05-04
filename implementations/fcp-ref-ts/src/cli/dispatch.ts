@@ -1,4 +1,5 @@
 // CLI command router — registers all subcommands.
+import { createRequire }  from 'node:module'
 import { Command } from 'commander'
 import { registerInit }   from './commands/init.js'
 import { registerRun, runFcp } from './commands/run.js'
@@ -7,13 +8,16 @@ import { registerDoctor } from './commands/doctor.js'
 import { registerModel }    from './commands/model.js'
 import { registerEntities } from './commands/entities.js'
 
+const require = createRequire(import.meta.url)
+const { version } = require('../../package.json') as { version: string }
+
 export function buildProgram(): Command {
   const program = new Command()
 
   program
     .name('fcp')
     .description('Filesystem Cognitive Platform — HACA Reference Implementation')
-    .version('1.0.0')
+    .version(version)
     .option('--entity <id>', 'Entity ID to operate on')
     .option('--verbose',     'Enable verbose output')
     // Default action (no subcommand): start a session
