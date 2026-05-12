@@ -4,6 +4,7 @@ import chalk from 'chalk'
 import type { AppState } from '../types/tui.js'
 import { formatElapsed, fmtK, budgetColor, shortenModel } from './fixed-bar.js'
 import { endureCmd } from './slash-endure.js'
+import { modelCmd } from './slash-model.js'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -120,7 +121,7 @@ const COMMANDS: SlashCommand[] = [
   exitCmd,
   newCmd,
   verboseCmd,
-  stubCommand('/model',    'List or switch CPE model'),
+  modelCmd,
   stubCommand('/compact',  'Trigger context compaction'),
   stubCommand('/skill',    'Manage skills (list, add, audit)'),
   endureCmd,

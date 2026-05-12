@@ -220,6 +220,21 @@ describe('TUI — slash', () => {
     expect(suggestions.length).toBeGreaterThan(0)
     expect(stripped(suggestions.join(' '))).toContain('/status')
   })
+
+  it('dispatch /model returns display with current model', async () => {
+    const result = await dispatch('/model', mockState)
+    expect(result.action).toBe('display')
+    if (result.action === 'display') {
+      const text = stripped(result.lines.join('\n'))
+      expect(text).toContain('current:')
+      expect(text).toContain('anthropic')
+    }
+  })
+
+  it('dispatch /model list returns display', async () => {
+    const result = await dispatch('/model list', mockState)
+    expect(result.action).toBe('display')
+  })
 })
 
 // ─── applyEvent ───────────────────────────────────────────────────────────────
