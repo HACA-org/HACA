@@ -1,7 +1,10 @@
 // TUI unit tests — format, fixed-bar helpers, dynamic, slash, applyEvent.
 // Blessed rendering is not unit-tested here (requires a real TTY).
 import { describe, it, expect } from 'vitest'
+import { createLayout } from '../types/store.js'
 import { initialAppState, applyEvent } from '../types/tui.js'
+
+const dummyLayout = createLayout('/tmp/fcp-tui-test')
 import { DynamicArea } from './dynamic.js'
 import { dispatch, matchPrefix, autocomplete } from './slash.js'
 import { formatElapsed, fmtK, budgetColor, stripped, formatFooter } from './fixed-bar.js'
@@ -157,7 +160,7 @@ describe('TUI — dynamic', () => {
 describe('TUI — slash', () => {
   const mockState = initialAppState({
     sessionId: 'test-sid', profile: 'HACA-Core', contextWindow: 200000,
-    provider: 'anthropic', model: 'claude-sonnet-4-20250514',
+    provider: 'anthropic', model: 'claude-sonnet-4-20250514', layout: dummyLayout,
   })
 
   it('matchPrefix returns matching commands', () => {
@@ -223,14 +226,14 @@ describe('TUI — slash', () => {
 
 describe('TUI — applyEvent', () => {
   it('cycle_start transitions to thinking', () => {
-    const s = initialAppState({ sessionId: 'sid', profile: 'HACA-Core', contextWindow: 200000 })
+    const s = initialAppState({ sessionId: 'sid', profile: 'HACA-Core', contextWindow: 200000, layout: dummyLayout })
     const n = applyEvent(s, { type: 'cycle_start', cycleNum: 3 })
     expect(n.status).toBe('thinking')
     expect(n.cycleCount).toBe(3)
   })
 
   it('cpe_response appends assistant message and waits for input', () => {
-    const s = initialAppState({ sessionId: 'sid', profile: 'HACA-Core', contextWindow: 200000 })
+    const s = initialAppState({ sessionId: 'sid', profile: 'HACA-Core', contextWindow: 200000, layout: dummyLayout })
     const n = applyEvent(s, { type: 'cpe_response', content: 'Hello!', toolUses: [] })
     expect(n.status).toBe('waiting_input')
     expect(n.messages).toHaveLength(1)
@@ -239,7 +242,7 @@ describe('TUI — applyEvent', () => {
   })
 
   it('cpe_response with tool_uses transitions to tool_running', () => {
-    const s = initialAppState({ sessionId: 'sid', profile: 'HACA-Core', contextWindow: 200000 })
+    const s = initialAppState({ sessionId: 'sid', profile: 'HACA-Core', contextWindow: 200000, layout: dummyLayout })
     const n = applyEvent(s, {
       type: 'cpe_response', content: '', toolUses: [
         { type: 'tool_use', id: '1', name: 'fcp_file_read', input: {} },
@@ -249,20 +252,20 @@ describe('TUI — applyEvent', () => {
   })
 
   it('operator_msg appends operator message', () => {
-    const s = initialAppState({ sessionId: 'sid', profile: 'HACA-Core', contextWindow: 200000 })
+    const s = initialAppState({ sessionId: 'sid', profile: 'HACA-Core', contextWindow: 200000, layout: dummyLayout })
     const n = applyEvent(s, { type: 'operator_msg', content: 'test input' })
     expect(n.messages[0]!.role).toBe('operator')
     expect(n.messages[0]!.content).toBe('test input')
   })
 
   it('session_close transitions to closing', () => {
-    const s = initialAppState({ sessionId: 'sid', profile: 'HACA-Core', contextWindow: 200000 })
+    const s = initialAppState({ sessionId: 'sid', profile: 'HACA-Core', contextWindow: 200000, layout: dummyLayout })
     const n = applyEvent(s, { type: 'session_close', reason: 'normal' })
     expect(n.status).toBe('closing')
   })
 
   it('workspace_update updates workspace path', () => {
-    const s = initialAppState({ sessionId: 'sid', profile: 'HACA-Core', contextWindow: 200000 })
+    const s = initialAppState({ sessionId: 'sid', profile: 'HACA-Core', contextWindow: 200000, layout: dummyLayout })
     const n = applyEvent(s, { type: 'workspace_update', path: '/home/user/project' })
     expect(n.workspace).toBe('/home/user/project')
   })

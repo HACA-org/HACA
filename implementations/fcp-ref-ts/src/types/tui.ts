@@ -1,5 +1,6 @@
 import type { Profile }       from './cli.js'
 import type { SessionEvent }  from './session.js'
+import type { Layout }        from './store.js'
 
 // TUI consumes SessionEvent directly — no translation layer needed.
 export type { SessionEvent }
@@ -68,12 +69,14 @@ export interface AppState {
   readonly fcpVersion:    string     // from package.json
   readonly sessionStart:  number     // Date.now() at session start
   readonly verbose:       boolean    // operator debug mode (toggle with /verbose)
+  readonly layout:        Layout     // entity root layout — used by /endure and other commands
 }
 
 export interface TUIInitOptions {
   readonly sessionId:     string
   readonly profile:       Profile
   readonly contextWindow: number
+  readonly layout:        Layout
   readonly provider?:     string
   readonly model?:        string
   readonly workspace?:    string
@@ -99,6 +102,7 @@ export function initialAppState(opts: TUIInitOptions): AppState {
     fcpVersion:    opts.fcpVersion ?? '',
     sessionStart:  Date.now(),
     verbose:       opts.verbose ?? false,
+    layout:        opts.layout,
   }
 }
 

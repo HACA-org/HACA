@@ -16,6 +16,7 @@ import { z } from 'zod'
 import { fileExists, readJson, writeJson, deleteFile, ensureDir, atomicWrite } from '../store/io.js'
 import { refreshIntegrityDoc, currentFileHashes, appendIntegrityLog } from './integrity.js'
 import { appendEndureCommit } from './chain.js'
+import { loadDriftProbes, runDriftEvaluation } from './drift.js'
 import { sha256Digest } from '../boot/integrity.js'
 import { auditSkillDir } from '../exec/tools/skill-audit.js'
 import { EvolutionOpSchema } from '../types/formats/evolution.js'
@@ -223,6 +224,33 @@ export async function runEndureProtocol(layout: Layout, logger: Logger): Promise
 
       executed++
       logger.info('sil:endure_commit', { id: proposal.id })
+
+      // 7. Drift check — re-evaluate probes against post-Endure state.
+      // If any probe exceeds its threshold, write DRIFT_FAULT and notify the operator.
+      // The next boot will detect the fault in phase6 and block until resolved.
+      const probes = await loadDriftProbes(layout)
+      if (probes.length > 0) {
+        const driftReports = await runDriftEvaluation(layout, logger)
+        const failing      = driftReports.filter(r => r.exceeds)
+        if (failing.length > 0) {
+          const probeIds = failing.map(r => r.probeId)
+          await appendIntegrityLog(layout, {
+            event:      'DRIFT_FAULT',
+            ts:         new Date().toISOString(),
+            proposalId: proposal.id,
+            probes:     probeIds,
+          })
+          await ensureDir(layout.state.operatorNotifications)
+          const notifPath = `${layout.state.operatorNotifications}/drift-fault-${proposal.id}.json`
+          await writeJson(notifPath, {
+            type:       'DRIFT_FAULT',
+            proposalId: proposal.id,
+            probes:     probeIds,
+            ts:         new Date().toISOString(),
+          })
+          logger.warn('sil:endure:drift_fault', { proposalId: proposal.id, probes: probeIds })
+        }
+      }
     } catch (e: unknown) {
       logger.error('sil:endure:proposal_failed', { id: proposal.id, err: String(e) })
       await appendIntegrityLog(layout, {

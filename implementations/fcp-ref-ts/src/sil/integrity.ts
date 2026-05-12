@@ -33,10 +33,11 @@ export interface ChainVerificationResult {
 // Events: PROPOSAL_PENDING, EVOLUTION_AUTH, EVOLUTION_REJECTED, SLEEP_COMPLETE.
 
 export type IntegrityLogEvent =
-  | { event: 'PROPOSAL_PENDING'; id: string; digest: string; ts: string }
-  | { event: 'EVOLUTION_AUTH';   id: string; digest: string; ts: string; autoApproved: boolean }
+  | { event: 'PROPOSAL_PENDING';   id: string; digest: string; ts: string }
+  | { event: 'EVOLUTION_AUTH';     id: string; digest: string; ts: string; autoApproved: boolean }
   | { event: 'EVOLUTION_REJECTED'; id: string; digest: string; ts: string; reason: string }
-  | { event: 'SLEEP_COMPLETE';   ts: string; proposed: number; executed: number }
+  | { event: 'SLEEP_COMPLETE';     ts: string; proposed: number; executed: number }
+  | { event: 'DRIFT_FAULT';        ts: string; proposalId: string; probes: string[] }
 
 export async function appendIntegrityLog(layout: Layout, entry: IntegrityLogEvent): Promise<void> {
   await appendJsonl(layout.state.integrityLog, entry)

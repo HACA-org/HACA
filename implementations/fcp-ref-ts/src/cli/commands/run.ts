@@ -163,6 +163,7 @@ async function runFcp(opts: { entity?: string; verbose?: boolean }): Promise<voi
         fcpVersion:    fcpVersion,
         headerLines:   hdrLines,
         verbose,
+        layout,
       })
       tui = t
       io  = t
