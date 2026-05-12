@@ -15,6 +15,7 @@
 //   └─────────────────────────────┘
 //
 // Resize is handled automatically by blessed's screen.render().
+import * as nodefs from 'node:fs/promises'
 import blessed from 'neo-blessed'
 import chalk from 'chalk'
 import type { SessionIO, SessionEvent } from '../types/session.js'
@@ -322,6 +323,25 @@ export function createTUI(opts: TUIInitOptions): SessionIO & { teardown(): void;
           inputActive = true
           refreshInput()
           return
+
+        case 'set_workspace': {
+          const newPath = result.path
+          const focusFile = state.layout.state.workspaceFocus
+          if (newPath === null) {
+            await nodefs.unlink(focusFile).catch(() => undefined)
+            state = { ...state, workspace: '' }
+            chatAppend([chalk.dim('  workspace: cleared')])
+          } else {
+            await nodefs.mkdir(state.layout.state.sentinels, { recursive: true }).catch(() => undefined)
+            await nodefs.writeFile(focusFile, JSON.stringify({ path: newPath }), 'utf8')
+            state = { ...state, workspace: newPath }
+            chatAppend([chalk.dim(`  workspace: ${newPath}`)])
+          }
+          refreshFooter()
+          inputActive = true
+          refreshInput()
+          return
+        }
 
         case 'passthrough':
           if (inputResolve) {

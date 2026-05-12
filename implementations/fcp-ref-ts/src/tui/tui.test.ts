@@ -235,6 +235,41 @@ describe('TUI — slash', () => {
     const result = await dispatch('/model list', mockState)
     expect(result.action).toBe('display')
   })
+
+  it('dispatch /compact returns inject action', async () => {
+    const result = await dispatch('/compact', mockState)
+    expect(result.action).toBe('inject')
+    if (result.action === 'inject') expect(result.text).toContain('reboot: true')
+  })
+
+  it('dispatch /work (no args) shows current workspace', async () => {
+    const result = await dispatch('/work', mockState)
+    expect(result.action).toBe('display')
+    if (result.action === 'display') {
+      expect(stripped(result.lines.join(''))).toContain('workspace')
+    }
+  })
+
+  it('dispatch /work set <path> returns set_workspace action', async () => {
+    const result = await dispatch('/work set /tmp/myproject', mockState)
+    expect(result.action).toBe('set_workspace')
+    if (result.action === 'set_workspace') {
+      expect(result.path).toBe('/tmp/myproject')
+    }
+  })
+
+  it('dispatch /work clear returns set_workspace null', async () => {
+    const result = await dispatch('/work clear', mockState)
+    expect(result.action).toBe('set_workspace')
+    if (result.action === 'set_workspace') {
+      expect(result.path).toBeNull()
+    }
+  })
+
+  it('dispatch /inbox returns display', async () => {
+    const result = await dispatch('/inbox', mockState)
+    expect(result.action).toBe('display')
+  })
 })
 
 // ─── applyEvent ───────────────────────────────────────────────────────────────

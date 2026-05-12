@@ -5,14 +5,16 @@ import type { AppState } from '../types/tui.js'
 import { formatElapsed, fmtK, budgetColor, shortenModel } from './fixed-bar.js'
 import { endureCmd } from './slash-endure.js'
 import { modelCmd } from './slash-model.js'
+import { compactCmd, workCmd, inboxCmd } from './slash-utils.js'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type SlashResult =
-  | { action: 'display';     lines: string[] }
-  | { action: 'inject';      text: string }    // FCP injects instruction into the session loop
-  | { action: 'passthrough'; text: string }
-  | { action: 'set_verbose'; value: boolean }
+  | { action: 'display';       lines: string[] }
+  | { action: 'inject';        text: string }    // FCP injects instruction into the session loop
+  | { action: 'passthrough';   text: string }
+  | { action: 'set_verbose';   value: boolean }
+  | { action: 'set_workspace'; path: string | null }  // null = clear
   | { action: 'none' }
 
 export interface SlashCommand {
@@ -122,11 +124,11 @@ const COMMANDS: SlashCommand[] = [
   newCmd,
   verboseCmd,
   modelCmd,
-  stubCommand('/compact',  'Trigger context compaction'),
+  compactCmd,
   stubCommand('/skill',    'Manage skills (list, add, audit)'),
   endureCmd,
-  stubCommand('/inbox',    'Operator notifications (list, view)'),
-  stubCommand('/work',     'Workspace focus (set, clear, status)'),
+  inboxCmd,
+  workCmd,
   stubCommand('/snapshot', 'Create entity snapshot'),
   stubCommand('/memory',   'Browse memory store'),
 ]
