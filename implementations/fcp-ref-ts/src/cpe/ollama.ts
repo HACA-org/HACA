@@ -4,6 +4,25 @@ import { normalizeOllama } from './normalize.js'
 
 const DEFAULT_BASE = 'http://localhost:11434'
 
+// Fetch the list of locally available Ollama model names.
+// Returns [] if Ollama is unreachable or returns an unexpected response.
+export async function listOllamaModels(baseUrl: string = DEFAULT_BASE): Promise<string[]> {
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 2000)
+    try {
+      const resp = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal })
+      if (!resp.ok) return []
+      const data = await resp.json() as { models?: Array<{ name: string }> }
+      return (data.models ?? []).map(m => m.name)
+    } finally {
+      clearTimeout(timeout)
+    }
+  } catch {
+    return []
+  }
+}
+
 // Convert internal CPEMessage history to Ollama's OpenAI-compatible format.
 // Tool calls and tool results must be preserved — without them the model loses
 // track of what it called and re-calls the same tools indefinitely.

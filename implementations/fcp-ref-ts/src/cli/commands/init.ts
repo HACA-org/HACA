@@ -10,6 +10,7 @@ import { createInterface } from 'node:readline'
 import type { Command } from 'commander'
 import chalk from 'chalk'
 import { writeJson, ensureDir, atomicWrite, fileExists } from '../../store/io.js'
+import { listOllamaModels } from '../../cpe/ollama.js'
 import { makeBaselineJson } from '../templates/baseline.js'
 import {
   makeIntegrityDoc, personaIdentity, personaValues,
@@ -47,19 +48,6 @@ const GOOGLE_MODELS = [
   'gemini-3.1-flash-lite-preview',
   'gemini-3.1-pro-preview',
 ]
-
-function listOllamaModels(): string[] {
-  try {
-    const result = spawnSync('curl', ['-s', 'http://localhost:11434/api/tags'], {
-      encoding: 'utf8', timeout: 2000,
-    })
-    if (result.status !== 0 || !result.stdout) return []
-    const data = JSON.parse(result.stdout) as { models?: Array<{ name: string }> }
-    return (data.models ?? []).map(m => m.name)
-  } catch {
-    return []
-  }
-}
 
 // ─── Readline setup ───────────────────────────────────────────────────────────
 // Creates readline for the init flow. terminal:true is required so that readline
@@ -232,7 +220,7 @@ async function pickBackend(rl: ReturnType<typeof makeRl>): Promise<string> {
   } else if (providerIdx === 3) {
     providerPrefix = 'ollama'
     process.stdout.write(`\n${chalk.dim('  Detecting local Ollama models...')}\n`)
-    models = listOllamaModels()
+    models = await listOllamaModels()
     if (models.length === 0) {
       warn('No Ollama models found (is Ollama running?)')
       process.stdout.write(`\n`)
