@@ -82,6 +82,9 @@ export function createOllamaAdapter(model: string, baseUrl: string = DEFAULT_BAS
             function: { name: t.name, description: t.description, parameters: t.input_schema },
           })),
         } : {}),
+        // Pass num_ctx when the caller hints at the desired context window.
+        // Ollama uses 2048 by default; without this, large sessions get truncated silently.
+        ...(req.contextHint !== undefined ? { options: { num_ctx: req.contextHint } } : {}),
       }
       const resp = await fetch(`${baseUrl}/api/chat`, {
         method:  'POST',

@@ -115,6 +115,7 @@ export async function runSessionLoop(opts: SessionOptions): Promise<LoopResult> 
           description:  t.description,
           input_schema: t.inputSchema,
         })),
+        contextHint: contextWindow,
       })
       cycle = {
         cycleNum:    cycle.cycleNum + 1,

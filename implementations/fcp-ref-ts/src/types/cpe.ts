@@ -37,9 +37,10 @@ export interface CPEToolDeclaration {
 }
 
 export interface CPERequest {
-  system?:  string
-  messages: CPEMessage[]
-  tools:    CPEToolDeclaration[]
+  system?:       string
+  messages:      CPEMessage[]
+  tools:         CPEToolDeclaration[]
+  contextHint?:  number   // desired context window size (tokens); adapter may honour it (e.g. Ollama num_ctx)
 }
 
 export interface CPEUsage {
